@@ -11,12 +11,20 @@ from typing import TYPE_CHECKING, Any
 
 import aiosqlite
 
-from gpumod.models import DriverType, Mode, Service, SleepMode
+from gpumod.models import (
+    DriverType,
+    Mode,
+    ModelInfo,
+    ModelSource,
+    Service,
+    ServiceTemplate,
+    SleepMode,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 _CREATE_TABLES = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -60,6 +68,26 @@ CREATE TABLE IF NOT EXISTS settings (
     description TEXT DEFAULT '',
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS service_templates (
+    service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
+    unit_template TEXT NOT NULL,
+    preset_template TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS models (
+    id TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    parameters_b REAL,
+    architecture TEXT,
+    base_vram_mb INTEGER,
+    kv_cache_per_1k_tokens_mb INTEGER,
+    quantizations TEXT NOT NULL DEFAULT '[]',
+    capabilities TEXT NOT NULL DEFAULT '[]',
+    fetched_at TIMESTAMP,
+    notes TEXT
+);
 """
 
 
@@ -81,7 +109,7 @@ class Database:
 
         await self._conn.executescript(_CREATE_TABLES)
 
-        # Set schema version if not already present.
+        # Manage schema version: insert if empty, update if outdated.
         cursor = await self._conn.execute("SELECT COUNT(*) FROM schema_version")
         row = await cursor.fetchone()
         assert row is not None
@@ -89,7 +117,9 @@ class Database:
             await self._conn.execute(
                 "INSERT INTO schema_version (version) VALUES (?)", (_SCHEMA_VERSION,)
             )
-            await self._conn.commit()
+        else:
+            await self._conn.execute("UPDATE schema_version SET version = ?", (_SCHEMA_VERSION,))
+        await self._conn.commit()
 
     async def close(self) -> None:
         """Close the database connection."""
@@ -138,6 +168,29 @@ class Database:
             name=row["name"],
             description=row["description"],
             total_vram_mb=row["total_vram_mb"],
+        )
+
+    @staticmethod
+    def _row_to_service_template(row: Any) -> ServiceTemplate:
+        return ServiceTemplate(
+            service_id=row["service_id"],
+            unit_template=row["unit_template"],
+            preset_template=row["preset_template"],
+        )
+
+    @staticmethod
+    def _row_to_model_info(row: Any) -> ModelInfo:
+        return ModelInfo(
+            id=row["id"],
+            source=ModelSource(row["source"]),
+            parameters_b=row["parameters_b"],
+            architecture=row["architecture"],
+            base_vram_mb=row["base_vram_mb"],
+            kv_cache_per_1k_tokens_mb=row["kv_cache_per_1k_tokens_mb"],
+            quantizations=json.loads(row["quantizations"]),
+            capabilities=json.loads(row["capabilities"]),
+            fetched_at=row["fetched_at"],
+            notes=row["notes"],
         )
 
     # ------------------------------------------------------------------
@@ -301,3 +354,88 @@ class Database:
     async def set_current_mode(self, mode_id: str) -> None:
         """Set the current mode ID."""
         await self.set_setting("current_mode", mode_id, description="Currently active mode")
+
+    # ------------------------------------------------------------------
+    # Service Templates CRUD
+    # ------------------------------------------------------------------
+
+    async def get_template(self, service_id: str) -> ServiceTemplate | None:
+        """Return a service template by service_id, or None if not found."""
+        conn = self._ensure_conn()
+        cursor = await conn.execute(
+            "SELECT * FROM service_templates WHERE service_id = ?", (service_id,)
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return self._row_to_service_template(row)
+
+    async def insert_template(self, template: ServiceTemplate) -> None:
+        """Insert a service template into the database."""
+        conn = self._ensure_conn()
+        await conn.execute(
+            """
+            INSERT INTO service_templates (service_id, unit_template, preset_template)
+            VALUES (?, ?, ?)
+            """,
+            (template.service_id, template.unit_template, template.preset_template),
+        )
+        await conn.commit()
+
+    async def delete_template(self, service_id: str) -> None:
+        """Delete a service template by service_id."""
+        conn = self._ensure_conn()
+        await conn.execute("DELETE FROM service_templates WHERE service_id = ?", (service_id,))
+        await conn.commit()
+
+    # ------------------------------------------------------------------
+    # Models CRUD
+    # ------------------------------------------------------------------
+
+    async def get_model(self, model_id: str) -> ModelInfo | None:
+        """Return a model by ID, or None if not found."""
+        conn = self._ensure_conn()
+        cursor = await conn.execute("SELECT * FROM models WHERE id = ?", (model_id,))
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return self._row_to_model_info(row)
+
+    async def list_models(self) -> list[ModelInfo]:
+        """Return all models ordered by ID."""
+        conn = self._ensure_conn()
+        cursor = await conn.execute("SELECT * FROM models ORDER BY id")
+        rows = await cursor.fetchall()
+        return [self._row_to_model_info(r) for r in rows]
+
+    async def insert_model(self, model: ModelInfo) -> None:
+        """Insert a model into the database."""
+        conn = self._ensure_conn()
+        await conn.execute(
+            """
+            INSERT INTO models
+                (id, source, parameters_b, architecture, base_vram_mb,
+                 kv_cache_per_1k_tokens_mb, quantizations, capabilities,
+                 fetched_at, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                model.id,
+                model.source.value,
+                model.parameters_b,
+                model.architecture,
+                model.base_vram_mb,
+                model.kv_cache_per_1k_tokens_mb,
+                json.dumps(model.quantizations),
+                json.dumps(model.capabilities),
+                model.fetched_at,
+                model.notes,
+            ),
+        )
+        await conn.commit()
+
+    async def delete_model(self, model_id: str) -> None:
+        """Delete a model by ID."""
+        conn = self._ensure_conn()
+        await conn.execute("DELETE FROM models WHERE id = ?", (model_id,))
+        await conn.commit()

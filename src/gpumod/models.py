@@ -8,6 +8,14 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 
+class ModelSource(StrEnum):
+    """Source type for model metadata."""
+
+    HUGGINGFACE = "huggingface"
+    GGUF = "gguf"
+    LOCAL = "local"
+
+
 class ServiceState(StrEnum):
     """Possible states of a managed GPU service."""
 
@@ -135,3 +143,52 @@ class SystemStatus(BaseModel):
     vram: VRAMUsage | None = None
     current_mode: str | None = None
     services: list[ServiceInfo] = []
+
+
+class ModelInfo(BaseModel):
+    """Model metadata for VRAM estimation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    source: ModelSource
+    parameters_b: float | None = None
+    architecture: str | None = None
+    base_vram_mb: int | None = None
+    kv_cache_per_1k_tokens_mb: int | None = None
+    quantizations: list[str] = []
+    capabilities: list[str] = []
+    fetched_at: str | None = None
+    notes: str | None = None
+
+
+class ServiceTemplate(BaseModel):
+    """Stored template for a service's systemd unit."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    service_id: str
+    unit_template: str
+    preset_template: str | None = None
+
+
+class PresetConfig(BaseModel):
+    """YAML preset configuration for a service."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    driver: DriverType
+    port: int | None = None
+    vram_mb: int
+    context_size: int | None = None
+    kv_cache_per_1k: int | None = None
+    model_id: str | None = None
+    model_path: str | None = None
+    health_endpoint: str = "/health"
+    startup_timeout: int = 60
+    supports_sleep: bool = False
+    sleep_mode: SleepMode = SleepMode.NONE
+    unit_template: str | None = None
+    unit_vars: dict[str, Any] = {}

@@ -9,11 +9,15 @@ from gpumod.models import (
     DriverType,
     GPUInfo,
     Mode,
+    ModelInfo,
+    ModelSource,
     ModeResult,
+    PresetConfig,
     Service,
     ServiceInfo,
     ServiceState,
     ServiceStatus,
+    ServiceTemplate,
     SleepMode,
     SystemStatus,
     VRAMUsage,
@@ -349,3 +353,260 @@ class TestSystemStatusModel:
         )
         assert status.current_mode is None
         assert status.services == []
+
+
+# ── ModelSource enum ─────────────────────────────────────────────────────
+
+
+class TestModelSourceEnum:
+    def test_members(self) -> None:
+        assert ModelSource.HUGGINGFACE == "huggingface"
+        assert ModelSource.GGUF == "gguf"
+        assert ModelSource.LOCAL == "local"
+
+    def test_member_count(self) -> None:
+        assert len(ModelSource) == 3
+
+    def test_string_conversion(self) -> None:
+        assert ModelSource.HUGGINGFACE.value == "huggingface"
+
+    def test_value_lookup(self) -> None:
+        assert ModelSource("gguf") is ModelSource.GGUF
+
+
+# ── ModelInfo model ──────────────────────────────────────────────────────
+
+
+class TestModelInfoModel:
+    def test_required_fields(self) -> None:
+        model = ModelInfo(id="meta-llama/Llama-3-8B", source=ModelSource.HUGGINGFACE)
+        assert model.id == "meta-llama/Llama-3-8B"
+        assert model.source == ModelSource.HUGGINGFACE
+
+    def test_defaults(self) -> None:
+        model = ModelInfo(id="test-model", source=ModelSource.LOCAL)
+        assert model.parameters_b is None
+        assert model.architecture is None
+        assert model.base_vram_mb is None
+        assert model.kv_cache_per_1k_tokens_mb is None
+        assert model.quantizations == []
+        assert model.capabilities == []
+        assert model.fetched_at is None
+        assert model.notes is None
+
+    def test_all_fields_populated(self) -> None:
+        model = ModelInfo(
+            id="meta-llama/Llama-3-8B",
+            source=ModelSource.HUGGINGFACE,
+            parameters_b=8.0,
+            architecture="llama",
+            base_vram_mb=16000,
+            kv_cache_per_1k_tokens_mb=64,
+            quantizations=["fp16", "q4_k_m", "q8_0"],
+            capabilities=["chat", "code"],
+            fetched_at="2025-01-15T10:00:00Z",
+            notes="Popular coding model",
+        )
+        assert model.parameters_b == 8.0
+        assert model.architecture == "llama"
+        assert model.base_vram_mb == 16000
+        assert model.kv_cache_per_1k_tokens_mb == 64
+        assert model.quantizations == ["fp16", "q4_k_m", "q8_0"]
+        assert model.capabilities == ["chat", "code"]
+        assert model.fetched_at == "2025-01-15T10:00:00Z"
+        assert model.notes == "Popular coding model"
+
+    def test_extra_fields_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ModelInfo(
+                id="test",
+                source=ModelSource.HUGGINGFACE,
+                bogus="bad",  # type: ignore[call-arg]
+            )
+
+    def test_invalid_source_raises(self) -> None:
+        with pytest.raises(ValidationError):
+            ModelInfo(id="test", source="invalid")  # type: ignore[arg-type]
+
+    def test_serialization_round_trip(self) -> None:
+        model = ModelInfo(
+            id="meta-llama/Llama-3-70B",
+            source=ModelSource.HUGGINGFACE,
+            parameters_b=70.0,
+            architecture="llama",
+            base_vram_mb=140000,
+            quantizations=["fp16", "q4_k_m"],
+        )
+        data = model.model_dump()
+        restored = ModelInfo.model_validate(data)
+        assert restored == model
+
+    def test_json_round_trip(self) -> None:
+        model = ModelInfo(
+            id="local/my-gguf",
+            source=ModelSource.GGUF,
+            parameters_b=7.0,
+            base_vram_mb=5000,
+        )
+        json_str = model.model_dump_json()
+        restored = ModelInfo.model_validate_json(json_str)
+        assert restored == model
+
+
+# ── ServiceTemplate model ────────────────────────────────────────────────
+
+
+class TestServiceTemplateModel:
+    def test_required_fields(self) -> None:
+        tpl = ServiceTemplate(
+            service_id="vllm-chat",
+            unit_template="[Unit]\nDescription={{ name }}\n",
+        )
+        assert tpl.service_id == "vllm-chat"
+        assert tpl.unit_template == "[Unit]\nDescription={{ name }}\n"
+
+    def test_defaults(self) -> None:
+        tpl = ServiceTemplate(
+            service_id="vllm-chat",
+            unit_template="[Unit]\n",
+        )
+        assert tpl.preset_template is None
+
+    def test_all_fields_populated(self) -> None:
+        tpl = ServiceTemplate(
+            service_id="vllm-chat",
+            unit_template="[Unit]\nDescription={{ name }}\n",
+            preset_template="id: {{ id }}\ndriver: vllm\n",
+        )
+        assert tpl.preset_template == "id: {{ id }}\ndriver: vllm\n"
+
+    def test_extra_fields_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ServiceTemplate(
+                service_id="test",
+                unit_template="[Unit]\n",
+                bogus="bad",  # type: ignore[call-arg]
+            )
+
+    def test_serialization_round_trip(self) -> None:
+        tpl = ServiceTemplate(
+            service_id="llama-code",
+            unit_template="[Unit]\nDescription=llama.cpp\n",
+            preset_template="driver: llamacpp\n",
+        )
+        data = tpl.model_dump()
+        restored = ServiceTemplate.model_validate(data)
+        assert restored == tpl
+
+
+# ── PresetConfig model ───────────────────────────────────────────────────
+
+
+class TestPresetConfigModel:
+    def test_required_fields(self) -> None:
+        preset = PresetConfig(
+            id="vllm-chat",
+            name="vLLM Chat",
+            driver=DriverType.VLLM,
+            vram_mb=8000,
+        )
+        assert preset.id == "vllm-chat"
+        assert preset.name == "vLLM Chat"
+        assert preset.driver == DriverType.VLLM
+        assert preset.vram_mb == 8000
+
+    def test_defaults(self) -> None:
+        preset = PresetConfig(
+            id="test",
+            name="Test",
+            driver=DriverType.VLLM,
+            vram_mb=4096,
+        )
+        assert preset.port is None
+        assert preset.context_size is None
+        assert preset.kv_cache_per_1k is None
+        assert preset.model_id is None
+        assert preset.model_path is None
+        assert preset.health_endpoint == "/health"
+        assert preset.startup_timeout == 60
+        assert preset.supports_sleep is False
+        assert preset.sleep_mode == SleepMode.NONE
+        assert preset.unit_template is None
+        assert preset.unit_vars == {}
+
+    def test_all_fields_populated(self) -> None:
+        preset = PresetConfig(
+            id="vllm-chat",
+            name="vLLM Chat",
+            driver=DriverType.VLLM,
+            port=8000,
+            vram_mb=8000,
+            context_size=4096,
+            kv_cache_per_1k=64,
+            model_id="meta-llama/Llama-3-8B",
+            model_path="/models/llama-3-8b",
+            health_endpoint="/v1/health",
+            startup_timeout=300,
+            supports_sleep=True,
+            sleep_mode=SleepMode.L1,
+            unit_template="[Unit]\nDescription={{ name }}\n",
+            unit_vars={"gpu_mem_util": "0.9", "max_model_len": "4096"},
+        )
+        assert preset.port == 8000
+        assert preset.context_size == 4096
+        assert preset.kv_cache_per_1k == 64
+        assert preset.model_id == "meta-llama/Llama-3-8B"
+        assert preset.model_path == "/models/llama-3-8b"
+        assert preset.health_endpoint == "/v1/health"
+        assert preset.startup_timeout == 300
+        assert preset.supports_sleep is True
+        assert preset.sleep_mode == SleepMode.L1
+        assert preset.unit_template == "[Unit]\nDescription={{ name }}\n"
+        assert preset.unit_vars == {"gpu_mem_util": "0.9", "max_model_len": "4096"}
+
+    def test_extra_fields_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            PresetConfig(
+                id="test",
+                name="Test",
+                driver=DriverType.VLLM,
+                vram_mb=4096,
+                bogus="bad",  # type: ignore[call-arg]
+            )
+
+    def test_invalid_driver_raises(self) -> None:
+        with pytest.raises(ValidationError):
+            PresetConfig(
+                id="test",
+                name="Test",
+                driver="invalid",  # type: ignore[arg-type]
+                vram_mb=4096,
+            )
+
+    def test_serialization_round_trip(self) -> None:
+        preset = PresetConfig(
+            id="llama-code",
+            name="llama.cpp Code",
+            driver=DriverType.LLAMACPP,
+            port=8080,
+            vram_mb=6000,
+            model_path="/models/code.gguf",
+            supports_sleep=True,
+            sleep_mode=SleepMode.L2,
+            unit_vars={"threads": "8"},
+        )
+        data = preset.model_dump()
+        restored = PresetConfig.model_validate(data)
+        assert restored == preset
+
+    def test_json_round_trip(self) -> None:
+        preset = PresetConfig(
+            id="fastapi-proxy",
+            name="FastAPI Proxy",
+            driver=DriverType.FASTAPI,
+            vram_mb=0,
+            port=9000,
+        )
+        json_str = preset.model_dump_json()
+        restored = PresetConfig.model_validate_json(json_str)
+        assert restored == preset

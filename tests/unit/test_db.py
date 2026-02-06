@@ -5,7 +5,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from gpumod.db import Database
-from gpumod.models import DriverType, Mode, Service, SleepMode
+from gpumod.models import (
+    DriverType,
+    Mode,
+    ModelInfo,
+    ModelSource,
+    Service,
+    ServiceTemplate,
+    SleepMode,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -80,7 +88,15 @@ class TestConnect:
                 "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
             )
             tables = {row[0] for row in await cursor.fetchall()}
-            expected = {"services", "modes", "mode_services", "settings", "schema_version"}
+            expected = {
+                "services",
+                "modes",
+                "mode_services",
+                "settings",
+                "schema_version",
+                "service_templates",
+                "models",
+            }
             assert expected.issubset(tables), f"Missing tables: {expected - tables}"
         finally:
             await db.close()
@@ -331,3 +347,278 @@ class TestForeignKeyCascade:
             row = await cursor.fetchone()
             assert row is not None
             assert row[0] == 0
+
+
+# ---------------------------------------------------------------------------
+# Helpers — Phase 2 models
+# ---------------------------------------------------------------------------
+
+
+def _make_template(
+    service_id: str = "vllm-chat",
+    unit_template: str = "[Unit]\nDescription=vLLM Chat\n",
+    preset_template: str | None = None,
+) -> ServiceTemplate:
+    return ServiceTemplate(
+        service_id=service_id,
+        unit_template=unit_template,
+        preset_template=preset_template,
+    )
+
+
+def _make_model_info(
+    id: str = "meta-llama/Llama-3-8B",
+    source: ModelSource = ModelSource.HUGGINGFACE,
+    parameters_b: float | None = 8.0,
+    architecture: str | None = "llama",
+    base_vram_mb: int | None = 16000,
+    kv_cache_per_1k_tokens_mb: int | None = 64,
+    quantizations: list[str] | None = None,
+    capabilities: list[str] | None = None,
+    fetched_at: str | None = "2025-01-15T10:00:00Z",
+    notes: str | None = None,
+) -> ModelInfo:
+    return ModelInfo(
+        id=id,
+        source=source,
+        parameters_b=parameters_b,
+        architecture=architecture,
+        base_vram_mb=base_vram_mb,
+        kv_cache_per_1k_tokens_mb=kv_cache_per_1k_tokens_mb,
+        quantizations=quantizations or [],
+        capabilities=capabilities or [],
+        fetched_at=fetched_at,
+        notes=notes,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Schema v2 verification
+# ---------------------------------------------------------------------------
+
+
+class TestSchemaV2:
+    """Tests for schema version 2 tables."""
+
+    async def test_schema_version_is_2(self, tmp_path: Path) -> None:
+        """Schema version should be 2 after connect."""
+        async with Database(tmp_path / "test.db") as db:
+            conn = db._ensure_conn()
+            cursor = await conn.execute("SELECT version FROM schema_version")
+            row = await cursor.fetchone()
+            assert row is not None
+            assert row[0] == 2
+
+    async def test_service_templates_table_exists(self, tmp_path: Path) -> None:
+        """service_templates table should be created on connect."""
+        async with Database(tmp_path / "test.db") as db:
+            conn = db._ensure_conn()
+            cursor = await conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='service_templates'"
+            )
+            row = await cursor.fetchone()
+            assert row is not None
+
+    async def test_models_table_exists(self, tmp_path: Path) -> None:
+        """models table should be created on connect."""
+        async with Database(tmp_path / "test.db") as db:
+            conn = db._ensure_conn()
+            cursor = await conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='models'"
+            )
+            row = await cursor.fetchone()
+            assert row is not None
+
+
+# ---------------------------------------------------------------------------
+# Service Templates CRUD
+# ---------------------------------------------------------------------------
+
+
+class TestServiceTemplatesCRUD:
+    """Tests for service template insert / get / delete."""
+
+    async def test_insert_and_get_template(self, tmp_path: Path) -> None:
+        """Round-trip: insert then get returns identical template."""
+        async with Database(tmp_path / "test.db") as db:
+            # Need a service first for FK
+            svc = _make_service(id="vllm-chat")
+            await db.insert_service(svc)
+
+            tpl = _make_template(
+                service_id="vllm-chat",
+                unit_template="[Unit]\nDescription=vLLM Chat\n[Service]\nExecStart=/usr/bin/vllm",
+                preset_template="id: vllm-chat\ndriver: vllm\n",
+            )
+            await db.insert_template(tpl)
+            got = await db.get_template("vllm-chat")
+
+            assert got is not None
+            assert got.service_id == tpl.service_id
+            assert got.unit_template == tpl.unit_template
+            assert got.preset_template == tpl.preset_template
+
+    async def test_get_template_returns_none_for_unknown(self, tmp_path: Path) -> None:
+        """get_template() returns None for a service_id not in the DB."""
+        async with Database(tmp_path / "test.db") as db:
+            assert await db.get_template("nonexistent") is None
+
+    async def test_delete_template(self, tmp_path: Path) -> None:
+        """delete_template() removes the template from the DB."""
+        async with Database(tmp_path / "test.db") as db:
+            svc = _make_service(id="to-del-tpl")
+            await db.insert_service(svc)
+
+            tpl = _make_template(service_id="to-del-tpl")
+            await db.insert_template(tpl)
+            assert await db.get_template("to-del-tpl") is not None
+
+            await db.delete_template("to-del-tpl")
+            assert await db.get_template("to-del-tpl") is None
+
+    async def test_template_without_preset(self, tmp_path: Path) -> None:
+        """Template can have no preset_template (NULL)."""
+        async with Database(tmp_path / "test.db") as db:
+            svc = _make_service(id="no-preset")
+            await db.insert_service(svc)
+
+            tpl = _make_template(service_id="no-preset", preset_template=None)
+            await db.insert_template(tpl)
+            got = await db.get_template("no-preset")
+
+            assert got is not None
+            assert got.preset_template is None
+
+    async def test_template_cascade_on_service_delete(self, tmp_path: Path) -> None:
+        """Deleting a service should cascade-delete its template."""
+        async with Database(tmp_path / "test.db") as db:
+            svc = _make_service(id="cascade-svc")
+            await db.insert_service(svc)
+
+            tpl = _make_template(service_id="cascade-svc")
+            await db.insert_template(tpl)
+            assert await db.get_template("cascade-svc") is not None
+
+            # Delete the service
+            await db.delete_service("cascade-svc")
+            # Template should be gone
+            assert await db.get_template("cascade-svc") is None
+
+
+# ---------------------------------------------------------------------------
+# Models CRUD
+# ---------------------------------------------------------------------------
+
+
+class TestModelsCRUD:
+    """Tests for model insert / get / list / delete."""
+
+    async def test_insert_and_get_model(self, tmp_path: Path) -> None:
+        """Round-trip: insert then get returns identical model info."""
+        async with Database(tmp_path / "test.db") as db:
+            model = _make_model_info(
+                id="meta-llama/Llama-3-8B",
+                quantizations=["fp16", "q4_k_m"],
+                capabilities=["chat", "code"],
+                notes="Test model",
+            )
+            await db.insert_model(model)
+            got = await db.get_model("meta-llama/Llama-3-8B")
+
+            assert got is not None
+            assert got.id == model.id
+            assert got.source == model.source
+            assert got.parameters_b == model.parameters_b
+            assert got.architecture == model.architecture
+            assert got.base_vram_mb == model.base_vram_mb
+            assert got.kv_cache_per_1k_tokens_mb == model.kv_cache_per_1k_tokens_mb
+            assert got.quantizations == model.quantizations
+            assert got.capabilities == model.capabilities
+            assert got.fetched_at == model.fetched_at
+            assert got.notes == model.notes
+
+    async def test_get_model_returns_none_for_unknown(self, tmp_path: Path) -> None:
+        """get_model() returns None for an ID not in the DB."""
+        async with Database(tmp_path / "test.db") as db:
+            assert await db.get_model("nonexistent") is None
+
+    async def test_list_models_empty(self, tmp_path: Path) -> None:
+        """list_models() returns empty list when no models exist."""
+        async with Database(tmp_path / "test.db") as db:
+            models = await db.list_models()
+            assert models == []
+
+    async def test_list_models_ordered_by_id(self, tmp_path: Path) -> None:
+        """list_models() returns all models ordered by ID."""
+        async with Database(tmp_path / "test.db") as db:
+            await db.insert_model(_make_model_info(id="z-model"))
+            await db.insert_model(_make_model_info(id="a-model"))
+            await db.insert_model(_make_model_info(id="m-model"))
+
+            models = await db.list_models()
+            assert len(models) == 3
+            assert [m.id for m in models] == ["a-model", "m-model", "z-model"]
+
+    async def test_delete_model(self, tmp_path: Path) -> None:
+        """delete_model() removes the model from the DB."""
+        async with Database(tmp_path / "test.db") as db:
+            model = _make_model_info(id="to-delete")
+            await db.insert_model(model)
+            assert await db.get_model("to-delete") is not None
+
+            await db.delete_model("to-delete")
+            assert await db.get_model("to-delete") is None
+
+    async def test_model_with_null_optional_fields(self, tmp_path: Path) -> None:
+        """Model can have NULL optional fields (parameters_b, architecture, etc)."""
+        async with Database(tmp_path / "test.db") as db:
+            model = _make_model_info(
+                id="minimal-model",
+                source=ModelSource.LOCAL,
+                parameters_b=None,
+                architecture=None,
+                base_vram_mb=None,
+                kv_cache_per_1k_tokens_mb=None,
+                fetched_at=None,
+                notes=None,
+            )
+            await db.insert_model(model)
+            got = await db.get_model("minimal-model")
+
+            assert got is not None
+            assert got.parameters_b is None
+            assert got.architecture is None
+            assert got.base_vram_mb is None
+            assert got.kv_cache_per_1k_tokens_mb is None
+            assert got.fetched_at is None
+            assert got.notes is None
+
+    async def test_model_gguf_source(self, tmp_path: Path) -> None:
+        """Model from GGUF source round-trips correctly."""
+        async with Database(tmp_path / "test.db") as db:
+            model = _make_model_info(
+                id="local/codellama-7b.Q4_K_M.gguf",
+                source=ModelSource.GGUF,
+                parameters_b=7.0,
+                base_vram_mb=5000,
+            )
+            await db.insert_model(model)
+            got = await db.get_model("local/codellama-7b.Q4_K_M.gguf")
+
+            assert got is not None
+            assert got.source == ModelSource.GGUF
+
+    async def test_model_with_empty_json_lists(self, tmp_path: Path) -> None:
+        """Models with empty quantizations/capabilities round-trip as empty lists."""
+        async with Database(tmp_path / "test.db") as db:
+            model = _make_model_info(
+                id="empty-lists",
+                quantizations=[],
+                capabilities=[],
+            )
+            await db.insert_model(model)
+            got = await db.get_model("empty-lists")
+
+            assert got is not None
+            assert got.quantizations == []
+            assert got.capabilities == []
