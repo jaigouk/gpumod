@@ -407,5 +407,5 @@ Tickets **must** check off relevant items before closing.
 - [x] Dependencies pinned with upper bounds in `pyproject.toml`
 
 #### Integration Testing
-- [ ] Integration tests cover all 15 audit findings
-- [ ] 900+ total tests, 97%+ coverage
+- [x] Integration tests cover all 15 audit findings
+- [x] 900+ total tests, 97%+ coverage
