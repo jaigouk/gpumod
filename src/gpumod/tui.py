@@ -188,7 +188,7 @@ class GpumodApp(App[None]):
     }
     """
 
-    BINDINGS: ClassVar[list[Binding]] = [
+    BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
         Binding("q", "quit", "Quit", show=True, priority=True),
         Binding("question_mark", "help", "Help", show=False),
     ]

@@ -44,6 +44,20 @@ _TYPE_FLOAT64 = 12
 # Overhead factor for VRAM estimation from file size
 _VRAM_OVERHEAD_FACTOR = 1.1
 
+# Dispatch table: value_type → (struct format, byte size)
+_SIMPLE_TYPES: dict[int, tuple[str, int]] = {
+    0: ("<B", 1),  # UINT8
+    1: ("<b", 1),  # INT8
+    2: ("<H", 2),  # UINT16
+    3: ("<h", 2),  # INT16
+    4: ("<I", 4),  # UINT32
+    5: ("<i", 4),  # INT32
+    6: ("<f", 4),  # FLOAT32
+    10: ("<Q", 8),  # UINT64
+    11: ("<q", 8),  # INT64
+    12: ("<d", 8),  # FLOAT64
+}
+
 
 class GGUFFetcher:
     """Extracts model metadata from GGUF file headers.
@@ -84,7 +98,7 @@ class GGUFFetcher:
         # Extract metadata
         architecture = header.get("general.architecture")
         model_name = header.get("general.name")
-        file_size = path.stat().st_size
+        file_size = (await asyncio.to_thread(path.stat)).st_size
 
         # Estimate VRAM from file size
         base_vram_mb = self._estimate_vram_from_file_size(file_size)
@@ -276,43 +290,21 @@ class GGUFFetcher:
         tuple[Any, int]
             The decoded value and the new offset.
         """
-        if value_type == _TYPE_UINT8:
-            val = struct.unpack_from("<B", data, offset)[0]
-            return val, offset + 1
-        if value_type == _TYPE_INT8:
-            val = struct.unpack_from("<b", data, offset)[0]
-            return val, offset + 1
-        if value_type == _TYPE_UINT16:
-            val = struct.unpack_from("<H", data, offset)[0]
-            return val, offset + 2
-        if value_type == _TYPE_INT16:
-            val = struct.unpack_from("<h", data, offset)[0]
-            return val, offset + 2
-        if value_type == _TYPE_UINT32:
-            val = struct.unpack_from("<I", data, offset)[0]
-            return val, offset + 4
-        if value_type == _TYPE_INT32:
-            val = struct.unpack_from("<i", data, offset)[0]
-            return val, offset + 4
-        if value_type == _TYPE_FLOAT32:
-            val = struct.unpack_from("<f", data, offset)[0]
-            return val, offset + 4
+        # Simple numeric types via dispatch table
+        simple = _SIMPLE_TYPES.get(value_type)
+        if simple is not None:
+            fmt, size = simple
+            val = struct.unpack_from(fmt, data, offset)[0]
+            return val, offset + size
+
         if value_type == _TYPE_BOOL:
             val = struct.unpack_from("<B", data, offset)[0] != 0
             return val, offset + 1
+
         if value_type == _TYPE_STRING:
             return GGUFFetcher._read_string(data, offset)
-        if value_type == _TYPE_UINT64:
-            val = struct.unpack_from("<Q", data, offset)[0]
-            return val, offset + 8
-        if value_type == _TYPE_INT64:
-            val = struct.unpack_from("<q", data, offset)[0]
-            return val, offset + 8
-        if value_type == _TYPE_FLOAT64:
-            val = struct.unpack_from("<d", data, offset)[0]
-            return val, offset + 8
+
         if value_type == _TYPE_ARRAY:
-            # Read array type and count
             arr_type = struct.unpack_from("<I", data, offset)[0]
             offset += 4
             arr_len = struct.unpack_from("<Q", data, offset)[0]

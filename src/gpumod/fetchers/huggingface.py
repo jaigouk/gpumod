@@ -87,7 +87,9 @@ class HuggingFaceFetcher:
 
         try:
             info = await asyncio.to_thread(
-                model_info, model_id, files_metadata=True,
+                model_info,
+                model_id,
+                files_metadata=True,
             )
         except Exception as exc:
             msg = f"Failed to fetch model info for {model_id!r}: {exc}"
@@ -127,7 +129,9 @@ class HuggingFaceFetcher:
 
         # Estimate VRAM
         base_vram_mb, notes = self._estimate_base_vram(
-            gguf_files, quant, parameters_b,
+            gguf_files,
+            quant,
+            parameters_b,
         )
 
         # Estimate KV cache

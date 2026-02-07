@@ -81,7 +81,7 @@ async def systemctl(
     command: str,
     unit: str,
     *,
-    timeout: float = 30.0,
+    timeout_s: float = 30.0,
 ) -> SystemctlResult:
     """Run ``systemctl <command> <unit>`` and return the result.
 
@@ -113,7 +113,7 @@ async def systemctl(
 
     stdout_bytes, stderr_bytes = await asyncio.wait_for(
         proc.communicate(),
-        timeout=timeout,
+        timeout=timeout_s,
     )
 
     result = SystemctlResult(
@@ -165,16 +165,16 @@ async def get_unit_state(unit: str) -> str:
         return "unknown"
 
 
-async def start(unit: str, *, timeout: float = 30.0) -> None:
+async def start(unit: str, *, timeout_s: float = 30.0) -> None:
     """Start a systemd unit."""
-    await systemctl("start", unit, timeout=timeout)
+    await systemctl("start", unit, timeout_s=timeout_s)
 
 
-async def stop(unit: str, *, timeout: float = 30.0) -> None:
+async def stop(unit: str, *, timeout_s: float = 30.0) -> None:
     """Stop a systemd unit."""
-    await systemctl("stop", unit, timeout=timeout)
+    await systemctl("stop", unit, timeout_s=timeout_s)
 
 
-async def restart(unit: str, *, timeout: float = 30.0) -> None:
+async def restart(unit: str, *, timeout_s: float = 30.0) -> None:
     """Restart a systemd unit."""
-    await systemctl("restart", unit, timeout=timeout)
+    await systemctl("restart", unit, timeout_s=timeout_s)

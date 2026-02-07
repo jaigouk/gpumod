@@ -94,11 +94,11 @@ class PresetLoader:
             msg = f"Preset directory not found: {directory}"
             raise FileNotFoundError(msg)
 
-        presets: list[PresetConfig] = []
-        for yaml_file in sorted(resolved.rglob("*")):
-            if yaml_file.is_file() and yaml_file.suffix in _YAML_EXTENSIONS:
-                presets.append(self.load_file(yaml_file))
-
+        presets = [
+            self.load_file(yaml_file)
+            for yaml_file in sorted(resolved.rglob("*"))
+            if yaml_file.is_file() and yaml_file.suffix in _YAML_EXTENSIONS
+        ]
         return sorted(presets, key=lambda p: p.id)
 
     def to_service(self, preset: PresetConfig) -> Service:

@@ -114,6 +114,31 @@ class VRAMBar:
 
         return self._render_normal(gpu_total_mb, sanitized_services, width)
 
+    @staticmethod
+    def _format_segment_label(label: str, num: int) -> str:
+        """Format a label to fit within *num* characters with segment markers."""
+        if num >= len(label) + 4:
+            padded = f"|-- {label} "
+            return padded + "-" * (num - len(padded)) + "|"
+        if num >= len(label) + 2:
+            return f"|{label}" + "-" * (num - len(label) - 2) + "|"
+        if num >= 3:
+            avail = num - 3  # |--|
+            short = label[:avail] if avail > 0 else ""
+            return f"|{short}" + "-" * (num - len(short) - 2) + "|"
+        return "|" * num
+
+    @staticmethod
+    def _format_free_label(free_blocks: int) -> str:
+        """Format the free-space segment label."""
+        free_label = "free"
+        if free_blocks >= len(free_label) + 4:
+            padded = f"|  {free_label}"
+            return padded + " " * (free_blocks - len(padded) - 1) + "|"
+        if free_blocks >= 3:
+            return "|" + " " * (free_blocks - 2) + "|"
+        return " " * free_blocks
+
     def _render_normal(
         self,
         gpu_total_mb: int,
@@ -149,54 +174,21 @@ class VRAMBar:
 
         free_blocks = width - assigned
 
-        # Build bar line
-        bar_chars = ""
-        for _, _, _, num in blocks:
-            bar_chars += _FILLED_CHAR * num
+        bar_chars = "".join(_FILLED_CHAR * num for _, _, _, num in blocks)
         bar_chars += _FREE_CHAR * max(free_blocks, 0)
-
         bar_line = f"[{bar_chars}]"
 
-        # Build label line with segment markers
-        label_parts: list[str] = []
-        for name, vram, _, num in blocks:
-            label = f"{name} ({vram}MB)"
-            # Pad/truncate to fit block width (accounting for dashes)
-            if num >= len(label) + 4:
-                padded = f"|-- {label} "
-                padded += "-" * (num - len(padded)) + "|"
-            elif num >= len(label) + 2:
-                padded = f"|{label}" + "-" * (num - len(label) - 2) + "|"
-            elif num >= 3:
-                # Truncate label to fit
-                avail = num - 3  # |--|
-                short = label[:avail] if avail > 0 else ""
-                padded = f"|{short}" + "-" * (num - len(short) - 2) + "|"
-            else:
-                padded = "|" * num
-            label_parts.append(padded)
-
+        label_parts = [
+            self._format_segment_label(f"{name} ({vram}MB)", num) for name, vram, _, num in blocks
+        ]
         if free_blocks > 0:
-            free_label = "free"
-            if free_blocks >= len(free_label) + 4:
-                padded_free = f"|  {free_label}"
-                padded_free += " " * (free_blocks - len(padded_free) - 1) + "|"
-            elif free_blocks >= 3:
-                padded_free = "|" + " " * (free_blocks - 2) + "|"
-            else:
-                padded_free = " " * free_blocks
-            label_parts.append(padded_free)
-
+            label_parts.append(self._format_free_label(free_blocks))
         label_line = "".join(label_parts)
 
-        # Build detail lines: always list each service with full name and VRAM
-        detail_lines: list[str] = []
-        for name, vram, state, _ in blocks:
-            detail_lines.append(f"  {name}: {vram} MB ({state})")
+        detail_lines = [f"  {name}: {vram} MB ({state})" for name, vram, state, _ in blocks]
         if free_mb > 0:
             detail_lines.append(f"  free: {free_mb} MB")
 
-        # Build scale line
         scale_line = self._build_scale(gpu_total_mb, width)
 
         parts = [bar_line, label_line, scale_line]

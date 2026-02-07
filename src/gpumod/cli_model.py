@@ -71,9 +71,7 @@ def _build_register_kwargs(
 
 def _print_registered(registered: ModelInfo) -> None:
     """Print registration result to console."""
-    _console.print(
-        f"[green]Registered model [bold]{registered.id}[/bold] successfully.[/green]"
-    )
+    _console.print(f"[green]Registered model [bold]{registered.id}[/bold] successfully.[/green]")
     _console.print(f"  Source: {registered.source}")
     if registered.parameters_b is not None:
         _console.print(f"  Parameters: {_format_parameters(registered.parameters_b)}")
