@@ -45,16 +45,16 @@ def _make_service(
 async def _poll_until(
     condition: object,
     *,
-    timeout: float = 5.0,
+    timeout_s: float = 5.0,
     interval: float = 0.02,
 ) -> None:
-    """Poll *condition* (callable returning bool) until truthy or *timeout*."""
-    deadline = asyncio.get_event_loop().time() + timeout
+    """Poll *condition* (callable returning bool) until truthy or *timeout_s*."""
+    deadline = asyncio.get_event_loop().time() + timeout_s
     while asyncio.get_event_loop().time() < deadline:
         if callable(condition) and condition():
             return
         await asyncio.sleep(interval)
-    msg = f"Condition not met within {timeout}s"
+    msg = f"Condition not met within {timeout_s}s"
     raise TimeoutError(msg)
 
 

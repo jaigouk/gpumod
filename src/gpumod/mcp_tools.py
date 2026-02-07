@@ -173,6 +173,30 @@ async def model_info(model_id: str, ctx: Context) -> dict[str, Any]:
     return _sanitize_dict_names(result)
 
 
+def _validate_service_ids(ids: list[str] | None) -> dict[str, Any] | None:
+    """Validate a list of service IDs. Returns error dict or None."""
+    if not ids:
+        return None
+    for sid in ids:
+        try:
+            validate_service_id(sid)
+        except ValueError as exc:
+            return _validation_error(str(exc))
+    return None
+
+
+def _validate_overrides(overrides: dict[str, int] | None) -> dict[str, Any] | None:
+    """Validate context overrides. Returns error dict or None."""
+    if not overrides:
+        return None
+    for key, val in overrides.items():
+        try:
+            validate_context_override(key, val)
+        except ValueError as exc:
+            return _validation_error(str(exc))
+    return None
+
+
 async def simulate_mode(
     mode_id: str,
     ctx: Context,
@@ -186,29 +210,13 @@ async def simulate_mode(
     except ValueError as exc:
         return _validation_error(str(exc))
 
-    # Validate add_services IDs
-    if add_services:
-        for sid in add_services:
-            try:
-                validate_service_id(sid)
-            except ValueError as exc:
-                return _validation_error(str(exc))
-
-    # Validate remove_services IDs
-    if remove_services:
-        for sid in remove_services:
-            try:
-                validate_service_id(sid)
-            except ValueError as exc:
-                return _validation_error(str(exc))
-
-    # Validate context overrides
-    if context_overrides:
-        for key, val in context_overrides.items():
-            try:
-                validate_context_override(key, val)
-            except ValueError as exc:
-                return _validation_error(str(exc))
+    for error in (
+        _validate_service_ids(add_services),
+        _validate_service_ids(remove_services),
+        _validate_overrides(context_overrides),
+    ):
+        if error is not None:
+            return error
 
     simulation = _get_simulation(ctx)
     try:

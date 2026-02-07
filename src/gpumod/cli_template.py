@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
 from typing import Any
@@ -173,8 +174,12 @@ def generate_template(
 
                 if output is not None:
                     out_path = Path(output)
-                    out_path.parent.mkdir(parents=True, exist_ok=True)
-                    out_path.write_text(rendered)
+                    await asyncio.to_thread(
+                        out_path.parent.mkdir,
+                        parents=True,
+                        exist_ok=True,
+                    )
+                    await asyncio.to_thread(out_path.write_text, rendered)
                     _console.print(f"[green]Wrote unit file to [bold]{out_path}[/bold][/green]")
                     return
 

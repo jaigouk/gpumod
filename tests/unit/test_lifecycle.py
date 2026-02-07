@@ -293,7 +293,7 @@ class TestWaitForHealthyImmediate:
         """_wait_for_healthy should return immediately if health_check passes."""
         mock_driver.health_check.return_value = True
 
-        await lifecycle._wait_for_healthy(SVC_A, mock_driver, timeout=10.0, poll_interval=0.01)
+        await lifecycle._wait_for_healthy(SVC_A, mock_driver, timeout_s=10.0, poll_interval=0.01)
 
         mock_driver.health_check.assert_called_once_with(SVC_A)
 
@@ -312,7 +312,7 @@ class TestWaitForHealthyRetry:
         """_wait_for_healthy should retry and succeed on the third health check."""
         mock_driver.health_check.side_effect = [False, False, True]
 
-        await lifecycle._wait_for_healthy(SVC_A, mock_driver, timeout=10.0, poll_interval=0.01)
+        await lifecycle._wait_for_healthy(SVC_A, mock_driver, timeout_s=10.0, poll_interval=0.01)
 
         assert mock_driver.health_check.call_count == 3
 
@@ -332,7 +332,9 @@ class TestWaitForHealthyTimeout:
         mock_driver.health_check.return_value = False
 
         with pytest.raises(LifecycleError, match="svc-a"):
-            await lifecycle._wait_for_healthy(SVC_A, mock_driver, timeout=0.05, poll_interval=0.01)
+            await lifecycle._wait_for_healthy(
+                SVC_A, mock_driver, timeout_s=0.05, poll_interval=0.01
+            )
 
 
 # ---------------------------------------------------------------------------

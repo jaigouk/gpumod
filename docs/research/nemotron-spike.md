@@ -124,7 +124,7 @@ unit_vars:
   jinja: true
 ```
 
-### Router Preset INI (to add to glm-preset.ini)
+### Router Preset INI (to add to llama_cpp_gguf_presets.ini)
 
 ```ini
 [nemotron-3-nano]
@@ -151,10 +151,36 @@ or mmap mode (`-ngl 0 --mmap`). These require further testing in Phase C.
 code mode. Adding the general embedding (vllm-embedding, 5 GB) is not possible
 alongside Nemotron -- would need sleep/wake or mmap mode for that scenario.
 
-## Next Steps (Phase D)
+## Phase D: Production Measurements (2026-02-07)
 
-1. Add nemotron-3-nano to `glm-preset.ini` with calibrated ctx-size
-2. Test KV cache quantization for larger context windows
-3. Measure mmap vs full GPU load trade-offs
-4. Run `gpumod simulate` with context overrides to plan optimal config
-5. Verify mode switching between code/nemotron modes
+### VRAM (Measured)
+
+| Component | VRAM |
+|-----------|------|
+| Nemotron-3-Nano UD-Q4_K_XL (8K ctx, flash-attn) | 20,054 MiB |
+| vLLM Qwen3-Embedding-0.6B | 2,552 MiB |
+| **Total (nemotron mode)** | **22,606 MiB** |
+| Free headroom | 1,441 MiB |
+| Simulation estimate | 22,500 MB |
+| **Simulation accuracy** | **99.5%** |
+
+### Mode Cycling (5 transitions, no VRAM leaks)
+
+| Transition | Unloaded VRAM | Loaded VRAM |
+|-----------|---------------|-------------|
+| nemotron → devstral | 2,575 MiB | 21,701 MiB |
+| devstral → nemotron | 2,575 MiB | 22,615 MiB |
+| nemotron → glm-4-flash | 2,575 MiB | 21,471 MiB |
+| glm-4-flash → nemotron | 2,575 MiB | 22,615 MiB |
+
+### Inference Performance
+
+- **Reasoning ON**: ~57 tokens for "2+2" (includes thinking), 1.4s
+- **Reasoning OFF**: ~50 tokens for "capital of France", 1.1s
+- **Code generation**: 512 tokens (with reasoning), 6.2s (~83 tok/s)
+
+### Future Work
+
+1. Test KV cache quantization for larger context windows
+2. Measure mmap vs full GPU load trade-offs
+3. Benchmark against Devstral for code generation quality

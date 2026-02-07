@@ -124,26 +124,32 @@ class DockerDriver(ServiceDriver):
         name = self._container_name(service)
         try:
             container = await asyncio.to_thread(self._client.containers.get, name)
-            docker_status: str = container.status
-
-            if docker_status == "restarting":
-                return ServiceStatus(state=ServiceState.STARTING)
-
-            if docker_status in ("exited", "created"):
-                return ServiceStatus(state=ServiceState.STOPPED)
-
-            if docker_status == "running":
-                healthy = await self.health_check(service)
-                if healthy:
-                    return ServiceStatus(state=ServiceState.RUNNING, health_ok=True)
-                return ServiceStatus(state=ServiceState.UNHEALTHY, health_ok=False)
-
-            return ServiceStatus(state=ServiceState.UNKNOWN)
-
         except docker.errors.NotFound:
             return ServiceStatus(state=ServiceState.STOPPED)
         except Exception:
             return ServiceStatus(state=ServiceState.UNKNOWN)
+
+        return await self._map_docker_status(container.status, service)
+
+    async def _map_docker_status(
+        self,
+        docker_status: str,
+        service: Service,
+    ) -> ServiceStatus:
+        """Map a Docker container status string to a ServiceStatus."""
+        status_map: dict[str, ServiceStatus] = {
+            "restarting": ServiceStatus(state=ServiceState.STARTING),
+            "exited": ServiceStatus(state=ServiceState.STOPPED),
+            "created": ServiceStatus(state=ServiceState.STOPPED),
+        }
+        mapped = status_map.get(docker_status)
+        if mapped is not None:
+            return mapped
+        if docker_status == "running":
+            healthy = await self.health_check(service)
+            state = ServiceState.RUNNING if healthy else ServiceState.UNHEALTHY
+            return ServiceStatus(state=state, health_ok=healthy)
+        return ServiceStatus(state=ServiceState.UNKNOWN)
 
     async def health_check(self, service: Service) -> bool:
         """Check if the service is healthy via HTTP GET to the health endpoint."""

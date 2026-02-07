@@ -14,7 +14,7 @@ import sqlite3
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any
 
 import typer
 from rich.console import Console
@@ -196,10 +196,7 @@ async def cli_context(
 # ---------------------------------------------------------------------------
 
 
-_T = TypeVar("_T")
-
-
-def run_async(coro: Coroutine[Any, Any, _T]) -> _T:
+def run_async[T](coro: Coroutine[Any, Any, T]) -> T:
     """Run an async coroutine from synchronous Typer command code.
 
     Parameters
@@ -209,7 +206,7 @@ def run_async(coro: Coroutine[Any, Any, _T]) -> _T:
 
     Returns
     -------
-    _T
+    T
         The return value of the coroutine, preserving the original type.
     """
     return asyncio.run(coro)

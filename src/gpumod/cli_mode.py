@@ -158,6 +158,34 @@ def mode_status(
     run_async(_cmd())
 
 
+def _print_switch_result(result: ModeResult) -> None:
+    """Print mode switch result as rich output."""
+    if result.success:
+        _console.print(
+            f"[green]Switched to mode [bold]{result.mode_id}[/bold] successfully.[/green]"
+        )
+    else:
+        _console.print(f"[red]Failed to switch to mode [bold]{result.mode_id}[/bold].[/red]")
+
+    if result.message:
+        _console.print(f"  {result.message}")
+
+    if result.started:
+        _console.print("[green]Started:[/green]")
+        for svc in result.started:
+            _console.print(f"  [green]+[/green] {sanitize_name(svc)}")
+
+    if result.stopped:
+        _console.print("[red]Stopped:[/red]")
+        for svc in result.stopped:
+            _console.print(f"  [red]-[/red] {sanitize_name(svc)}")
+
+    if result.errors:
+        _console.print("[yellow]Errors:[/yellow]")
+        for err in result.errors:
+            _console.print(f"  [yellow]![/yellow] {err}")
+
+
 @mode_app.command("switch")
 def switch_mode(
     mode_id: str = typer.Argument(help="Mode ID to switch to."),
@@ -175,34 +203,7 @@ def switch_mode(
                 if json_output(data, as_json=as_json) is None:
                     return
 
-                # Rich output
-                if result.success:
-                    _console.print(
-                        f"[green]Switched to mode "
-                        f"[bold]{result.mode_id}[/bold] successfully.[/green]"
-                    )
-                else:
-                    _console.print(
-                        f"[red]Failed to switch to mode [bold]{result.mode_id}[/bold].[/red]"
-                    )
-
-                if result.message:
-                    _console.print(f"  {result.message}")
-
-                if result.started:
-                    _console.print("[green]Started:[/green]")
-                    for svc in result.started:
-                        _console.print(f"  [green]+[/green] {sanitize_name(svc)}")
-
-                if result.stopped:
-                    _console.print("[red]Stopped:[/red]")
-                    for svc in result.stopped:
-                        _console.print(f"  [red]-[/red] {sanitize_name(svc)}")
-
-                if result.errors:
-                    _console.print("[yellow]Errors:[/yellow]")
-                    for err in result.errors:
-                        _console.print(f"  [yellow]![/yellow] {err}")
+                _print_switch_result(result)
 
     run_async(_cmd())
 
