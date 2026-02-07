@@ -21,7 +21,7 @@ def make_docker_service(
     """Create a Service configured for Docker testing."""
     if extra_config is None:
         extra_config = {
-            "image": "qdrant/qdrant:v1.8.0",
+            "image": "ollama/ollama:latest",
             "ports": {"6333": 8080},
         }
     return Service(
@@ -92,7 +92,7 @@ class TestDockerStart:
         assert isinstance(driver, DockerDriver)
         svc = make_docker_service(
             extra_config={
-                "image": "qdrant/qdrant:v1.8.0",
+                "image": "ollama/ollama:latest",
                 "volumes": {"../../etc/shadow": "/data"},
             }
         )
@@ -148,7 +148,7 @@ class TestDockerStart:
         assert isinstance(driver, DockerDriver)
         svc = make_docker_service(
             extra_config={
-                "image": "qdrant/qdrant:v1.8.0",
+                "image": "ollama/ollama:latest",
                 "environment": {"valid_KEY": "ok", "bad;key": "evil"},
             }
         )
@@ -163,7 +163,7 @@ class TestDockerStart:
         assert isinstance(driver, DockerDriver)
         svc = make_docker_service(
             extra_config={
-                "image": "qdrant/qdrant:v1.8.0",
+                "image": "ollama/ollama:latest",
                 "runtime": "sysbox",
             }
         )
@@ -180,7 +180,7 @@ class TestDockerStart:
         assert isinstance(driver, DockerDriver)
         svc = make_docker_service(
             extra_config={
-                "image": "qdrant/qdrant:v1.8.0",
+                "image": "ollama/ollama:latest",
                 "runtime": "nvidia",
             }
         )
@@ -416,7 +416,7 @@ class TestDockerValidation:
     def test_validate_docker_image_accepts_valid(self) -> None:
         from gpumod.validation import validate_docker_image
 
-        assert validate_docker_image("qdrant/qdrant:v1.8.0") == "qdrant/qdrant:v1.8.0"
+        assert validate_docker_image("ollama/ollama:latest") == "ollama/ollama:latest"
         assert validate_docker_image("nginx") == "nginx"
         assert validate_docker_image("registry.example.com/myapp:latest") == (
             "registry.example.com/myapp:latest"

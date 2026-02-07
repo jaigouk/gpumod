@@ -1,3 +1,8 @@
+---
+title: Architecture Overview
+description: System architecture for gpumod — service drivers, VRAM tracking, sleep management, mode switching, simulation engine, and MCP server design.
+---
+
 # gpumod Architecture
 
 > **Version**: 0.1.0
@@ -102,7 +107,7 @@ Each service type has a specialized driver implementing the `ServiceDriver` ABC:
 | **VLLMDriver**     | L1, L2 (via API)        | `/health`    | vllm-embedding, vllm-chat |
 | **LlamaCppDriver** | Router (load/unload)    | `/health`    | glm-code (devstral)       |
 | **FastAPIDriver**  | Custom (if implemented) | Configurable | qwen3-asr, custom servers |
-| **DockerDriver**   | Container stop/start    | Configurable | qdrant, langfuse          |
+| **DockerDriver**   | Container stop/start    | Configurable | ollama, langfuse          |
 
 **Driver Responsibilities:**
 
@@ -823,13 +828,13 @@ markers and skip gracefully on machines without the required hardware.
 
 ## Contributing
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for development setup, testing guidelines, and PR process.
+See [Contributing](contributing.md) for development setup, testing guidelines, and PR process.
 
 ---
 
 ## License
 
-MIT (see [LICENSE](../LICENSE))
+Apache License 2.0
 
 ---
 

@@ -1,3 +1,8 @@
+---
+title: Configuration
+description: Configure gpumod via environment variables — database path, LLM backends, VRAM settings, and MCP server options.
+---
+
 # Configuration
 
 All settings are configurable via environment variables with the `GPUMOD_`

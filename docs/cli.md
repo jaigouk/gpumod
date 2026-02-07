@@ -1,3 +1,8 @@
+---
+title: gpumod CLI Reference
+description: Complete command reference for gpumod — status, service, mode, simulate, model, template, plan, and tui commands for GPU service management.
+---
+
 # CLI Reference
 
 gpumod uses a subcommand structure. Every command supports `--help` for

@@ -1,3 +1,8 @@
+---
+title: Contributing to gpumod
+description: Development setup, running tests, code quality checks with ruff and mypy, and pull request guidelines for gpumod.
+---
+
 # Contributing
 
 Contributions are welcome. Please follow these guidelines:

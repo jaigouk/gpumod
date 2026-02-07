@@ -154,7 +154,11 @@ def start_service(
     async def _cmd() -> None:
         async with cli_context() as ctx:
             with error_handler(console=_console):
-                await ctx.lifecycle.start(service_id)
+                with _console.status(
+                    f"[bold cyan]Starting {service_id}...[/bold cyan]",
+                    spinner="dots",
+                ):
+                    await ctx.lifecycle.start(service_id)
                 _console.print(
                     f"[green]Started service [bold]{service_id}[/bold] successfully.[/green]"
                 )
@@ -172,7 +176,11 @@ def stop_service(
     async def _cmd() -> None:
         async with cli_context() as ctx:
             with error_handler(console=_console):
-                await ctx.lifecycle.stop(service_id)
+                with _console.status(
+                    f"[bold yellow]Stopping {service_id}...[/bold yellow]",
+                    spinner="dots",
+                ):
+                    await ctx.lifecycle.stop(service_id)
                 _console.print(
                     f"[yellow]Stopped service [bold]{service_id}[/bold] successfully.[/yellow]"
                 )
