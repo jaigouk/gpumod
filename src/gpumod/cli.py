@@ -354,6 +354,19 @@ def status(
 
 
 @app.command()
+def tui() -> None:
+    """Launch the interactive TUI dashboard."""
+    from gpumod.tui import GpumodApp
+
+    async def _run() -> None:
+        async with cli_context() as ctx:
+            tui_app = GpumodApp(ctx=ctx)
+            await tui_app.run_async()
+
+    run_async(_run())
+
+
+@app.command()
 def init(
     db_path: str = typer.Option(
         None,
