@@ -126,6 +126,7 @@ class PresetLoader:
             sleep_mode=preset.sleep_mode,
             health_endpoint=preset.health_endpoint,
             model_id=preset.model_id,
+            unit_name=f"{preset.id}.service",
             startup_timeout=preset.startup_timeout,
             extra_config=extra_config,
         )
