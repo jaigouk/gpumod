@@ -1,3 +1,8 @@
+---
+title: AI-Assisted VRAM Planning
+description: Use gpumod plan suggest for LLM-powered VRAM allocation recommendations, or let AI assistants plan via MCP tools.
+---
+
 # AI-Assisted Planning
 
 `gpumod plan suggest` asks an LLM to recommend which services to run on

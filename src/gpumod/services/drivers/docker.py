@@ -1,7 +1,7 @@
 """DockerDriver — service driver for Docker-containerized services.
 
 Manages container lifecycle via the Docker SDK for Python. Supports
-Qdrant, Langfuse, and other containerized services alongside
+Ollama, Langfuse, and other containerized services alongside
 systemd-managed ML inference services.
 
 Security: SEC-D7 (image validation), SEC-D8 (volume path traversal),
