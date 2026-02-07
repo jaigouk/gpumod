@@ -401,10 +401,10 @@ Tickets **must** check off relevant items before closing.
 - [x] Request ID propagates through tool call → response (SEC-A2)
 
 #### Code Quality
-- [ ] `cli_context()` async context manager in `cli.py` (DRY)
-- [ ] All 6 CLI modules use `cli_context()` (DRY)
-- [ ] Zero `type: ignore` comments in `src/gpumod/` (type safety)
-- [ ] Dependencies pinned with upper bounds in `pyproject.toml`
+- [x] `cli_context()` async context manager in `cli.py` (DRY)
+- [x] All 6 CLI modules use `cli_context()` (DRY)
+- [x] Zero `type: ignore` comments in `src/gpumod/` (type safety)
+- [x] Dependencies pinned with upper bounds in `pyproject.toml`
 
 #### Integration Testing
 - [ ] Integration tests cover all 15 audit findings

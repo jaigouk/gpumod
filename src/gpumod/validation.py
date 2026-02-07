@@ -2,11 +2,12 @@
 
 Provides regex-based validators for service IDs, mode IDs, model IDs,
 and context overrides. Also provides name sanitization extracted from
-the visualization module.
+the visualization module. Docker-specific validators (SEC-D7 through SEC-D10).
 """
 
 from __future__ import annotations
 
+import os
 import re
 
 SERVICE_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_\-]{0,63}$")
@@ -134,6 +135,13 @@ EXTRA_CONFIG_ALLOWED_KEYS: frozenset[str] = frozenset(
         "rope_scaling",
         "chat_template",
         "trust_remote_code",
+        "image",
+        "volumes",
+        "environment",
+        "ports",
+        "command",
+        "runtime",
+        "mem_limit",
     }
 )
 
@@ -217,3 +225,142 @@ def sanitize_name(name: str) -> str:
     # Remove any remaining control characters (except newline/tab)
     cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", cleaned)
     return cleaned
+
+
+# ---------------------------------------------------------------------------
+# Docker-specific validation (SEC-D7 through SEC-D10)
+# ---------------------------------------------------------------------------
+
+DOCKER_IMAGE_RE = re.compile(
+    r"^[a-z0-9]"
+    r"[a-z0-9._/\-]{0,127}"
+    r"(:[a-zA-Z0-9._\-]{1,128})?$"
+)
+
+DOCKER_ENV_KEY_RE = re.compile(r"^[A-Z_][A-Z0-9_]{0,127}$")
+
+ALLOWED_RUNTIMES: frozenset[str] = frozenset({"runc", "nvidia"})
+
+VOLUME_ALLOWED_BASES: tuple[str, ...] = (
+    os.path.expanduser("~"),
+    "/tmp",
+)
+
+# Keys allowed in Docker service extra_config
+DOCKER_EXTRA_CONFIG_KEYS: frozenset[str] = frozenset(
+    {
+        "image",
+        "volumes",
+        "environment",
+        "ports",
+        "command",
+        "runtime",
+        "mem_limit",
+    }
+)
+
+
+def validate_docker_image(value: str) -> str:
+    """Validate a Docker image name (SEC-D7).
+
+    Parameters
+    ----------
+    value:
+        The Docker image name to validate.
+
+    Returns
+    -------
+    str
+        The validated image name.
+
+    Raises
+    ------
+    ValueError
+        If the image name is invalid or contains injection characters.
+    """
+    if not value or not DOCKER_IMAGE_RE.match(value):
+        msg = f"Invalid Docker image name: {value!r}"
+        raise ValueError(msg)
+    return value
+
+
+def validate_volume_mounts(volumes: dict[str, str]) -> dict[str, str]:
+    """Validate volume mount paths are under allowed base directories (SEC-D8).
+
+    Parameters
+    ----------
+    volumes:
+        Mapping of host path -> container path.
+
+    Returns
+    -------
+    dict[str, str]
+        The validated volume mapping.
+
+    Raises
+    ------
+    ValueError
+        If any host path is outside allowed base directories or uses traversal.
+    """
+    for host_path in volumes:
+        if not os.path.isabs(host_path):
+            msg = f"Volume path must be absolute: {host_path!r}"
+            raise ValueError(msg)
+        resolved = os.path.realpath(host_path)
+        allowed = any(resolved.startswith(base) for base in VOLUME_ALLOWED_BASES)
+        if not allowed:
+            msg = f"Volume path not allowed: {host_path!r} (resolves to {resolved!r})"
+            raise ValueError(msg)
+    return volumes
+
+
+def validate_docker_env(env: dict[str, str]) -> dict[str, str]:
+    """Validate environment variable keys and values (SEC-D10).
+
+    Parameters
+    ----------
+    env:
+        Mapping of env var key -> value.
+
+    Returns
+    -------
+    dict[str, str]
+        The validated environment mapping.
+
+    Raises
+    ------
+    ValueError
+        If any key doesn't match the allowed pattern or value contains newlines.
+    """
+    for key, value in env.items():
+        if not DOCKER_ENV_KEY_RE.match(key):
+            msg = f"Invalid environment variable key: {key!r}"
+            raise ValueError(msg)
+        if "\n" in value or "\r" in value:
+            msg = f"Environment variable value contains newline: {key!r}"
+            raise ValueError(msg)
+    return env
+
+
+def validate_container_runtime(runtime: str) -> str:
+    """Validate container runtime against allowlist (SEC-D9).
+
+    Parameters
+    ----------
+    runtime:
+        The container runtime name.
+
+    Returns
+    -------
+    str
+        The validated runtime name.
+
+    Raises
+    ------
+    ValueError
+        If the runtime is not in the allowlist.
+    """
+    if runtime not in ALLOWED_RUNTIMES:
+        msg = f"Invalid container runtime: {runtime!r} (allowed: {sorted(ALLOWED_RUNTIMES)})"
+        raise ValueError(msg)
+    return runtime

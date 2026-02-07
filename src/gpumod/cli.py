@@ -297,12 +297,11 @@ def status(
 ) -> None:
     """Show system status (GPU, VRAM, services)."""
     console = Console()
-    with error_handler(console=console):
-        ctx = run_async(create_context())
-        try:
-            system_status = run_async(ctx.manager.get_status())
 
-            # JSON output mode
+    async def _cmd() -> None:
+        async with cli_context() as ctx:
+            system_status = await ctx.manager.get_status()
+
             if as_json:
                 json_output(
                     system_status.model_dump(mode="json"),
@@ -310,14 +309,12 @@ def status(
                 )
                 return
 
-            # Visual mode — use StatusPanel from visualization module
             if visual:
                 panel = StatusPanel()
                 rendered = panel.render(system_status)
                 console.print(rendered)
                 return
 
-            # Default Rich table mode
             if system_status.gpu is None:
                 console.print("[bold yellow]Warning:[/bold yellow] No GPU detected")
             else:
@@ -351,8 +348,9 @@ def status(
                 console.print(table)
             else:
                 console.print("[dim]No services registered.[/dim]")
-        finally:
-            run_async(ctx.db.close())
+
+    with error_handler(console=console):
+        run_async(_cmd())
 
 
 @app.command()
@@ -370,30 +368,28 @@ def init(
 ) -> None:
     """Initialize the gpumod database and configuration."""
     console = Console()
-    with error_handler(console=console):
+
+    async def _cmd() -> None:
         resolved_path = Path(db_path) if db_path is not None else None
-        ctx = run_async(create_context(db_path=resolved_path))
-        try:
-            # Discover presets
+        async with cli_context(db_path=resolved_path) as ctx:
             presets = ctx.preset_loader.discover_presets()
 
-            # Load each preset into the database
             loaded = 0
             skipped = 0
             for preset in presets:
                 svc = ctx.preset_loader.to_service(preset)
                 try:
-                    run_async(ctx.db.insert_service(svc))
+                    await ctx.db.insert_service(svc)
                     loaded += 1
                 except sqlite3.IntegrityError:
                     skipped += 1
                     console.print(f"[dim]Skipped (already exists): {preset.name}[/dim]")
 
-            # Summary
             console.print(
                 f"[bold green]Initialized.[/bold green] "
                 f"Found {len(presets)} preset(s), "
                 f"loaded {loaded}, skipped {skipped}."
             )
-        finally:
-            run_async(ctx.db.close())
+
+    with error_handler(console=console):
+        run_async(_cmd())
