@@ -42,36 +42,38 @@ from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # ---------------------------------------------------------------------------
-# Presets directory resolution
+# Directory resolution
 # ---------------------------------------------------------------------------
 
 _VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 
 
-def _resolve_default_presets_dir() -> Path:
-    """Resolve the default presets directory.
+def _resolve_default_dir(name: str) -> Path:
+    """Resolve a default directory relative to the project root.
 
-    Attempts to locate the presets directory using ``importlib.resources``
-    (works for installed packages), falling back to a relative path from
-    this file (works in development src-layout).
-
-    Returns
-    -------
-    Path
-        The resolved presets directory path.
+    Attempts ``importlib.resources`` first (installed packages), then
+    falls back to a relative path from this file (src-layout development).
     """
-    # Try importlib.resources first (works when installed as a package)
     try:
-        ref = importlib.resources.files("gpumod") / ".." / ".." / "presets"
+        ref = importlib.resources.files("gpumod") / ".." / ".." / name
         resolved = Path(str(ref)).resolve()
         if resolved.is_dir():
             return resolved
     except (TypeError, ModuleNotFoundError):
         pass
 
-    # Fallback: relative path from this file (src-layout development)
-    fallback = Path(__file__).parent.parent.parent / "presets"
+    fallback = Path(__file__).parent.parent.parent / name
     return fallback.resolve()
+
+
+def _resolve_default_presets_dir() -> Path:
+    """Resolve the default presets directory."""
+    return _resolve_default_dir("presets")
+
+
+def _resolve_default_modes_dir() -> Path:
+    """Resolve the default modes directory."""
+    return _resolve_default_dir("modes")
 
 
 # ---------------------------------------------------------------------------
@@ -93,8 +95,9 @@ class GpumodSettings(BaseSettings):
     # Database
     db_path: Path = Field(default_factory=lambda: Path.home() / ".config" / "gpumod" / "gpumod.db")
 
-    # Presets
+    # Presets & Modes
     presets_dir: Path = Field(default_factory=_resolve_default_presets_dir)
+    modes_dir: Path = Field(default_factory=_resolve_default_modes_dir)
 
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
