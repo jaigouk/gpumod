@@ -130,7 +130,7 @@ async def is_active(unit: str) -> bool:
         )
         stdout_bytes, _ = await proc.communicate()
         return stdout_bytes.decode().strip() == "active"
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 
@@ -150,7 +150,7 @@ async def get_unit_state(unit: str) -> str:
         )
         stdout_bytes, _ = await proc.communicate()
         return stdout_bytes.decode().strip()
-    except Exception:  # noqa: BLE001
+    except Exception:
         return "unknown"
 
 

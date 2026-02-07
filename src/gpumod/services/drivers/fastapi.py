@@ -66,7 +66,7 @@ class FastAPIDriver(ServiceDriver):
                 state=ServiceState.UNHEALTHY,
                 health_ok=False,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return ServiceStatus(
                 state=ServiceState.UNKNOWN,
                 last_error=str(exc),

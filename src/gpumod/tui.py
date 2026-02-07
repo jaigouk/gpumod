@@ -11,7 +11,7 @@ Input validated through SEC-V1 validators before dispatch.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -188,7 +188,7 @@ class GpumodApp(App[None]):
     }
     """
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[Binding]] = [
         Binding("q", "quit", "Quit", show=True, priority=True),
         Binding("question_mark", "help", "Help", show=False),
     ]

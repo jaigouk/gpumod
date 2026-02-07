@@ -62,14 +62,14 @@ def _get_unit_name(service: Any) -> str:
     Raises:
         ValueError: If the derived unit name contains unsafe characters.
     """
-    unit_name: str = service.unit_name if service.unit_name else f"gpumod-{service.id}"
+    unit_name: str = service.unit_name or f"gpumod-{service.id}"
     if not _SAFE_UNIT_NAME_RE.match(unit_name):
         msg = f"Unsafe unit name: {unit_name!r}"
         raise ValueError(msg)
     return unit_name
 
 
-async def _build_settings(ctx: Any) -> dict[str, str]:  # noqa: ANN401
+async def _build_settings(ctx: Any) -> dict[str, str]:
     """Build a settings dict from DB settings for template rendering."""
     settings: dict[str, str] = {}
     for key in ("user", "cuda_devices", "working_dir"):

@@ -200,7 +200,7 @@ def run_async(coro: Coroutine[Any, Any, _T]) -> _T:
     return asyncio.run(coro)
 
 
-def json_output(data: Any, *, as_json: bool) -> Any:  # noqa: ANN401
+def json_output(data: Any, *, as_json: bool) -> Any:
     """Conditionally print data as JSON or return it for Rich formatting.
 
     Parameters
@@ -217,7 +217,7 @@ def json_output(data: Any, *, as_json: bool) -> Any:  # noqa: ANN401
         None if printed as JSON, otherwise the original data.
     """
     if as_json:
-        print(json.dumps(data, indent=2, default=str))  # noqa: T201
+        print(json.dumps(data, indent=2, default=str))
         return None
     return data
 

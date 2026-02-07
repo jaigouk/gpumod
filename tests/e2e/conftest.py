@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 def _has_nvidia_gpu() -> bool:
     """Detect whether nvidia-smi is available and reports a GPU."""
     try:
-        result = subprocess.run(  # noqa: S603, S607
+        result = subprocess.run(
             ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
             capture_output=True,
             text=True,
@@ -49,7 +49,7 @@ def _has_docker() -> bool:
     if shutil.which("docker") is None:
         return False
     try:
-        result = subprocess.run(  # noqa: S603, S607
+        result = subprocess.run(
             ["docker", "info"],
             capture_output=True,
             text=True,

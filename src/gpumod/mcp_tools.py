@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from fastmcp import Context  # noqa: TCH002 -- runtime import needed for FastMCP DI
+from fastmcp import Context  # noqa: TC002 -- runtime import needed for FastMCP DI
 
 from gpumod.simulation import SimulationError
 from gpumod.validation import (

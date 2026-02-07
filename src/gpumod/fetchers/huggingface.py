@@ -166,7 +166,7 @@ class HuggingFaceFetcher:
         head_dim = hidden_size // num_attention_heads
         # 2 for K+V, 2 for fp16 bytes
         bytes_per_1k = 2 * num_layers * num_kv_heads * head_dim * 2 * 1000
-        return int(math.ceil(bytes_per_1k / (1024 * 1024)))
+        return math.ceil(bytes_per_1k / (1024 * 1024))
 
     @staticmethod
     def _validate_model_id(model_id: str) -> None:

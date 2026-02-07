@@ -45,18 +45,18 @@ class _ServiceHealthTask:
     """Internal mutable state for a single service's monitoring task."""
 
     __slots__ = (
-        "service_id",
-        "interval",
-        "failure_threshold",
-        "recovery_threshold",
         "check_timeout",
-        "task",
         "consecutive_failures",
         "consecutive_successes",
+        "failure_threshold",
         "healthy",
+        "interval",
         "last_check_at",
         "last_healthy_at",
         "last_unhealthy_at",
+        "recovery_threshold",
+        "service_id",
+        "task",
     )
 
     def __init__(
@@ -222,7 +222,7 @@ class HealthMonitor:
                 driver.health_check(service),
                 timeout=entry.check_timeout,
             )
-        except (TimeoutError, Exception):  # noqa: BLE001
+        except (TimeoutError, Exception):
             healthy = False
 
         now = time.monotonic()

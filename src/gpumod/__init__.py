@@ -10,10 +10,10 @@ from gpumod.services.manager import ServiceManager
 from gpumod.simulation import SimulationEngine
 
 __all__ = [
-    "__version__",
     "Database",
     "Mode",
     "Service",
     "ServiceManager",
     "SimulationEngine",
+    "__version__",
 ]

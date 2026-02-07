@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from fastmcp import Context  # noqa: TCH002 — runtime import needed for FastMCP DI
+from fastmcp import Context  # noqa: TC002 — runtime import needed for FastMCP DI
 
-from gpumod.validation import (  # noqa: TCH001
+from gpumod.validation import (
     sanitize_name,
     validate_mode_id,
     validate_model_id,

@@ -221,7 +221,7 @@ class GGUFFetcher:
         if file_size_bytes == 0:
             return 0
         size_mb = file_size_bytes / (1024 * 1024)
-        return int(math.ceil(size_mb * _VRAM_OVERHEAD_FACTOR))
+        return math.ceil(size_mb * _VRAM_OVERHEAD_FACTOR)
 
     @staticmethod
     def _validate_path(file_path: str) -> None:

@@ -55,7 +55,7 @@ request_id_var: ContextVar[str] = ContextVar("request_id_var", default="")
 # Each pattern matches a common system path prefix through to whitespace or end.
 _PATH_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"/home/\S+"),
-    re.compile(r"/tmp/\S+"),
+    re.compile(r"/tmp/\S+"),  # noqa: S108 -- sanitizing /tmp paths in output
     re.compile(r"/var/\S+"),
     re.compile(r"/usr/\S+"),
     re.compile(r"/etc/\S+"),

@@ -73,14 +73,14 @@ async def _stop_monitor(mon: HealthMonitor) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
+@pytest.fixture
 def mock_driver() -> MagicMock:
     driver = MagicMock(spec=ServiceDriver)
     driver.health_check = AsyncMock(return_value=True)
     return driver
 
 
-@pytest.fixture()
+@pytest.fixture
 def mock_registry(mock_driver: MagicMock) -> MagicMock:
     registry = MagicMock(spec=ServiceRegistry)
     service = _make_service()
@@ -89,7 +89,7 @@ def mock_registry(mock_driver: MagicMock) -> MagicMock:
     return registry
 
 
-@pytest.fixture()
+@pytest.fixture
 def monitor(mock_registry: MagicMock) -> HealthMonitor:
     return HealthMonitor(
         registry=mock_registry,
