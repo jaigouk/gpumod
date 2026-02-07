@@ -2,13 +2,17 @@
 
 Tests are deterministic: instead of sleeping a fixed duration and hoping
 the poll loop ran enough iterations, we poll for the expected condition
-with a generous timeout. This avoids CI hangs on slow runners.
+with a generous timeout.  This avoids CI hangs on slow runners.
+
+The ``monitor`` fixture is intentionally **sync** (not an async generator)
+to side-step pytest-asyncio 0.26 compatibility issues with async fixtures
+on CI.  Every test that starts monitoring calls ``_stop_monitor`` in a
+``try/finally`` to guarantee background tasks are cancelled.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -18,8 +22,9 @@ from gpumod.services.base import ServiceDriver
 from gpumod.services.health import HealthMonitor, ServiceHealthInfo, _ServiceHealthTask
 from gpumod.services.registry import ServiceRegistry
 
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
 def _make_service(
@@ -43,7 +48,7 @@ async def _poll_until(
     timeout: float = 5.0,
     interval: float = 0.02,
 ) -> None:
-    """Poll *condition* (a callable returning bool) until truthy or *timeout*."""
+    """Poll *condition* (callable returning bool) until truthy or *timeout*."""
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
         if callable(condition) and condition():
@@ -51,6 +56,16 @@ async def _poll_until(
         await asyncio.sleep(interval)
     msg = f"Condition not met within {timeout}s"
     raise TimeoutError(msg)
+
+
+async def _stop_monitor(mon: HealthMonitor) -> None:
+    """Force-cancel every monitoring task and clear the dict."""
+    for entry in list(mon._tasks.values()):
+        if entry.task is not None and not entry.task.done():
+            entry.task.cancel()
+    # Give cancelled tasks a chance to finish
+    await asyncio.sleep(0)
+    mon._tasks.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -75,8 +90,8 @@ def mock_registry(mock_driver: MagicMock) -> MagicMock:
 
 
 @pytest.fixture()
-async def monitor(mock_registry: MagicMock) -> AsyncGenerator[HealthMonitor, None]:
-    mon = HealthMonitor(
+def monitor(mock_registry: MagicMock) -> HealthMonitor:
+    return HealthMonitor(
         registry=mock_registry,
         default_interval=0.05,
         failure_threshold=3,
@@ -84,8 +99,6 @@ async def monitor(mock_registry: MagicMock) -> AsyncGenerator[HealthMonitor, Non
         check_timeout=0.5,
         min_interval=0.01,
     )
-    yield mon
-    await mon.stop_all()
 
 
 # ---------------------------------------------------------------------------
@@ -97,26 +110,34 @@ class TestStartMonitoring:
     """Tests for HealthMonitor.start_monitoring()."""
 
     async def test_start_monitoring_creates_task(self, monitor: HealthMonitor) -> None:
-        await monitor.start_monitoring("svc-1")
-        assert "svc-1" in monitor.monitored_services
+        try:
+            await monitor.start_monitoring("svc-1")
+            assert "svc-1" in monitor.monitored_services
+        finally:
+            await _stop_monitor(monitor)
 
     async def test_start_monitoring_idempotent(
         self, monitor: HealthMonitor, mock_driver: MagicMock
     ) -> None:
-        await monitor.start_monitoring("svc-1")
-        await monitor.start_monitoring("svc-1")
-        assert len(monitor.monitored_services) == 1
+        try:
+            await monitor.start_monitoring("svc-1")
+            await monitor.start_monitoring("svc-1")
+            assert len(monitor.monitored_services) == 1
+        finally:
+            await _stop_monitor(monitor)
 
 
 class TestStopMonitoring:
     """Tests for HealthMonitor.stop_monitoring()."""
 
     async def test_stop_monitoring_cancels_task(self, monitor: HealthMonitor) -> None:
-        await monitor.start_monitoring("svc-1")
-        assert "svc-1" in monitor.monitored_services
-
-        await monitor.stop_monitoring("svc-1")
-        assert "svc-1" not in monitor.monitored_services
+        try:
+            await monitor.start_monitoring("svc-1")
+            assert "svc-1" in monitor.monitored_services
+            await monitor.stop_monitoring("svc-1")
+            assert "svc-1" not in monitor.monitored_services
+        finally:
+            await _stop_monitor(monitor)
 
     async def test_stop_monitoring_idempotent(self, monitor: HealthMonitor) -> None:
         await monitor.stop_monitoring("svc-nonexistent")
@@ -126,12 +147,14 @@ class TestStopAll:
     """Tests for HealthMonitor.stop_all()."""
 
     async def test_stop_all_cancels_all_tasks(self, monitor: HealthMonitor) -> None:
-        await monitor.start_monitoring("svc-1")
-        await monitor.start_monitoring("svc-2")
-        assert len(monitor.monitored_services) == 2
-
-        await monitor.stop_all()
-        assert len(monitor.monitored_services) == 0
+        try:
+            await monitor.start_monitoring("svc-1")
+            await monitor.start_monitoring("svc-2")
+            assert len(monitor.monitored_services) == 2
+            await monitor.stop_all()
+            assert len(monitor.monitored_services) == 0
+        finally:
+            await _stop_monitor(monitor)
 
 
 # ---------------------------------------------------------------------------
@@ -145,78 +168,82 @@ class TestHealthStateTransitions:
     async def test_healthy_service_stays_healthy(
         self, monitor: HealthMonitor, mock_driver: MagicMock
     ) -> None:
-        callback = AsyncMock()
-        monitor._on_state_change = callback
-        mock_driver.health_check = AsyncMock(return_value=True)
+        try:
+            callback = AsyncMock()
+            monitor._on_state_change = callback
+            mock_driver.health_check = AsyncMock(return_value=True)
 
-        await monitor.start_monitoring("svc-1")
+            await monitor.start_monitoring("svc-1")
+            await _poll_until(lambda: mock_driver.health_check.call_count >= 3)
 
-        # Wait for a few successful checks to accumulate
-        await _poll_until(lambda: mock_driver.health_check.call_count >= 3)
-
-        callback.assert_not_called()
+            callback.assert_not_called()
+        finally:
+            await _stop_monitor(monitor)
 
     async def test_single_failure_no_state_change(
         self, monitor: HealthMonitor, mock_driver: MagicMock
     ) -> None:
-        callback = AsyncMock()
-        monitor._on_state_change = callback
+        try:
+            callback = AsyncMock()
+            monitor._on_state_change = callback
 
-        call_count = 0
+            call_count = 0
 
-        async def _health_check(service: Service) -> bool:
-            nonlocal call_count
-            call_count += 1
-            return call_count != 2
+            async def _health_check(service: Service) -> bool:
+                nonlocal call_count
+                call_count += 1
+                return call_count != 2
 
-        mock_driver.health_check = AsyncMock(side_effect=_health_check)
-        await monitor.start_monitoring("svc-1")
+            mock_driver.health_check = AsyncMock(side_effect=_health_check)
+            await monitor.start_monitoring("svc-1")
+            await _poll_until(lambda: call_count >= 5)
 
-        # Wait until enough checks have run (past the single failure)
-        await _poll_until(lambda: call_count >= 5)
-
-        callback.assert_not_called()
+            callback.assert_not_called()
+        finally:
+            await _stop_monitor(monitor)
 
     async def test_consecutive_failures_trigger_unhealthy(
         self, monitor: HealthMonitor, mock_driver: MagicMock
     ) -> None:
-        callback = AsyncMock()
-        monitor._on_state_change = callback
-        mock_driver.health_check = AsyncMock(return_value=False)
+        try:
+            callback = AsyncMock()
+            monitor._on_state_change = callback
+            mock_driver.health_check = AsyncMock(return_value=False)
 
-        await monitor.start_monitoring("svc-1")
+            await monitor.start_monitoring("svc-1")
+            await _poll_until(lambda: callback.called)
 
-        await _poll_until(lambda: callback.called)
-
-        args = callback.call_args_list[0]
-        assert args[0][0] == "svc-1"
-        assert args[0][1] is False
+            args = callback.call_args_list[0]
+            assert args[0][0] == "svc-1"
+            assert args[0][1] is False
+        finally:
+            await _stop_monitor(monitor)
 
     async def test_recovery_after_unhealthy(
         self, monitor: HealthMonitor, mock_driver: MagicMock
     ) -> None:
-        callback = AsyncMock()
-        monitor._on_state_change = callback
+        try:
+            callback = AsyncMock()
+            monitor._on_state_change = callback
 
-        call_count = 0
+            call_count = 0
 
-        async def _health_check(service: Service) -> bool:
-            nonlocal call_count
-            call_count += 1
-            # First 3 calls fail, then all succeed
-            return call_count > 3
+            async def _health_check(service: Service) -> bool:
+                nonlocal call_count
+                call_count += 1
+                return call_count > 3
 
-        mock_driver.health_check = AsyncMock(side_effect=_health_check)
-        await monitor.start_monitoring("svc-1")
+            mock_driver.health_check = AsyncMock(side_effect=_health_check)
+            await monitor.start_monitoring("svc-1")
+            await _poll_until(lambda: callback.call_count >= 2)
 
-        # Wait for both unhealthy and recovery callbacks
-        await _poll_until(lambda: callback.call_count >= 2)
+            unhealthy_call = callback.call_args_list[0]
+            assert unhealthy_call[0] == ("svc-1", False)
 
-        unhealthy_call = callback.call_args_list[0]
-        assert unhealthy_call[0] == ("svc-1", False)
-
-        recovery_call = callback.call_args_list[1]
-        assert recovery_call[0] == ("svc-1", True)
+            recovery_call = callback.call_args_list[1]
+            assert recovery_call[0] == ("svc-1", True)
+        finally:
+            await _stop_monitor(monitor)
 
 
 # ---------------------------------------------------------------------------
@@ -230,21 +257,23 @@ class TestCheckTimeout:
     async def test_check_timeout_prevents_hang(
         self, monitor: HealthMonitor, mock_driver: MagicMock
     ) -> None:
-        callback = AsyncMock()
-        monitor._on_state_change = callback
+        try:
+            callback = AsyncMock()
+            monitor._on_state_change = callback
 
-        async def _slow_health(service: Service) -> bool:
-            await asyncio.sleep(60)
-            return True
+            async def _slow_health(service: Service) -> bool:
+                await asyncio.sleep(60)
+                return True
 
-        mock_driver.health_check = AsyncMock(side_effect=_slow_health)
-        monitor._check_timeout = 0.05
+            mock_driver.health_check = AsyncMock(side_effect=_slow_health)
+            monitor._check_timeout = 0.05
 
-        await monitor.start_monitoring("svc-1")
+            await monitor.start_monitoring("svc-1")
+            await _poll_until(lambda: callback.called)
 
-        await _poll_until(lambda: callback.called)
-
-        assert callback.call_args_list[0][0] == ("svc-1", False)
+            assert callback.call_args_list[0][0] == ("svc-1", False)
+        finally:
+            await _stop_monitor(monitor)
 
 
 # ---------------------------------------------------------------------------
@@ -281,16 +310,18 @@ class TestGetHealthStatus:
     async def test_get_health_status_returns_info(
         self, monitor: HealthMonitor, mock_driver: MagicMock
     ) -> None:
-        mock_driver.health_check = AsyncMock(return_value=True)
-        await monitor.start_monitoring("svc-1")
+        try:
+            mock_driver.health_check = AsyncMock(return_value=True)
+            await monitor.start_monitoring("svc-1")
+            await _poll_until(lambda: mock_driver.health_check.call_count >= 1)
 
-        await _poll_until(lambda: mock_driver.health_check.call_count >= 1)
-
-        info = monitor.get_health_status("svc-1")
-        assert info is not None
-        assert isinstance(info, ServiceHealthInfo)
-        assert info.service_id == "svc-1"
-        assert info.healthy is True
+            info = monitor.get_health_status("svc-1")
+            assert info is not None
+            assert isinstance(info, ServiceHealthInfo)
+            assert info.service_id == "svc-1"
+            assert info.healthy is True
+        finally:
+            await _stop_monitor(monitor)
 
     async def test_get_health_status_returns_none_for_unmonitored(
         self, monitor: HealthMonitor
@@ -308,19 +339,22 @@ class TestMonitoredServices:
     """Tests for HealthMonitor.monitored_services property."""
 
     async def test_monitored_services_tracks_correctly(self, monitor: HealthMonitor) -> None:
-        assert monitor.monitored_services == frozenset()
+        try:
+            assert monitor.monitored_services == frozenset()
 
-        await monitor.start_monitoring("svc-1")
-        assert monitor.monitored_services == frozenset({"svc-1"})
+            await monitor.start_monitoring("svc-1")
+            assert monitor.monitored_services == frozenset({"svc-1"})
 
-        await monitor.start_monitoring("svc-2")
-        assert monitor.monitored_services == frozenset({"svc-1", "svc-2"})
+            await monitor.start_monitoring("svc-2")
+            assert monitor.monitored_services == frozenset({"svc-1", "svc-2"})
 
-        await monitor.stop_monitoring("svc-1")
-        assert monitor.monitored_services == frozenset({"svc-2"})
+            await monitor.stop_monitoring("svc-1")
+            assert monitor.monitored_services == frozenset({"svc-2"})
 
-        await monitor.stop_all()
-        assert monitor.monitored_services == frozenset()
+            await monitor.stop_all()
+            assert monitor.monitored_services == frozenset()
+        finally:
+            await _stop_monitor(monitor)
 
 
 # ---------------------------------------------------------------------------
