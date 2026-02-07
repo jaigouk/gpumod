@@ -114,7 +114,7 @@ class LifecycleManager:
         self,
         service: Service,
         driver: ServiceDriver,
-        timeout: float = 120.0,
+        timeout_s: float = 120.0,
         poll_interval: float = 1.0,
     ) -> None:
         """Poll driver.health_check until it returns True or timeout is exceeded.
@@ -125,7 +125,7 @@ class LifecycleManager:
             The service to check health for.
         driver:
             The driver to use for health checking.
-        timeout:
+        timeout_s:
             Maximum seconds to wait for health.
         poll_interval:
             Seconds between health check polls.
@@ -143,16 +143,16 @@ class LifecycleManager:
                 return
 
             elapsed = time.monotonic() - start_time
-            if elapsed + poll_interval > timeout:
+            if elapsed + poll_interval > timeout_s:
                 logger.warning(
                     "Health check timed out for service %r after %.1fs",
                     service.id,
-                    timeout,
+                    timeout_s,
                 )
                 raise LifecycleError(
                     service_id=service.id,
                     operation="start",
-                    reason=f"health check timed out after {timeout}s",
+                    reason=f"health check timed out after {timeout_s}s",
                 )
 
             await asyncio.sleep(poll_interval)

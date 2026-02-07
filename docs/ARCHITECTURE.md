@@ -389,7 +389,7 @@ sleep_mode: router
 
 unit_template: llamacpp.service.j2
 unit_vars:
-  preset_file: glm-preset.ini
+  preset_file: llama_cpp_gguf_presets.ini
   flash_attn: true
 ```
 

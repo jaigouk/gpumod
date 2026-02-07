@@ -147,24 +147,22 @@ class ServiceRemovalStrategy(AlternativeStrategy):
         gpu_total_mb: int,
         model_registry: ModelRegistry,
     ) -> list[SimulationAlternative]:
-        alternatives: list[SimulationAlternative] = []
         # Sort by VRAM descending — suggest removing largest first
         sorted_services = sorted(services, key=lambda s: s.vram_mb, reverse=True)
-        for svc in sorted_services:
-            alternatives.append(
-                SimulationAlternative(
-                    id=f"remove-{svc.id}",
-                    strategy="service_removal",
-                    description=f"Remove {svc.id} ({svc.vram_mb} MB)",
-                    affected_services=[svc.id],
-                    vram_saved_mb=svc.vram_mb,
-                    projected_total_mb=total_vram - svc.vram_mb,
-                    trade_offs=[
-                        f"Service {svc.id} will be unavailable",
-                    ],
-                )
+        return [
+            SimulationAlternative(
+                id=f"remove-{svc.id}",
+                strategy="service_removal",
+                description=f"Remove {svc.id} ({svc.vram_mb} MB)",
+                affected_services=[svc.id],
+                vram_saved_mb=svc.vram_mb,
+                projected_total_mb=total_vram - svc.vram_mb,
+                trade_offs=[
+                    f"Service {svc.id} will be unavailable",
+                ],
             )
-        return alternatives
+            for svc in sorted_services
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +197,23 @@ class SimulationEngine:
             ContextReductionStrategy(),
             ServiceRemovalStrategy(),
         ]
+
+    @staticmethod
+    def _validate_inputs(
+        add: list[str] | None,
+        remove: list[str] | None,
+        context_overrides: dict[str, int] | None,
+    ) -> None:
+        """Validate add/remove IDs and context overrides."""
+        if add:
+            for sid in add:
+                validate_service_id(sid)
+        if remove:
+            for sid in remove:
+                validate_service_id(sid)
+        if context_overrides:
+            for key, val in context_overrides.items():
+                validate_context_override(key, val)
 
     async def _get_gpu_total(self) -> int:
         """Get GPU total VRAM, wrapping errors in SimulationError."""
@@ -278,6 +293,21 @@ class SimulationEngine:
         all_alternatives.sort(key=lambda a: a.vram_saved_mb, reverse=True)
         return all_alternatives[:_MAX_ALTERNATIVES]
 
+    async def _apply_add_services(
+        self,
+        services: list[Service],
+        add: list[str],
+    ) -> None:
+        """Add extra services to the list (in-place), fetching from DB."""
+        existing_ids = {s.id for s in services}
+        for sid in add:
+            if sid not in existing_ids:
+                svc = await self._db.get_service(sid)
+                if svc is None:
+                    msg = f"Service not found: {sid!r}"
+                    raise ValueError(msg)
+                services.append(svc)
+
     async def simulate_mode(
         self,
         mode_id: str,
@@ -312,17 +342,7 @@ class SimulationEngine:
             If GPU info is unavailable.
         """
         validate_mode_id(mode_id)
-
-        # Validate add/remove IDs
-        if add:
-            for sid in add:
-                validate_service_id(sid)
-        if remove:
-            for sid in remove:
-                validate_service_id(sid)
-        if context_overrides:
-            for key, val in context_overrides.items():
-                validate_context_override(key, val)
+        self._validate_inputs(add, remove, context_overrides)
 
         gpu_total_mb = await self._get_gpu_total()
 
@@ -333,18 +353,9 @@ class SimulationEngine:
 
         services = await self._db.get_mode_services(mode_id)
 
-        # Apply add
         if add:
-            existing_ids = {s.id for s in services}
-            for sid in add:
-                if sid not in existing_ids:
-                    svc = await self._db.get_service(sid)
-                    if svc is None:
-                        msg = f"Service not found: {sid!r}"
-                        raise ValueError(msg)
-                    services.append(svc)
+            await self._apply_add_services(services, add)
 
-        # Apply remove
         if remove:
             remove_set = set(remove)
             services = [s for s in services if s.id not in remove_set]
