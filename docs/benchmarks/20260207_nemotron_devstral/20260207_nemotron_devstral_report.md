@@ -176,10 +176,21 @@ the embedding model:
 
 ## Charts
 
-- [Radar Chart (Quality)](charts/radar.png)
-- [Performance Comparison](charts/performance.png)
-- [Hallucination Results](charts/hallucination.png)
-- [Mode-Switching Lifecycle](charts/lifecycle.png)
+### Quality Comparison (Radar)
+
+![Quality Comparison Radar](charts/radar.png)
+
+### Performance Comparison
+
+![Performance Comparison](charts/performance.png)
+
+### Hallucination Detection Results
+
+![Hallucination Results](charts/hallucination.png)
+
+### Mode-Switching Lifecycle
+
+![Mode-Switching Lifecycle](charts/lifecycle.png)
 
 ## Methodology
 
