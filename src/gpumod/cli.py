@@ -8,6 +8,7 @@ the AppContext dataclass for backend dependency injection, and helper utilities
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import sqlite3
 from contextlib import asynccontextmanager, contextmanager
@@ -35,6 +36,7 @@ from gpumod.services.sleep import SleepController
 from gpumod.services.vram import VRAMTracker
 from gpumod.simulation import SimulationEngine
 from gpumod.templates.engine import TemplateEngine
+from gpumod.templates.modes import ModeLoader
 from gpumod.templates.presets import PresetLoader
 from gpumod.visualization import StatusPanel
 
@@ -64,6 +66,7 @@ class AppContext:
     model_registry: ModelRegistry
     template_engine: TemplateEngine
     preset_loader: PresetLoader
+    mode_loader: ModeLoader
     simulation: SimulationEngine
 
 
@@ -80,6 +83,11 @@ def _default_db_path() -> Path:
 def _builtin_presets_dir() -> Path:
     """Return the built-in presets directory from centralized settings."""
     return get_settings().presets_dir
+
+
+def _builtin_modes_dir() -> Path:
+    """Return the built-in modes directory from centralized settings."""
+    return get_settings().modes_dir
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +137,12 @@ async def create_context(db_path: Path | None = None) -> AppContext:
         preset_dirs.append(presets_dir)
     preset_loader = PresetLoader(preset_dirs=preset_dirs)
 
+    modes_dir = _builtin_modes_dir()
+    mode_dirs: list[Path] = []
+    if modes_dir.is_dir():
+        mode_dirs.append(modes_dir)
+    mode_loader = ModeLoader(mode_dirs=mode_dirs)
+
     simulation = SimulationEngine(db=db, vram=vram, model_registry=model_registry)
 
     return AppContext(
@@ -141,6 +155,7 @@ async def create_context(db_path: Path | None = None) -> AppContext:
         model_registry=model_registry,
         template_engine=template_engine,
         preset_loader=preset_loader,
+        mode_loader=mode_loader,
         simulation=simulation,
     )
 
@@ -378,6 +393,11 @@ def init(
         "--preset-dir",
         help="Additional directory to search for presets.",
     ),
+    mode_dir: str = typer.Option(
+        None,
+        "--mode-dir",
+        help="Additional directory to search for mode definitions.",
+    ),
 ) -> None:
     """Initialize the gpumod database and configuration."""
     console = Console()
@@ -387,22 +407,48 @@ def init(
         async with cli_context(db_path=resolved_path) as ctx:
             presets = ctx.preset_loader.discover_presets()
 
-            loaded = 0
-            skipped = 0
+            svc_loaded = 0
+            svc_skipped = 0
             for preset in presets:
                 svc = ctx.preset_loader.to_service(preset)
                 try:
                     await ctx.db.insert_service(svc)
-                    loaded += 1
+                    svc_loaded += 1
                 except sqlite3.IntegrityError:
-                    skipped += 1
+                    svc_skipped += 1
                     console.print(f"[dim]Skipped (already exists): {preset.name}[/dim]")
 
             console.print(
-                f"[bold green]Initialized.[/bold green] "
+                f"[bold green]Services:[/bold green] "
                 f"Found {len(presets)} preset(s), "
-                f"loaded {loaded}, skipped {skipped}."
+                f"loaded {svc_loaded}, skipped {svc_skipped}."
             )
+
+            modes = ctx.mode_loader.discover_modes()
+            mode_loaded = 0
+            mode_skipped = 0
+            for mode in modes:
+                with contextlib.suppress(ValueError):
+                    mode.total_vram_mb = ModeLoader.calculate_vram(mode, presets)
+                try:
+                    await ctx.db.insert_mode(mode)
+                    mode_loaded += 1
+                except sqlite3.IntegrityError:
+                    mode_skipped += 1
+                    console.print(f"[dim]Skipped (already exists): {mode.name}[/dim]")
+
+                with contextlib.suppress(sqlite3.IntegrityError):
+                    await ctx.db.set_mode_services(
+                        mode.id, mode.services, list(range(len(mode.services)))
+                    )
+
+            console.print(
+                f"[bold green]Modes:[/bold green] "
+                f"Found {len(modes)} mode(s), "
+                f"loaded {mode_loaded}, skipped {mode_skipped}."
+            )
+
+            console.print("[bold green]Initialized.[/bold green]")
 
     with error_handler(console=console):
         run_async(_cmd())
