@@ -2,7 +2,7 @@
 
 GPU Service Manager for ML workloads on Linux/NVIDIA systems.
 
-gpumod manages vLLM, llama.cpp, and FastAPI-based inference services on
+gpumod manages vLLM, llama.cpp, FastAPI, and Docker-based inference services on
 NVIDIA GPUs. It tracks VRAM allocation, supports mode-based service
 switching, provides VRAM simulation before deployment, and exposes an
 MCP server for AI assistant integration.
@@ -24,6 +24,7 @@ MCP server for AI assistant integration.
   - [gpumod model](#gpumod-model)
   - [gpumod simulate](#gpumod-simulate)
   - [gpumod plan](#gpumod-plan)
+  - [gpumod tui](#gpumod-tui)
 - [MCP Server Setup](#mcp-server-setup)
 - [AI Planning](#ai-planning)
 - [Configuration](#configuration)
@@ -55,7 +56,7 @@ gpumod solves this by providing:
 ## Features
 
 - **Service Management** -- Register, start, stop, and monitor GPU services
-  with support for vLLM, llama.cpp, and FastAPI drivers.
+  with support for vLLM, llama.cpp, FastAPI, and Docker drivers.
 - **Mode Switching** -- Define named modes (e.g., "chat", "coding",
   "embedding") that bundle services together. Switch modes to start/stop
   the right combination of services automatically.
@@ -75,6 +76,13 @@ gpumod solves this by providing:
 - **MCP Server** -- Expose GPU management as an MCP server for Claude
   Desktop and other MCP-compatible AI assistants. Includes 9 tools and
   8 browsable resources.
+- **Health Monitoring** -- Continuous health checking for running services
+  with configurable failure thresholds, jitter, exponential backoff,
+  and per-service monitoring tasks.
+- **Docker Support** -- Manage containerized services (Qdrant, Langfuse)
+  via the Docker SDK alongside systemd-managed inference services.
+- **Interactive TUI** -- Textual-based terminal dashboard with live GPU
+  status, service list, and command input (`gpumod tui`).
 - **Rich CLI** -- Beautiful terminal output with Rich tables, panels,
   VRAM bar charts, and JSON output mode for scripting.
 - **Security First** -- Input validation at every boundary, error
@@ -531,6 +539,21 @@ The plan output includes:
 
 Plans are **advisory only** -- gpumod never auto-executes LLM suggestions.
 
+### gpumod tui
+
+Launch an interactive terminal dashboard powered by
+[Textual](https://textual.textualize.io/).
+
+```bash
+gpumod tui
+```
+
+The TUI displays a live GPU status bar, service list with state
+indicators, a command input for `/status`, `/switch <mode>`,
+`/simulate`, and `/quit`, and a footer with keyboard shortcuts.
+
+Press `q` to quit or type `/help` for available commands.
+
 ---
 
 ## MCP Server Setup
@@ -769,6 +792,7 @@ unit_vars:                     # Variables passed to the systemd template
 | `vllm` | vLLM inference server | `vllm.service.j2` |
 | `llamacpp` | llama.cpp server | `llamacpp.service.j2` |
 | `fastapi` | Custom FastAPI server | `fastapi.service.j2` |
+| `docker` | Docker container | N/A (uses Docker SDK) |
 
 ### Built-in presets
 
@@ -859,6 +883,29 @@ unit_vars:
   working_dir: /opt/embedding
 ```
 
+### Example: Docker container preset
+
+```yaml
+id: qdrant
+name: Qdrant Vector DB
+driver: docker
+port: 6333
+vram_mb: 0
+health_endpoint: /healthz
+startup_timeout: 30
+extra_config:
+  image: qdrant/qdrant:v1.11
+  ports:
+    - "6333:6333"
+  environment:
+    QDRANT__STORAGE__ON_DISK_PAYLOAD: "true"
+```
+
+Docker presets use `extra_config` for container settings (image, ports,
+environment variables, volumes). The Docker driver enforces security
+controls: no `--privileged`, no host network, no unsafe volume mounts,
+and environment variable sanitization.
+
 ---
 
 ## Security Model
@@ -914,6 +961,10 @@ specification is in [`docs/SECURITY.md`](docs/SECURITY.md).
 | API key leakage | SecretStr storage, never logged (SEC-L3) |
 | LLM auto-execution | Advisory-only output (SEC-L4) |
 | Data exfiltration to LLM | Data minimization (SEC-L5) |
+| Docker privilege escalation | Privileged mode blocked (SEC-D7) |
+| Container host network | Host/macvlan network blocked (SEC-D8) |
+| Unsafe volume mounts | Critical host paths rejected (SEC-D9) |
+| Env var injection | Env variable sanitization (SEC-D10) |
 
 For the complete threat model, input validation spec, and implementation
 checklist, see [`docs/SECURITY.md`](docs/SECURITY.md).
@@ -941,8 +992,14 @@ pytest tests/ -v
 # With coverage
 pytest tests/ -v --cov=src/gpumod --cov-fail-under=80
 
-# Run only unit tests (skip integration)
+# Run only unit tests (skip integration and e2e)
 pytest tests/ -v -m "not integration"
+
+# Run E2E tests on GPU machines
+pytest tests/e2e/ -v
+
+# CPU-only CI (skip GPU/Docker tests)
+pytest tests/ -v -m "not gpu_required and not docker_required"
 ```
 
 ### Code quality
@@ -1006,6 +1063,7 @@ src/gpumod/
     factory.py             # Backend factory
     prompts.py             # Prompt templates (SEC-L2)
     response_validator.py  # LLM response validation (SEC-L1)
+  tui.py                   # Interactive Textual TUI dashboard
   services/                # Service management layer
     base.py                # ServiceDriver abstract class
     systemd.py             # systemd integration
@@ -1014,10 +1072,12 @@ src/gpumod/
     manager.py             # High-level service manager
     vram.py                # VRAM tracking
     sleep.py               # Sleep mode controller
+    health.py              # Continuous health monitoring
     drivers/               # Driver implementations
       vllm.py
       llamacpp.py
       fastapi.py
+      docker.py            # Docker container driver
   templates/               # Jinja2 template engine
     __init__.py
     engine.py              # SandboxedEnvironment template engine
@@ -1038,6 +1098,7 @@ docs/
 tests/
   unit/                    # Unit tests
   integration/             # Integration tests
+  e2e/                     # End-to-end tests (GPU/Docker optional)
 ```
 
 ### Pull requests
@@ -1053,4 +1114,4 @@ tests/
 
 MIT License. See [LICENSE](LICENSE) for details.
 
-Copyright (c) 2024-2025 Jaigouk Kim
+Copyright (c) 2024-2026 Jaigouk Kim

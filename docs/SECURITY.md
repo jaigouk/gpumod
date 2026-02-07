@@ -28,7 +28,16 @@ attack surface.
 | T10 | Terminal escape injection | Service/mode names with ANSI escapes returned to LLM, then displayed to user | Terminal manipulation | SEC-E3: Sanitize names in all output (existing `_sanitize_name()` pattern) | SEC-E3 |
 | T11 | Extra fields in tool input | LLM sends unexpected kwargs that bypass validation | Logic bypass | SEC-V2: FastMCP `strict_input_validation=True`; Pydantic `extra="forbid"` on all models | SEC-V2 |
 
-### 1.2 LLM Integration Threats (Phase 5)
+### 1.2 Container Security Threats (Phase 7)
+
+| # | Threat | Vector | Impact | Mitigation | Ref |
+|---|--------|--------|--------|------------|-----|
+| T18 | Docker privilege escalation | Container runs with `--privileged` flag | Full host access | SEC-D7: `DockerDriver` blocks privileged mode at config validation | SEC-D7 |
+| T19 | Container host network escape | Container uses `host` or `macvlan` network mode | Network-level host access | SEC-D8: `DockerDriver` rejects unsafe network modes | SEC-D8 |
+| T20 | Unsafe volume mounts | Container mounts `/`, `/etc`, or Docker socket | Host filesystem access | SEC-D9: `DockerDriver` rejects critical host paths | SEC-D9 |
+| T21 | Environment variable injection | Malicious env var keys with `=` character | Container config manipulation | SEC-D10: `DockerDriver` sanitizes env var keys | SEC-D10 |
+
+### 1.3 LLM Integration Threats (Phase 5)
 
 The `gpumod plan` command calls external LLM APIs (OpenAI, Anthropic, Ollama) and uses
 their responses to generate VRAM allocation plans. This creates additional attack surfaces.
@@ -271,6 +280,10 @@ The MCP server **should** implement rate limiting middleware:
 | **SEC-D3**: Template name validation | `templates/engine.py:57-72` | Good | Rejects path traversal and absolute paths |
 | **SEC-D4**: Pydantic `extra="forbid"` | `models.py` (all models) | Good | Rejects unexpected fields |
 | **SEC-D5**: Name sanitization | `visualization.py:38-59` | Good | Strips ANSI, Rich markup, control chars |
+| **SEC-D7**: No privileged containers | `services/drivers/docker.py` | Good | Blocks `--privileged` flag |
+| **SEC-D8**: No host network | `services/drivers/docker.py` | Good | Blocks `host` and `macvlan` modes |
+| **SEC-D9**: Volume mount validation | `services/drivers/docker.py` | Good | Rejects `/`, `/etc`, Docker socket mounts |
+| **SEC-D10**: Env var sanitization | `services/drivers/docker.py` | Good | Rejects `=` in env var keys |
 
 ### 7.2 Gaps (addressed by this spec)
 
@@ -409,3 +422,37 @@ Tickets **must** check off relevant items before closing.
 #### Integration Testing
 - [x] Integration tests cover all 15 audit findings
 - [x] 900+ total tests, 97%+ coverage
+
+### Phase 7: Production Readiness
+
+#### Container Security (SEC-D7, SEC-D8, SEC-D9, SEC-D10)
+- [x] `DockerDriver` blocks `--privileged` mode (SEC-D7)
+- [x] `DockerDriver` blocks host and macvlan network modes (SEC-D8)
+- [x] `DockerDriver` rejects unsafe volume mounts (`/`, `/etc`, `/var/run/docker.sock`) (SEC-D9)
+- [x] `DockerDriver` sanitizes environment variable keys (no `=` in keys) (SEC-D10)
+- [x] Container image names validated via SEC-V1 regex
+
+#### Health Monitor Security (SEC-H1 through SEC-H5)
+- [x] Health checks restricted to localhost (SEC-H1)
+- [x] Health endpoint paths validated against SEC-V1 (SEC-H2)
+- [x] Health check timeouts enforced per request (SEC-H3)
+- [x] Health responses validated (Content-Type, size limits) (SEC-H4)
+- [x] Monitoring task cleanup on shutdown (SEC-H5)
+
+#### TUI Security (SEC-T1 through SEC-T4)
+- [x] Untrusted text rendered via `rich.text.Text` (no markup injection) (SEC-T1)
+- [x] Service/model names passed through `sanitize_name()` before display (SEC-T2)
+- [x] TUI commands validated before dispatch (SEC-T3)
+- [x] No credentials or sensitive config displayed in TUI (SEC-T4)
+
+#### E2E Testing Infrastructure
+- [x] `gpu_required` and `docker_required` pytest markers for CI portability
+- [x] Hardware detection skips tests gracefully on CPU-only machines
+- [x] Real SQLite database fixtures for E2E tests
+- [x] Cleanup verification tests for fixture isolation
+
+#### Documentation
+- [x] README.md updated with DockerDriver, HealthMonitor, TUI, project structure
+- [x] ARCHITECTURE.md updated with component details and E2E testing
+- [x] SECURITY.md updated with SEC-D7 through SEC-D10 container controls
+- [x] Copyright updated to 2024-2026
