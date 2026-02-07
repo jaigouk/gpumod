@@ -138,7 +138,20 @@ jinja = true
 consider KV cache quantization (`--cache-type-k q4_1 --cache-type-v q4_1`)
 or mmap mode (`-ngl 0 --mmap`). These require further testing in Phase C.
 
-## Next Steps (Phase C)
+## Phase C: Simulation Results
+
+| Scenario | Total VRAM | Headroom | Fits? |
+|---|---|---|---|
+| Nemotron alone | 20,000 MB | 4,564 MB | Yes |
+| Nemotron + embed-code (primary) | 22,500 MB | 2,064 MB | Yes |
+| Nemotron + both embeddings | 27,500 MB | -2,936 MB | **No** |
+| Current code mode (comparison) | 22,500 MB | 2,064 MB | Yes |
+
+**Go/No-Go:** GO for Nemotron + embed-code mode. Same VRAM profile as current
+code mode. Adding the general embedding (vllm-embedding, 5 GB) is not possible
+alongside Nemotron -- would need sleep/wake or mmap mode for that scenario.
+
+## Next Steps (Phase D)
 
 1. Add nemotron-3-nano to `glm-preset.ini` with calibrated ctx-size
 2. Test KV cache quantization for larger context windows
