@@ -1112,6 +1112,6 @@ tests/
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+Apache License 2.0. See [LICENSE](LICENSE) for details.
 
-Copyright (c) 2024-2026 Jaigouk Kim
+Copyright 2024-2026 Jaigouk Kim
