@@ -92,28 +92,27 @@ gpumod solves this by providing:
 
 ## Installation
 
-gpumod is not published to PyPI. Install from source.
-
-### Using uv (recommended)
+gpumod is not published to PyPI. Install from source using
+[uv](https://docs.astral.sh/uv/).
 
 ```bash
 git clone https://github.com/jaigouk/gpumod.git
 cd gpumod
-uv sync            # installs runtime + dev dependencies
-uv run gpumod --help
+uv sync                # creates venv, installs runtime + dev dependencies
+uv run gpumod --help   # run the CLI through uv
 ```
 
-### Using pip
+All commands in this README use `uv run` to invoke gpumod inside the
+managed virtualenv. If you prefer activating the venv directly:
 
 ```bash
-git clone https://github.com/jaigouk/gpumod.git
-cd gpumod
-pip install -e ".[dev]"
-gpumod --help
+source .venv/bin/activate
+gpumod --help          # now available on PATH
 ```
 
 ### Requirements
 
+- [uv](https://docs.astral.sh/uv/) >= 0.4
 - Python >= 3.12
 - Linux with NVIDIA GPU and drivers installed
 - `nvidia-smi` accessible in PATH (for VRAM detection)
