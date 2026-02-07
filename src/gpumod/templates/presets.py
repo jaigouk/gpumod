@@ -68,6 +68,13 @@ class PresetLoader:
         if "model_path" in data and isinstance(data["model_path"], str):
             data["model_path"] = os.path.expandvars(data["model_path"])
 
+        # Expand environment variables in unit_vars string values.
+        if "unit_vars" in data and isinstance(data["unit_vars"], dict):
+            data["unit_vars"] = {
+                k: os.path.expandvars(v) if isinstance(v, str) else v
+                for k, v in data["unit_vars"].items()
+            }
+
         return PresetConfig(**data)
 
     def load_directory(self, directory: Path) -> list[PresetConfig]:
