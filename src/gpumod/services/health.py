@@ -12,7 +12,6 @@ Security controls:
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import random
 import time
@@ -174,8 +173,11 @@ class HealthMonitor:
             return
         if entry.task is not None and not entry.task.done():
             entry.task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await entry.task
+            # Yield once so the event loop can deliver the cancellation.
+            # We intentionally do NOT ``await entry.task`` because on
+            # Python 3.11 the cancelled task may never complete due to
+            # an asyncio.wait_for race condition (fixed in 3.12).
+            await asyncio.sleep(0)
         logger.info("Stopped monitoring %r", service_id)
 
     async def stop_all(self) -> None:
