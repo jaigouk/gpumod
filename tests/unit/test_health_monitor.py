@@ -1,15 +1,25 @@
-"""Unit tests for HealthMonitor (P7-T3)."""
+"""Unit tests for HealthMonitor (P7-T3).
+
+Tests are deterministic: instead of sleeping a fixed duration and hoping
+the poll loop ran enough iterations, we poll for the expected condition
+with a generous timeout. This avoids CI hangs on slow runners.
+"""
 
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gpumod.models import DriverType, Service
 from gpumod.services.base import ServiceDriver
+from gpumod.services.health import HealthMonitor, ServiceHealthInfo, _ServiceHealthTask
 from gpumod.services.registry import ServiceRegistry
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 
 def _make_service(
@@ -25,6 +35,27 @@ def _make_service(
         port=port,
         vram_mb=vram_mb,
     )
+
+
+async def _poll_until(
+    condition: object,
+    *,
+    timeout: float = 5.0,
+    interval: float = 0.02,
+) -> None:
+    """Poll *condition* (a callable returning bool) until truthy or *timeout*."""
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        if callable(condition) and condition():
+            return
+        await asyncio.sleep(interval)
+    msg = f"Condition not met within {timeout}s"
+    raise TimeoutError(msg)
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture()
@@ -44,17 +75,17 @@ def mock_registry(mock_driver: MagicMock) -> MagicMock:
 
 
 @pytest.fixture()
-def monitor(mock_registry: MagicMock) -> object:
-    from gpumod.services.health import HealthMonitor
-
-    return HealthMonitor(
+async def monitor(mock_registry: MagicMock) -> AsyncGenerator[HealthMonitor, None]:
+    mon = HealthMonitor(
         registry=mock_registry,
-        default_interval=0.1,
+        default_interval=0.05,
         failure_threshold=3,
         recovery_threshold=2,
-        check_timeout=1.0,
-        min_interval=0.05,
+        check_timeout=0.5,
+        min_interval=0.01,
     )
+    yield mon
+    await mon.stop_all()
 
 
 # ---------------------------------------------------------------------------
@@ -65,62 +96,36 @@ def monitor(mock_registry: MagicMock) -> object:
 class TestStartMonitoring:
     """Tests for HealthMonitor.start_monitoring()."""
 
-    async def test_start_monitoring_creates_task(self, monitor: object) -> None:
-        from gpumod.services.health import HealthMonitor
-
-        assert isinstance(monitor, HealthMonitor)
-
+    async def test_start_monitoring_creates_task(self, monitor: HealthMonitor) -> None:
         await monitor.start_monitoring("svc-1")
-
         assert "svc-1" in monitor.monitored_services
-        await monitor.stop_all()
 
     async def test_start_monitoring_idempotent(
-        self, monitor: object, mock_driver: MagicMock
+        self, monitor: HealthMonitor, mock_driver: MagicMock
     ) -> None:
-        """Calling start_monitoring twice for the same service is a no-op."""
-        from gpumod.services.health import HealthMonitor
-
-        assert isinstance(monitor, HealthMonitor)
-
         await monitor.start_monitoring("svc-1")
         await monitor.start_monitoring("svc-1")
-
         assert len(monitor.monitored_services) == 1
-        await monitor.stop_all()
 
 
 class TestStopMonitoring:
     """Tests for HealthMonitor.stop_monitoring()."""
 
-    async def test_stop_monitoring_cancels_task(self, monitor: object) -> None:
-        from gpumod.services.health import HealthMonitor
-
-        assert isinstance(monitor, HealthMonitor)
-
+    async def test_stop_monitoring_cancels_task(self, monitor: HealthMonitor) -> None:
         await monitor.start_monitoring("svc-1")
         assert "svc-1" in monitor.monitored_services
 
         await monitor.stop_monitoring("svc-1")
         assert "svc-1" not in monitor.monitored_services
 
-    async def test_stop_monitoring_idempotent(self, monitor: object) -> None:
-        """Stopping a service that isn't monitored is a no-op."""
-        from gpumod.services.health import HealthMonitor
-
-        assert isinstance(monitor, HealthMonitor)
-
+    async def test_stop_monitoring_idempotent(self, monitor: HealthMonitor) -> None:
         await monitor.stop_monitoring("svc-nonexistent")
 
 
 class TestStopAll:
     """Tests for HealthMonitor.stop_all()."""
 
-    async def test_stop_all_cancels_all_tasks(self, monitor: object) -> None:
-        from gpumod.services.health import HealthMonitor
-
-        assert isinstance(monitor, HealthMonitor)
-
+    async def test_stop_all_cancels_all_tasks(self, monitor: HealthMonitor) -> None:
         await monitor.start_monitoring("svc-1")
         await monitor.start_monitoring("svc-2")
         assert len(monitor.monitored_services) == 2
@@ -138,32 +143,22 @@ class TestHealthStateTransitions:
     """Tests for failure threshold and recovery logic."""
 
     async def test_healthy_service_stays_healthy(
-        self, monitor: object, mock_driver: MagicMock
+        self, monitor: HealthMonitor, mock_driver: MagicMock
     ) -> None:
-        """Consistent healthy checks should not trigger any state change callback."""
-        from gpumod.services.health import HealthMonitor
-
-        assert isinstance(monitor, HealthMonitor)
-
         callback = AsyncMock()
         monitor._on_state_change = callback
-
         mock_driver.health_check = AsyncMock(return_value=True)
+
         await monitor.start_monitoring("svc-1")
 
-        await asyncio.sleep(0.4)
-        await monitor.stop_all()
+        # Wait for a few successful checks to accumulate
+        await _poll_until(lambda: mock_driver.health_check.call_count >= 3)
 
         callback.assert_not_called()
 
     async def test_single_failure_no_state_change(
-        self, monitor: object, mock_driver: MagicMock
+        self, monitor: HealthMonitor, mock_driver: MagicMock
     ) -> None:
-        """One failure should not trigger unhealthy callback (threshold=3)."""
-        from gpumod.services.health import HealthMonitor
-
-        assert isinstance(monitor, HealthMonitor)
-
         callback = AsyncMock()
         monitor._on_state_change = callback
 
@@ -177,39 +172,29 @@ class TestHealthStateTransitions:
         mock_driver.health_check = AsyncMock(side_effect=_health_check)
         await monitor.start_monitoring("svc-1")
 
-        await asyncio.sleep(0.5)
-        await monitor.stop_all()
+        # Wait until enough checks have run (past the single failure)
+        await _poll_until(lambda: call_count >= 5)
 
         callback.assert_not_called()
 
     async def test_consecutive_failures_trigger_unhealthy(
-        self, monitor: object, mock_driver: MagicMock
+        self, monitor: HealthMonitor, mock_driver: MagicMock
     ) -> None:
-        """N consecutive failures should trigger on_state_change(svc, False)."""
-        from gpumod.services.health import HealthMonitor
-
-        assert isinstance(monitor, HealthMonitor)
-
         callback = AsyncMock()
         monitor._on_state_change = callback
-
         mock_driver.health_check = AsyncMock(return_value=False)
+
         await monitor.start_monitoring("svc-1")
 
-        await asyncio.sleep(0.8)
-        await monitor.stop_all()
+        await _poll_until(lambda: callback.called)
 
-        callback.assert_called()
         args = callback.call_args_list[0]
         assert args[0][0] == "svc-1"
         assert args[0][1] is False
 
-    async def test_recovery_after_unhealthy(self, monitor: object, mock_driver: MagicMock) -> None:
-        """After becoming unhealthy, M consecutive successes trigger recovery."""
-        from gpumod.services.health import HealthMonitor
-
-        assert isinstance(monitor, HealthMonitor)
-
+    async def test_recovery_after_unhealthy(
+        self, monitor: HealthMonitor, mock_driver: MagicMock
+    ) -> None:
         callback = AsyncMock()
         monitor._on_state_change = callback
 
@@ -218,15 +203,15 @@ class TestHealthStateTransitions:
         async def _health_check(service: Service) -> bool:
             nonlocal call_count
             call_count += 1
+            # First 3 calls fail, then all succeed
             return call_count > 3
 
         mock_driver.health_check = AsyncMock(side_effect=_health_check)
         await monitor.start_monitoring("svc-1")
 
-        await asyncio.sleep(1.5)
-        await monitor.stop_all()
+        # Wait for both unhealthy and recovery callbacks
+        await _poll_until(lambda: callback.call_count >= 2)
 
-        assert callback.call_count >= 2
         unhealthy_call = callback.call_args_list[0]
         assert unhealthy_call[0] == ("svc-1", False)
 
@@ -243,29 +228,22 @@ class TestCheckTimeout:
     """Tests for health check timeout."""
 
     async def test_check_timeout_prevents_hang(
-        self, monitor: object, mock_driver: MagicMock
+        self, monitor: HealthMonitor, mock_driver: MagicMock
     ) -> None:
-        """Slow health_check() should timeout and count as failure."""
-        from gpumod.services.health import HealthMonitor
-
-        assert isinstance(monitor, HealthMonitor)
-
         callback = AsyncMock()
         monitor._on_state_change = callback
 
         async def _slow_health(service: Service) -> bool:
-            await asyncio.sleep(10)
+            await asyncio.sleep(60)
             return True
 
         mock_driver.health_check = AsyncMock(side_effect=_slow_health)
-        monitor._check_timeout = 0.1
+        monitor._check_timeout = 0.05
 
         await monitor.start_monitoring("svc-1")
 
-        await asyncio.sleep(1.0)
-        await monitor.stop_all()
+        await _poll_until(lambda: callback.called)
 
-        callback.assert_called()
         assert callback.call_args_list[0][0] == ("svc-1", False)
 
 
@@ -278,9 +256,6 @@ class TestMinInterval:
     """Tests for minimum poll interval enforcement."""
 
     def test_min_interval_enforced_on_construction(self) -> None:
-        """Interval below minimum raises ValueError."""
-        from gpumod.services.health import HealthMonitor
-
         mock_reg = MagicMock(spec=ServiceRegistry)
 
         with pytest.raises(ValueError, match="[Ii]nterval"):
@@ -290,14 +265,9 @@ class TestMinInterval:
                 min_interval=5.0,
             )
 
-    async def test_start_monitoring_rejects_low_interval(self, monitor: object) -> None:
-        """Passing an interval below min_interval to start_monitoring raises."""
-        from gpumod.services.health import HealthMonitor
-
-        assert isinstance(monitor, HealthMonitor)
-
+    async def test_start_monitoring_rejects_low_interval(self, monitor: HealthMonitor) -> None:
         with pytest.raises(ValueError, match="[Ii]nterval"):
-            await monitor.start_monitoring("svc-1", interval=0.01)
+            await monitor.start_monitoring("svc-1", interval=0.001)
 
 
 # ---------------------------------------------------------------------------
@@ -309,16 +279,12 @@ class TestGetHealthStatus:
     """Tests for HealthMonitor.get_health_status()."""
 
     async def test_get_health_status_returns_info(
-        self, monitor: object, mock_driver: MagicMock
+        self, monitor: HealthMonitor, mock_driver: MagicMock
     ) -> None:
-        from gpumod.services.health import HealthMonitor, ServiceHealthInfo
-
-        assert isinstance(monitor, HealthMonitor)
-
         mock_driver.health_check = AsyncMock(return_value=True)
         await monitor.start_monitoring("svc-1")
 
-        await asyncio.sleep(0.3)
+        await _poll_until(lambda: mock_driver.health_check.call_count >= 1)
 
         info = monitor.get_health_status("svc-1")
         assert info is not None
@@ -326,13 +292,9 @@ class TestGetHealthStatus:
         assert info.service_id == "svc-1"
         assert info.healthy is True
 
-        await monitor.stop_all()
-
-    async def test_get_health_status_returns_none_for_unmonitored(self, monitor: object) -> None:
-        from gpumod.services.health import HealthMonitor
-
-        assert isinstance(monitor, HealthMonitor)
-
+    async def test_get_health_status_returns_none_for_unmonitored(
+        self, monitor: HealthMonitor
+    ) -> None:
         info = monitor.get_health_status("svc-nonexistent")
         assert info is None
 
@@ -345,11 +307,7 @@ class TestGetHealthStatus:
 class TestMonitoredServices:
     """Tests for HealthMonitor.monitored_services property."""
 
-    async def test_monitored_services_tracks_correctly(self, monitor: object) -> None:
-        from gpumod.services.health import HealthMonitor
-
-        assert isinstance(monitor, HealthMonitor)
-
+    async def test_monitored_services_tracks_correctly(self, monitor: HealthMonitor) -> None:
         assert monitor.monitored_services == frozenset()
 
         await monitor.start_monitoring("svc-1")
@@ -373,12 +331,7 @@ class TestMonitoredServices:
 class TestBackoff:
     """Tests for exponential backoff on failures."""
 
-    def test_backoff_increases_interval(self, monitor: object) -> None:
-        """_compute_sleep should return larger intervals as failures increase."""
-        from gpumod.services.health import HealthMonitor, _ServiceHealthTask
-
-        assert isinstance(monitor, HealthMonitor)
-
+    def test_backoff_increases_interval(self, monitor: HealthMonitor) -> None:
         entry = _ServiceHealthTask(
             service_id="svc-1",
             interval=0.1,
@@ -387,29 +340,21 @@ class TestBackoff:
             check_timeout=1.0,
         )
 
-        # Healthy state: should return ~base interval (with jitter)
         entry.healthy = True
         entry.consecutive_failures = 0
         healthy_sleep = monitor._compute_sleep(entry)
         assert 0.05 < healthy_sleep < 0.15
 
-        # Unhealthy with 3 failures: backoff = 0.1 * 2^3 = 0.8
         entry.healthy = False
         entry.consecutive_failures = 3
         backoff_3 = monitor._compute_sleep(entry)
         assert backoff_3 > healthy_sleep
 
-        # Unhealthy with 5 failures: backoff = 0.1 * 2^5 = 3.2
         entry.consecutive_failures = 5
         backoff_5 = monitor._compute_sleep(entry)
         assert backoff_5 > backoff_3
 
-    def test_backoff_resets_on_recovery(self, monitor: object) -> None:
-        """After recovery, interval should return to base."""
-        from gpumod.services.health import HealthMonitor, _ServiceHealthTask
-
-        assert isinstance(monitor, HealthMonitor)
-
+    def test_backoff_resets_on_recovery(self, monitor: HealthMonitor) -> None:
         entry = _ServiceHealthTask(
             service_id="svc-1",
             interval=0.1,
@@ -418,12 +363,10 @@ class TestBackoff:
             check_timeout=1.0,
         )
 
-        # Set to unhealthy with many failures
         entry.healthy = False
         entry.consecutive_failures = 5
         backoff_sleep = monitor._compute_sleep(entry)
 
-        # Recover
         entry.healthy = True
         entry.consecutive_failures = 0
         recovered_sleep = monitor._compute_sleep(entry)
@@ -434,12 +377,7 @@ class TestBackoff:
 class TestJitter:
     """Tests for jitter application."""
 
-    def test_jitter_varies_sleep_times(self, monitor: object) -> None:
-        """_compute_sleep should produce varying results due to jitter."""
-        from gpumod.services.health import HealthMonitor, _ServiceHealthTask
-
-        assert isinstance(monitor, HealthMonitor)
-
+    def test_jitter_varies_sleep_times(self, monitor: HealthMonitor) -> None:
         entry = _ServiceHealthTask(
             service_id="svc-1",
             interval=10.0,
@@ -451,12 +389,10 @@ class TestJitter:
 
         durations = [monitor._compute_sleep(entry) for _ in range(20)]
 
-        # All should be in the jitter range: 10 * (0.8 to 1.2)
         for d in durations:
             assert 7.5 < d < 12.5
 
-        # With 20 samples, random jitter should produce variation
-        unique = set(round(d, 4) for d in durations)
+        unique = {round(d, 4) for d in durations}
         assert len(unique) > 1
 
 
@@ -469,8 +405,6 @@ class TestServiceManagerIntegration:
     """Tests for HealthMonitor integration with ServiceManager."""
 
     async def test_service_manager_accepts_health_param(self) -> None:
-        """ServiceManager should accept optional health parameter."""
-        from gpumod.services.health import HealthMonitor
         from gpumod.services.manager import ServiceManager
 
         mock_db = MagicMock()
@@ -492,8 +426,6 @@ class TestServiceManagerIntegration:
         assert mgr._health is mock_health
 
     async def test_service_manager_creates_default_health(self) -> None:
-        """ServiceManager without health param should create a default one."""
-        from gpumod.services.health import HealthMonitor
         from gpumod.services.manager import ServiceManager
 
         mock_db = MagicMock()
