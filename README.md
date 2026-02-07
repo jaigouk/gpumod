@@ -76,7 +76,7 @@ IDE to let AI assistants query GPU status, simulate VRAM, and switch modes.
 ```
 
 See [docs/mcp.md](docs/mcp.md) for setup instructions for Claude Code,
-Cursor, Claude Desktop, and Windsurf.
+Cursor, Claude Desktop, and Antigravity.
 
 ## Security
 
@@ -89,7 +89,7 @@ parameterized queries, sandboxed templates, and no `shell=True`. See
 | Document | Description |
 |----------|-------------|
 | [CLI Reference](docs/cli.md) | All commands: status, service, mode, simulate, model, template, plan, tui |
-| [MCP Integration](docs/mcp.md) | MCP server setup for Claude Code, Cursor, Claude Desktop, Windsurf |
+| [MCP Integration](docs/mcp.md) | MCP server setup for Claude Code, Cursor, Claude Desktop, Antigravity |
 | [Configuration](docs/configuration.md) | Environment variables, LLM backends, settings |
 | [Presets](docs/presets.md) | YAML preset schema, driver types, built-in examples |
 | [AI Planning](docs/ai-planning.md) | LLM-assisted VRAM allocation planning |

@@ -76,10 +76,14 @@ Add to `~/.config/claude/claude_desktop_config.json` (Linux) or
 
 Restart Claude Desktop after editing the config.
 
-## Windsurf / Other MCP Clients
+## Antigravity (Google)
 
-Most MCP-compatible editors use the same JSON format. Create a
-`mcp_config.json` (or the editor's equivalent) with:
+Antigravity stores MCP config in `mcp_config.json`. To edit it:
+
+1. Open the **...** dropdown at the top of the agent panel
+2. Click **Manage MCP Servers**
+3. Click **View raw config**
+4. Add the gpumod entry:
 
 ```json
 {
@@ -94,6 +98,8 @@ Most MCP-compatible editors use the same JSON format. Create a
   }
 }
 ```
+
+Save and the server will connect automatically.
 
 ## Running the MCP server manually
 
