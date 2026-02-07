@@ -223,8 +223,7 @@ def sanitize_name(name: str) -> str:
     # Strip Rich markup tags like [bold red]...[/bold red]
     cleaned = re.sub(r"\[/?[a-zA-Z0-9_ ]+\]", "", cleaned)
     # Remove any remaining control characters (except newline/tab)
-    cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", cleaned)
-    return cleaned
+    return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", cleaned)
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +242,7 @@ ALLOWED_RUNTIMES: frozenset[str] = frozenset({"runc", "nvidia"})
 
 VOLUME_ALLOWED_BASES: tuple[str, ...] = (
     os.path.expanduser("~"),
-    "/tmp",
+    "/tmp",  # noqa: S108 -- /tmp is an allowed volume mount base
 )
 
 # Keys allowed in Docker service extra_config

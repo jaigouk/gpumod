@@ -151,7 +151,7 @@ class GpumodSettings(BaseSettings):
         """Validate db_path resolves under $HOME or /tmp (SEC-V4)."""
         resolved = v.resolve()
         home = Path.home().resolve()
-        tmp = Path("/tmp").resolve()
+        tmp = Path("/tmp").resolve()  # noqa: S108 -- validating paths under /tmp is intentional
         if not (
             str(resolved).startswith(str(home) + "/") or str(resolved).startswith(str(tmp) + "/")
         ):
@@ -179,7 +179,7 @@ def get_settings() -> GpumodSettings:
     GpumodSettings
         The application settings instance.
     """
-    global _settings_instance  # noqa: PLW0603
+    global _settings_instance
     if _settings_instance is None:
         _settings_instance = GpumodSettings()
     return _settings_instance
@@ -190,5 +190,5 @@ def _clear_settings_cache() -> None:
 
     Intended for test teardown so each test can start with fresh settings.
     """
-    global _settings_instance  # noqa: PLW0603
+    global _settings_instance
     _settings_instance = None

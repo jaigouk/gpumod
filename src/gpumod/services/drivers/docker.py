@@ -142,7 +142,7 @@ class DockerDriver(ServiceDriver):
 
         except docker.errors.NotFound:
             return ServiceStatus(state=ServiceState.STOPPED)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return ServiceStatus(state=ServiceState.UNKNOWN)
 
     async def health_check(self, service: Service) -> bool:

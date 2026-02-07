@@ -32,7 +32,7 @@ _console = Console()
 # ---------------------------------------------------------------------------
 
 
-def _check_api_key(settings: Any) -> None:  # noqa: ANN401
+def _check_api_key(settings: Any) -> None:
     """Check that an API key is configured for non-Ollama backends.
 
     Raises
@@ -210,7 +210,7 @@ def suggest(
                 # 10. Display results
                 if as_json:
                     output = _build_json_output(plan, sim_result)
-                    print(json.dumps(output, indent=2, default=str))  # noqa: T201
+                    print(json.dumps(output, indent=2, default=str))
                     return
 
                 _render_plan_table(plan, sim_result, console=_console)

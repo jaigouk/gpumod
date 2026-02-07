@@ -63,8 +63,7 @@ class PlanSuggestion(BaseModel):
         # Strip ANSI escape sequences
         v = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", v)
         # Remove control characters (except newline/tab)
-        v = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", v)
-        return v
+        return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", v)
 
 
 def validate_plan_response(raw: dict[str, Any]) -> PlanSuggestion:

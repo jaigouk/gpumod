@@ -34,7 +34,7 @@ def make_docker_service(
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 def mock_docker_client() -> MagicMock:
     """Create a mock Docker client."""
     client = MagicMock()
@@ -42,7 +42,7 @@ def mock_docker_client() -> MagicMock:
     return client
 
 
-@pytest.fixture()
+@pytest.fixture
 def driver(mock_docker_client: MagicMock) -> object:
     """Create a DockerDriver with a mocked Docker client."""
     from gpumod.services.drivers.docker import DockerDriver

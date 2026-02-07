@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from rich.panel import Panel
 from rich.text import Text
 
-from gpumod.validation import sanitize_name  # noqa: TCH001 -- runtime import needed
+from gpumod.validation import sanitize_name
 
 if TYPE_CHECKING:
     from gpumod.models import SystemStatus

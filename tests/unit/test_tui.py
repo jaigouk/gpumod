@@ -84,7 +84,7 @@ def _make_system_status(
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 def mock_ctx() -> MagicMock:
     """Create a mock AppContext for TUI testing."""
     ctx = MagicMock()

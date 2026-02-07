@@ -80,7 +80,7 @@ class VLLMDriver(ServiceDriver):
 
             return ServiceStatus(state=ServiceState.RUNNING, health_ok=True)
 
-        except Exception:  # noqa: BLE001
+        except Exception:
             return ServiceStatus(state=ServiceState.UNKNOWN)
 
     # ------------------------------------------------------------------

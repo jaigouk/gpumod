@@ -87,7 +87,7 @@ class VRAMTracker:
         """Return a mapping of PID to VRAM usage (MiB) from XML output."""
         raw = await self._run_nvidia_smi(["-q", "-x"])
 
-        root = ET.fromstring(raw)
+        root = ET.fromstring(raw)  # noqa: S314 -- parsing trusted nvidia-smi output
         result: dict[int, int] = {}
 
         for proc_info in root.iter("process_info"):
