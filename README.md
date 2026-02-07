@@ -102,4 +102,4 @@ parameterized queries, sandboxed templates, and no `shell=True`. See
 
 Apache License 2.0. See [LICENSE](LICENSE) for details.
 
-Copyright 2024-2026 Jaigouk Kim
+Copyright 2026 Jaigouk Kim
