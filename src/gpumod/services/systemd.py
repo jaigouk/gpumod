@@ -74,6 +74,9 @@ def _validate_command(command: str) -> None:
 # ------------------------------------------------------------------
 
 
+_SUDO_COMMANDS: frozenset[str] = frozenset({"start", "stop", "restart", "enable", "disable"})
+
+
 async def systemctl(
     command: str,
     unit: str,
@@ -81,6 +84,10 @@ async def systemctl(
     timeout: float = 30.0,
 ) -> SystemctlResult:
     """Run ``systemctl <command> <unit>`` and return the result.
+
+    Mutating commands (start, stop, restart, enable, disable) are
+    automatically prefixed with ``sudo`` to work with sudoers configs
+    like ``/etc/sudoers.d/gpu-mode``.
 
     Raises
     ------
@@ -92,10 +99,14 @@ async def systemctl(
     _validate_command(command)
     _validate_unit_name(unit)
 
+    argv: list[str] = (
+        ["sudo", "systemctl", command, unit]
+        if command in _SUDO_COMMANDS
+        else ["systemctl", command, unit]
+    )
+
     proc = await asyncio.create_subprocess_exec(
-        "systemctl",
-        command,
-        unit,
+        *argv,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )

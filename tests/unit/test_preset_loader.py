@@ -305,6 +305,33 @@ class TestToService:
         assert svc.sleep_mode == SleepMode.NONE
         assert svc.port is None
 
+    def test_sets_unit_name_from_id(self, valid_preset_file: Path) -> None:
+        from gpumod.templates.presets import PresetLoader
+
+        loader = PresetLoader()
+        preset = loader.load_file(valid_preset_file)
+        svc = loader.to_service(preset)
+        assert svc.unit_name == "devstral-small.service"
+
+    def test_minimal_preset_gets_unit_name(self, tmp_path: Path) -> None:
+        from gpumod.templates.presets import PresetLoader
+
+        f = tmp_path / "minimal.yaml"
+        f.write_text(
+            yaml.dump(
+                {
+                    "id": "my-svc",
+                    "name": "My Service",
+                    "driver": "fastapi",
+                    "vram_mb": 0,
+                }
+            )
+        )
+        loader = PresetLoader()
+        preset = loader.load_file(f)
+        svc = loader.to_service(preset)
+        assert svc.unit_name == "my-svc.service"
+
 
 # ── discover_presets ────────────────────────────────────────────────────
 
