@@ -46,6 +46,47 @@ def _format_parameters(params: float | None) -> str:
     return f"{params}B"
 
 
+def _build_register_kwargs(
+    *,
+    file_path: str | None,
+    vram: int | None,
+    params: float | None,
+    architecture: str | None,
+    quant: str | None,
+) -> dict[str, Any]:
+    """Build kwargs dict for ModelRegistry.register()."""
+    kwargs: dict[str, Any] = {}
+    if file_path is not None:
+        kwargs["file_path"] = file_path
+    if vram is not None:
+        kwargs["base_vram_mb"] = vram
+    if params is not None:
+        kwargs["parameters_b"] = params
+    if architecture is not None:
+        kwargs["architecture"] = architecture
+    if quant is not None:
+        kwargs["quant"] = quant
+    return kwargs
+
+
+def _print_registered(registered: ModelInfo) -> None:
+    """Print registration result to console."""
+    _console.print(
+        f"[green]Registered model [bold]{registered.id}[/bold] successfully.[/green]"
+    )
+    _console.print(f"  Source: {registered.source}")
+    if registered.parameters_b is not None:
+        _console.print(f"  Parameters: {_format_parameters(registered.parameters_b)}")
+    if registered.architecture is not None:
+        _console.print(f"  Architecture: {registered.architecture}")
+    if registered.base_vram_mb is not None:
+        _console.print(f"  Base VRAM: {registered.base_vram_mb} MB")
+    if registered.quantizations:
+        _console.print(f"  Quantizations: {', '.join(registered.quantizations)}")
+    if registered.notes:
+        _console.print(f"  Notes: {registered.notes}")
+
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
@@ -184,6 +225,9 @@ def register_model(
     architecture: str | None = typer.Option(
         None, "--architecture", help="Architecture name for local models."
     ),
+    quant: str | None = typer.Option(
+        None, "--quant", help="GGUF quantization to select (e.g. Q4_K_M, Q4_K_XL)."
+    ),
 ) -> None:
     """Register a new ML model in the registry."""
     from gpumod.cli import cli_context, error_handler, run_async
@@ -193,29 +237,17 @@ def register_model(
         async with cli_context() as ctx:
             with error_handler(console=_console):
                 model_source = ModelSource(source)
-
-                kwargs: dict[str, Any] = {}
-                if file_path is not None:
-                    kwargs["file_path"] = file_path
-                if vram is not None:
-                    kwargs["base_vram_mb"] = vram
-                if params is not None:
-                    kwargs["parameters_b"] = params
-                if architecture is not None:
-                    kwargs["architecture"] = architecture
-
+                kwargs = _build_register_kwargs(
+                    file_path=file_path,
+                    vram=vram,
+                    params=params,
+                    architecture=architecture,
+                    quant=quant,
+                )
                 registered: ModelInfo = await ctx.model_registry.register(
                     model_id, model_source, **kwargs
                 )
-
-                _console.print(
-                    f"[green]Registered model [bold]{registered.id}[/bold] successfully.[/green]"
-                )
-                _console.print(f"  Source: {registered.source}")
-                if registered.parameters_b is not None:
-                    _console.print(f"  Parameters: {_format_parameters(registered.parameters_b)}")
-                if registered.architecture is not None:
-                    _console.print(f"  Architecture: {registered.architecture}")
+                _print_registered(registered)
 
     run_async(_cmd())
 
