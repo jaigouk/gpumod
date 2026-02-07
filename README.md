@@ -92,29 +92,29 @@ gpumod solves this by providing:
 
 ## Installation
 
-### From PyPI
+gpumod is not published to PyPI. Install from source.
+
+### Using uv (recommended)
 
 ```bash
-pip install gpumod
+git clone https://github.com/jaigouk/gpumod.git
+cd gpumod
+uv sync            # installs runtime + dev dependencies
+uv run gpumod --help
 ```
 
-### From source (development)
+### Using pip
 
 ```bash
 git clone https://github.com/jaigouk/gpumod.git
 cd gpumod
 pip install -e ".[dev]"
-```
-
-Or using [uv](https://docs.astral.sh/uv/):
-
-```bash
-uv pip install -e ".[dev]"
+gpumod --help
 ```
 
 ### Requirements
 
-- Python >= 3.11
+- Python >= 3.12
 - Linux with NVIDIA GPU and drivers installed
 - `nvidia-smi` accessible in PATH (for VRAM detection)
 
@@ -559,22 +559,94 @@ Press `q` to quit or type `/help` for available commands.
 ## MCP Server Setup
 
 gpumod includes an MCP (Model Context Protocol) server that lets AI
-assistants like Claude Desktop manage GPU services directly.
+assistants manage GPU services directly. The server exposes tools for
+querying status, simulating VRAM, and switching modes.
 
-### Claude Desktop Configuration
+All IDE configurations below assume you cloned gpumod and installed it
+with `uv sync`. Adjust `command` paths if you used pip instead.
 
-Add the following to your Claude Desktop MCP configuration file
-(`~/.config/claude/claude_desktop_config.json` on Linux):
+### Claude Code
+
+Claude Code discovers MCP servers from `.mcp.json` in the project root.
+Create this file in your project (or home directory for global access):
 
 ```json
 {
   "mcpServers": {
     "gpumod": {
-      "command": "python",
-      "args": ["-m", "gpumod.mcp_main"],
+      "command": "uv",
+      "args": ["--directory", "/path/to/gpumod", "run", "python", "-m", "gpumod.mcp_main"],
       "env": {
-        "GPUMOD_DB_PATH": "~/.config/gpumod/gpumod.db",
-        "GPUMOD_MCP_RATE_LIMIT": "10"
+        "GPUMOD_DB_PATH": "~/.config/gpumod/gpumod.db"
+      }
+    }
+  }
+}
+```
+
+Or add it via the CLI:
+
+```bash
+claude mcp add gpumod \
+  -- uv --directory /path/to/gpumod run python -m gpumod.mcp_main
+```
+
+### Cursor
+
+Cursor reads MCP configuration from `.cursor/mcp.json` in the project
+root. Create the file:
+
+```json
+{
+  "mcpServers": {
+    "gpumod": {
+      "command": "uv",
+      "args": ["--directory", "/path/to/gpumod", "run", "python", "-m", "gpumod.mcp_main"],
+      "env": {
+        "GPUMOD_DB_PATH": "~/.config/gpumod/gpumod.db"
+      }
+    }
+  }
+}
+```
+
+After saving, restart the Cursor agent or open Settings > MCP to verify
+the server is connected.
+
+### Claude Desktop
+
+Add to `~/.config/claude/claude_desktop_config.json` (Linux) or
+`~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
+
+```json
+{
+  "mcpServers": {
+    "gpumod": {
+      "command": "uv",
+      "args": ["--directory", "/path/to/gpumod", "run", "python", "-m", "gpumod.mcp_main"],
+      "env": {
+        "GPUMOD_DB_PATH": "~/.config/gpumod/gpumod.db"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Desktop after editing the config.
+
+### Windsurf / Other MCP Clients
+
+Most MCP-compatible editors use the same JSON format. Create a
+`mcp_config.json` (or the editor's equivalent) with:
+
+```json
+{
+  "mcpServers": {
+    "gpumod": {
+      "command": "uv",
+      "args": ["--directory", "/path/to/gpumod", "run", "python", "-m", "gpumod.mcp_main"],
+      "env": {
+        "GPUMOD_DB_PATH": "~/.config/gpumod/gpumod.db"
       }
     }
   }
@@ -583,12 +655,15 @@ Add the following to your Claude Desktop MCP configuration file
 
 ### Running the MCP server manually
 
+For testing or debugging, run the server directly:
+
 ```bash
-python -m gpumod.mcp_main
+cd /path/to/gpumod
+uv run python -m gpumod.mcp_main
 ```
 
-The server starts in stdio mode by default, which is the standard
-transport for MCP clients.
+The server starts in stdio mode, which is the standard transport for
+MCP clients. Set `GPUMOD_LOG_LEVEL=DEBUG` for verbose output.
 
 ### Available MCP Tools
 
@@ -980,26 +1055,26 @@ Contributions are welcome. Please follow these guidelines:
 ```bash
 git clone https://github.com/jaigouk/gpumod.git
 cd gpumod
-pip install -e ".[dev]"
+uv sync   # installs all dependencies including dev group
 ```
 
 ### Running tests
 
 ```bash
 # Full test suite
-pytest tests/ -v
+uv run pytest tests/ -v
 
 # With coverage
-pytest tests/ -v --cov=src/gpumod --cov-fail-under=80
+uv run pytest tests/ -v --cov=src/gpumod --cov-fail-under=80
 
 # Run only unit tests (skip integration and e2e)
-pytest tests/ -v -m "not integration"
+uv run pytest tests/ -v -m "not integration"
 
 # Run E2E tests on GPU machines
-pytest tests/e2e/ -v
+uv run pytest tests/e2e/ -v
 
 # CPU-only CI (skip GPU/Docker tests)
-pytest tests/ -v -m "not gpu_required and not docker_required"
+uv run pytest tests/ -v -m "not gpu_required and not docker_required"
 ```
 
 ### Code quality
@@ -1008,24 +1083,24 @@ gpumod enforces strict code quality via ruff, mypy, and pytest:
 
 ```bash
 # Lint
-ruff check src/ tests/
+uv run ruff check src/ tests/
 
 # Format check
-ruff format --check src/ tests/
+uv run ruff format --check src/ tests/
 
 # Type check (strict mode)
-mypy src/ --strict
+uv run mypy src/ --strict
 
 # Full quality gate
-ruff check src/ tests/ && \
-  ruff format --check src/ tests/ && \
-  mypy src/ --strict && \
-  pytest tests/ -v --cov=src/gpumod --cov-fail-under=80
+uv run ruff check src/ tests/ && \
+  uv run ruff format --check src/ tests/ && \
+  uv run mypy src/ --strict && \
+  uv run pytest tests/ -v --cov=src/gpumod --cov-fail-under=80
 ```
 
 ### Code style
 
-- Python >= 3.11 with `from __future__ import annotations`
+- Python >= 3.12 with `from __future__ import annotations`
 - Async-first: use `async`/`await` for I/O operations
 - Pydantic v2 models with `ConfigDict(extra="forbid")`
 - Type annotations on all functions (mypy strict mode)
