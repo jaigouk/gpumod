@@ -393,3 +393,35 @@ class TestPresetSecurity:
             assert preset.model_path == "/data/models/code.gguf"
         finally:
             del os.environ["GPUMOD_TEST_MODELS"]
+
+    def test_env_var_expansion_in_unit_vars(self, tmp_path: Path) -> None:
+        """Environment variables in unit_vars string values should be expanded."""
+        import os
+
+        from gpumod.templates.presets import PresetLoader
+
+        os.environ["GPUMOD_TEST_HOME"] = "/home/testuser"
+        try:
+            f = tmp_path / "unitvar.yaml"
+            f.write_text(
+                yaml.dump(
+                    {
+                        "id": "unitvar-test",
+                        "name": "UnitVar Test",
+                        "driver": "llamacpp",
+                        "vram_mb": 20000,
+                        "unit_vars": {
+                            "models_dir": "$GPUMOD_TEST_HOME/bin",
+                            "models_max": 1,
+                            "jinja": True,
+                        },
+                    }
+                )
+            )
+            loader = PresetLoader()
+            preset = loader.load_file(f)
+            assert preset.unit_vars["models_dir"] == "/home/testuser/bin"
+            assert preset.unit_vars["models_max"] == 1
+            assert preset.unit_vars["jinja"] is True
+        finally:
+            del os.environ["GPUMOD_TEST_HOME"]
