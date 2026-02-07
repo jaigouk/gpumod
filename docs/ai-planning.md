@@ -74,3 +74,18 @@ within the 24 GB RTX 4090 with 15 GB headroom for KV cache.
 
 The output is text you read and decide whether to act on.
 gpumod does not auto-execute any LLM suggestion.
+
+## Planning via MCP
+
+If you use gpumod through its MCP server (in Cursor, Claude Code, etc.),
+you do not need `plan suggest`. The AI assistant **is** the planner -- it
+can call MCP tools directly to gather the same information and reason
+about it:
+
+1. `gpu_status` -- see GPU capacity and current VRAM usage
+2. `list_services` -- see registered services and their VRAM requirements
+3. `simulate_mode` -- test whether a configuration fits before switching
+4. `switch_mode` -- apply the plan (with your confirmation)
+
+The `plan suggest` CLI command exists for when you are working in the
+terminal without an AI assistant.
