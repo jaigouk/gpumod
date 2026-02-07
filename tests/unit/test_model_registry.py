@@ -93,7 +93,7 @@ class TestRegisterHuggingFace:
         with patch.object(registry._hf_fetcher, "fetch", mock_fetch):
             await registry.register("mistralai/Mistral-7B-v0.1", ModelSource.HUGGINGFACE)
 
-        mock_fetch.assert_called_once_with("mistralai/Mistral-7B-v0.1")
+        mock_fetch.assert_called_once_with("mistralai/Mistral-7B-v0.1", quant=None)
 
 
 # ---------------------------------------------------------------------------

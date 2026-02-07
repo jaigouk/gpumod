@@ -212,7 +212,7 @@ class TestProductionModes:
         loader = ModeLoader(mode_dirs=[MODES_DIR])
         modes = loader.discover_modes()
         ids = {m.id for m in modes}
-        assert ids == {"code", "rag", "hacker", "speak", "blank", "finetuning"}
+        assert ids == {"code", "rag", "hacker", "speak", "blank", "finetuning", "nemotron"}
 
     def test_vram_calculation_with_real_presets(self) -> None:
         from gpumod.templates.modes import ModeLoader

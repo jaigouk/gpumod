@@ -3,6 +3,9 @@
 Fetches model metadata from the HuggingFace Hub API for VRAM estimation
 and model registry purposes. All network calls are wrapped in
 asyncio.to_thread() since huggingface_hub is a synchronous library.
+
+Supports both standard model repos (safetensors) and GGUF repos,
+estimating VRAM from file sizes without requiring a download.
 """
 
 from __future__ import annotations
@@ -19,21 +22,54 @@ from gpumod.models import ModelInfo, ModelSource
 # Regex for valid HuggingFace model IDs: org/model with alphanumeric, hyphens, underscores, dots
 _MODEL_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
 
+# Known GGUF quantization patterns (longest first to avoid partial matches)
+_GGUF_QUANT_PATTERNS: tuple[str, ...] = (
+    "Q4_K_XL",
+    "Q8_K_XL",
+    "Q4_K_M",
+    "Q4_K_S",
+    "Q5_K_M",
+    "Q5_K_S",
+    "Q6_K",
+    "Q8_0",
+    "Q4_0",
+    "Q4_1",
+    "Q5_0",
+    "Q5_1",
+    "Q2_K",
+    "Q3_K_M",
+    "Q3_K_S",
+    "IQ4_XS",
+    "IQ4_NL",
+)
+
+# Overhead factor for VRAM estimation from GGUF file size
+_VRAM_OVERHEAD_FACTOR = 1.1
+
 
 class HuggingFaceFetcher:
     """Fetches model metadata from HuggingFace Hub.
 
     Uses huggingface_hub.model_info() to retrieve model configuration,
     safetensors metadata, and architecture details for VRAM estimation.
+    For GGUF repos, estimates VRAM from file sizes without downloading.
     """
 
-    async def fetch(self, model_id: str) -> ModelInfo:
+    async def fetch(
+        self,
+        model_id: str,
+        *,
+        quant: str | None = None,
+    ) -> ModelInfo:
         """Fetch model info from HuggingFace Hub.
 
         Parameters
         ----------
         model_id:
             HuggingFace model identifier in "org/model" format.
+        quant:
+            Optional quantization filter for GGUF repos (e.g. "Q4_K_XL").
+            When set, VRAM is estimated from the matching GGUF file size.
 
         Returns
         -------
@@ -50,7 +86,9 @@ class HuggingFaceFetcher:
         self._validate_model_id(model_id)
 
         try:
-            info = await asyncio.to_thread(model_info, model_id)
+            info = await asyncio.to_thread(
+                model_info, model_id, files_metadata=True,
+            )
         except Exception as exc:
             msg = f"Failed to fetch model info for {model_id!r}: {exc}"
             raise RuntimeError(msg) from exc
@@ -83,10 +121,14 @@ class HuggingFaceFetcher:
             num_attention_heads = config.get("num_attention_heads")
             num_kv_heads = config.get("num_key_value_heads", num_attention_heads)
 
+        # Detect GGUF files from siblings
+        gguf_files = self._find_gguf_files(info)
+        quantizations = self._extract_quants(gguf_files)
+
         # Estimate VRAM
-        base_vram_mb: int | None = None
-        if parameters_b is not None:
-            base_vram_mb = self._estimate_vram_mb(parameters_b, dtype_bytes=2)
+        base_vram_mb, notes = self._estimate_base_vram(
+            gguf_files, quant, parameters_b,
+        )
 
         # Estimate KV cache
         kv_cache_per_1k: int | None = None
@@ -110,8 +152,92 @@ class HuggingFaceFetcher:
             architecture=architecture,
             base_vram_mb=base_vram_mb,
             kv_cache_per_1k_tokens_mb=kv_cache_per_1k,
+            quantizations=quantizations,
             fetched_at=datetime.now(tz=UTC).isoformat(),
+            notes=notes,
         )
+
+    def _estimate_base_vram(
+        self,
+        gguf_files: list[tuple[str, int]],
+        quant: str | None,
+        parameters_b: float | None,
+    ) -> tuple[int | None, str | None]:
+        """Estimate base VRAM from GGUF file sizes or parameter count."""
+        if gguf_files:
+            chosen = self._pick_gguf_file(gguf_files, quant)
+            if chosen is not None:
+                filename, size_bytes = chosen
+                vram = self._estimate_vram_from_file_size(size_bytes)
+                size_gb = size_bytes / (1024**3)
+                notes = (
+                    f"GGUF repo: {len(gguf_files)} file(s). "
+                    f"Estimated from {filename} ({size_gb:.1f} GB)"
+                )
+                return vram, notes
+        elif parameters_b is not None:
+            return self._estimate_vram_mb(parameters_b, dtype_bytes=2), None
+        return None, None
+
+    @staticmethod
+    def _find_gguf_files(info: object) -> list[tuple[str, int]]:
+        """Extract GGUF filenames and sizes from HF model info siblings.
+
+        Returns
+        -------
+        list[tuple[str, int]]
+            List of (filename, size_bytes) tuples for .gguf files.
+        """
+        siblings = getattr(info, "siblings", None)
+        if not siblings:
+            return []
+        result: list[tuple[str, int]] = []
+        for s in siblings:
+            name = getattr(s, "rfilename", "") or ""
+            size = getattr(s, "size", None)
+            if name.lower().endswith(".gguf") and size is not None and size > 0:
+                result.append((name, size))
+        return result
+
+    @staticmethod
+    def _extract_quants(gguf_files: list[tuple[str, int]]) -> list[str]:
+        """Extract quantization types from GGUF filenames."""
+        quants: list[str] = []
+        for filename, _ in gguf_files:
+            upper = filename.upper()
+            for pattern in _GGUF_QUANT_PATTERNS:
+                if pattern in upper and pattern not in quants:
+                    quants.append(pattern)
+                    break
+        return quants
+
+    @staticmethod
+    def _pick_gguf_file(
+        gguf_files: list[tuple[str, int]],
+        quant: str | None,
+    ) -> tuple[str, int] | None:
+        """Pick a GGUF file, optionally filtering by quantization.
+
+        If quant is specified, returns the matching file.
+        Otherwise returns the smallest GGUF file as a reasonable default.
+        """
+        if not gguf_files:
+            return None
+        if quant is not None:
+            quant_upper = quant.upper()
+            for filename, size in gguf_files:
+                if quant_upper in filename.upper():
+                    return (filename, size)
+            return None
+        return min(gguf_files, key=lambda x: x[1])
+
+    @staticmethod
+    def _estimate_vram_from_file_size(file_size_bytes: int) -> int:
+        """Estimate VRAM from GGUF file size with 10% overhead."""
+        if file_size_bytes == 0:
+            return 0
+        size_mb = file_size_bytes / (1024 * 1024)
+        return math.ceil(size_mb * _VRAM_OVERHEAD_FACTOR)
 
     def _estimate_vram_mb(self, parameters_b: float, dtype_bytes: int = 2) -> int:
         """Estimate base VRAM in MB from parameter count.
