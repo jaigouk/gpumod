@@ -17,6 +17,7 @@ from gpumod.models import (
     ServiceStatus,
     SystemStatus,
 )
+from gpumod.services.health import HealthMonitor
 from gpumod.services.vram import NvidiaSmiError
 
 if TYPE_CHECKING:
@@ -50,6 +51,9 @@ class ServiceManager:
         The VRAMTracker for GPU memory queries and estimation.
     sleep:
         The SleepController for sleep/wake operations.
+    health:
+        Optional HealthMonitor for continuous health checking.
+        If None, a default instance is created.
     """
 
     def __init__(
@@ -59,12 +63,24 @@ class ServiceManager:
         lifecycle: LifecycleManager,
         vram: VRAMTracker,
         sleep: SleepController,
+        health: HealthMonitor | None = None,
     ) -> None:
         self._db = db
         self._registry = registry
         self._lifecycle = lifecycle
         self._vram = vram
         self._sleep = sleep
+        self._health = health or HealthMonitor(
+            registry=registry,
+            on_state_change=self._on_health_change,
+        )
+
+    async def _on_health_change(self, service_id: str, healthy: bool) -> None:
+        """React to health state changes reported by HealthMonitor."""
+        if healthy:
+            logger.info("Service %r recovered", service_id)
+        else:
+            logger.warning("Service %r is unhealthy", service_id)
 
     # ------------------------------------------------------------------
     # Mode switching

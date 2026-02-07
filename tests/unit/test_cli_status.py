@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import ast
 import json
+import re
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -449,3 +452,116 @@ class TestCliContext:
                 pass
 
         mock_create.assert_awaited_once_with(db_path=Path("/tmp/test.db"))
+
+
+# ---------------------------------------------------------------------------
+# Structural tests — cli_context() usage enforcement
+# ---------------------------------------------------------------------------
+
+
+class TestCliContextUsageEnforcement:
+    """Verify that status() and init() use cli_context(), not create_context() directly."""
+
+    _CLI_PY = Path(__file__).resolve().parents[2] / "src" / "gpumod" / "cli.py"
+
+    def _get_function_body_source(self, func_name: str) -> str:
+        """Extract the source of a top-level function from cli.py using AST."""
+        source = self._CLI_PY.read_text()
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == func_name:
+                start = node.body[0].lineno - 1
+                end = node.end_lineno
+                lines = source.splitlines()[start:end]
+                return "\n".join(lines)
+        raise ValueError(f"Function {func_name!r} not found in cli.py")
+
+    def test_status_does_not_call_create_context_directly(self) -> None:
+        """status() must use cli_context(), not call create_context() directly."""
+        body = self._get_function_body_source("status")
+        assert "create_context" not in body, (
+            "status() should use cli_context() instead of create_context()"
+        )
+
+    def test_init_does_not_call_create_context_directly(self) -> None:
+        """init() must use cli_context(), not call create_context() directly."""
+        body = self._get_function_body_source("init")
+        assert "create_context" not in body, (
+            "init() should use cli_context() instead of create_context()"
+        )
+
+    def test_status_uses_cli_context(self) -> None:
+        """status() must contain an 'async with cli_context' call."""
+        body = self._get_function_body_source("status")
+        assert "cli_context" in body, "status() must use cli_context()"
+
+    def test_init_uses_cli_context(self) -> None:
+        """init() must contain an 'async with cli_context' call."""
+        body = self._get_function_body_source("init")
+        assert "cli_context" in body, "init() must use cli_context()"
+
+
+class TestAllCliModulesUseCliContext:
+    """Verify all 6 CLI sub-modules use cli_context() and never call create_context() directly."""
+
+    _SRC_DIR = Path(__file__).resolve().parents[2] / "src" / "gpumod"
+    _CLI_MODULES = [
+        "cli_service.py",
+        "cli_mode.py",
+        "cli_model.py",
+        "cli_template.py",
+        "cli_plan.py",
+        "cli_simulate.py",
+    ]
+
+    @pytest.mark.parametrize("module", _CLI_MODULES)
+    def test_module_does_not_import_create_context(self, module: str) -> None:
+        """CLI sub-module should not import create_context directly."""
+        source = (self._SRC_DIR / module).read_text()
+        assert "create_context" not in source, (
+            f"{module} should import cli_context, not create_context"
+        )
+
+    @pytest.mark.parametrize("module", _CLI_MODULES)
+    def test_module_uses_cli_context(self, module: str) -> None:
+        """CLI sub-module should use cli_context()."""
+        source = (self._SRC_DIR / module).read_text()
+        assert "cli_context" in source, f"{module} must use cli_context()"
+
+
+class TestDependencyUpperBounds:
+    """Verify all dependencies in pyproject.toml have upper bounds."""
+
+    _PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    _UPPER_BOUND_RE = re.compile(r"<\d")
+
+    def _parse_deps(self, section_marker: str) -> list[str]:
+        """Extract dependency strings from a section of pyproject.toml."""
+        content = self._PYPROJECT.read_text()
+        in_section = False
+        deps: list[str] = []
+        for line in content.splitlines():
+            stripped = line.strip()
+            if section_marker in line:
+                in_section = True
+                continue
+            if in_section:
+                if stripped == "]":
+                    break
+                if stripped.startswith('"') and ">=" in stripped:
+                    deps.append(stripped.strip('",'))
+        return deps
+
+    def test_runtime_deps_have_upper_bounds(self) -> None:
+        """All runtime dependencies must have an upper version bound (<X.0)."""
+        deps = self._parse_deps("dependencies = [")
+        for dep in deps:
+            assert self._UPPER_BOUND_RE.search(dep), (
+                f"Runtime dependency missing upper bound: {dep}"
+            )
+
+    def test_dev_deps_have_upper_bounds(self) -> None:
+        """All dev dependencies must have an upper version bound (<X.0)."""
+        deps = self._parse_deps("dev = [")
+        for dep in deps:
+            assert self._UPPER_BOUND_RE.search(dep), f"Dev dependency missing upper bound: {dep}"
