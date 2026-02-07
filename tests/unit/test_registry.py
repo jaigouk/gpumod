@@ -210,7 +210,8 @@ class TestGetDriver:
         self, registry: ServiceRegistry
     ) -> None:
         """get_driver() should raise ValueError for an unmapped driver type."""
-        # DOCKER is a valid DriverType but not in the default mapping
+        # Remove a driver to simulate an unmapped type
+        registry._drivers.pop(DriverType.DOCKER)  # noqa: SLF001
         with pytest.raises(ValueError, match="docker"):
             registry.get_driver(DriverType.DOCKER)
 

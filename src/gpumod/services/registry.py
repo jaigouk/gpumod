@@ -10,6 +10,7 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from gpumod.models import DriverType, ServiceState
+from gpumod.services.drivers.docker import DockerDriver
 from gpumod.services.drivers.fastapi import FastAPIDriver
 from gpumod.services.drivers.llamacpp import LlamaCppDriver
 from gpumod.services.drivers.vllm import VLLMDriver
@@ -41,6 +42,7 @@ class ServiceRegistry:
             DriverType.VLLM: VLLMDriver(),
             DriverType.LLAMACPP: LlamaCppDriver(),
             DriverType.FASTAPI: FastAPIDriver(),
+            DriverType.DOCKER: DockerDriver(),
         }
         if custom_drivers:
             self._drivers.update(custom_drivers)

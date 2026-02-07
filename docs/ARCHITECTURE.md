@@ -182,6 +182,69 @@ Services can be configured to sleep after idle timeout:
 await sleep_controller.auto_sleep_idle(idle_timeout=300)
 ```
 
+### Health Monitoring
+
+The `HealthMonitor` provides continuous health checking for running services:
+
+**Interface:**
+- `start_monitoring(service_id)` -- Begin monitoring a service
+- `stop_monitoring(service_id)` -- Stop monitoring a service
+- `get_health(service_id)` -- Get current health status
+
+**Design:**
+- One `asyncio.Task` per monitored service
+- Configurable check interval and failure threshold
+- Exponential backoff with jitter on repeated failures
+- Debounce: state transitions require consecutive failures/successes
+- Automatic cleanup of monitoring tasks on shutdown
+
+**Health States:**
+| State | Meaning |
+| ----- | ------- |
+| **healthy** | Service responding to health endpoint |
+| **unhealthy** | Consecutive failures exceeded threshold |
+| **unknown** | Not yet checked or monitoring stopped |
+
+### DockerDriver
+
+The `DockerDriver` manages containerized services via the Docker SDK
+(`docker-py`). Unlike systemd-based drivers, it creates and manages
+containers directly.
+
+**Container Lifecycle:**
+1. `start` -- Pull image (if needed), create container, start
+2. `stop` -- Stop container with graceful timeout, remove
+3. `status` -- Inspect container state via Docker API
+4. `health` -- HTTP health check to `localhost:{port}{health_endpoint}`
+
+**Security Controls:**
+| Control | Description |
+| ------- | ----------- |
+| **SEC-D7** | `--privileged` mode blocked |
+| **SEC-D8** | Host/macvlan network modes blocked |
+| **SEC-D9** | Unsafe volume mounts rejected (`/`, `/etc`, `/var/run/docker.sock`) |
+| **SEC-D10** | Environment variables sanitized (no `=` in keys) |
+
+**Configuration:** Docker-specific settings are stored in
+`extra_config` on the `Service` model: `image`, `ports`, `environment`,
+`volumes`, `command`.
+
+### Interactive TUI
+
+The `GpumodApp` is a Textual-based terminal dashboard providing a live
+view of GPU status and service state.
+
+**Widgets:**
+- `GPUBar` -- ASCII VRAM usage bar with percentage
+- `ServiceList` -- Service table with state indicators
+- `OutputPanel` -- Scrollable command output area
+- `HelpBar` -- Footer with keyboard shortcuts
+
+**Commands:** `/status`, `/switch <mode>`, `/simulate`, `/quit`
+
+**Security:** All untrusted text (service names, model IDs) is rendered
+via `rich.text.Text` with `sanitize_name()` to prevent markup injection.
+
 ---
 
 ## Configuration Layer
@@ -588,6 +651,7 @@ gpumod/
 │       ├── cli.py              # Click-based CLI
 │       ├── db.py               # SQLite operations
 │       ├── models.py           # Pydantic models
+│       ├── tui.py              # Interactive Textual TUI
 │       ├── services/           # Service management
 │       │   ├── base.py         # ServiceDriver ABC
 │       │   ├── manager.py      # ServiceManager orchestrator
@@ -595,6 +659,7 @@ gpumod/
 │       │   ├── lifecycle.py    # LifecycleManager
 │       │   ├── vram.py         # VRAMTracker
 │       │   ├── sleep.py        # SleepController
+│       │   ├── health.py       # HealthMonitor
 │       │   └── drivers/        # Service drivers
 │       │       ├── vllm.py     # VLLMDriver
 │       │       ├── llamacpp.py # LlamaCppDriver
@@ -674,15 +739,30 @@ async def test_mode_switch_stops_old_services(mock_systemctl, mock_db):
     assert "start vllm-embedding.service" in " ".join(mock_systemctl)
 ```
 
-### E2E Tests (Real GPU, CI-optional)
+### E2E Tests (Real GPU/Docker, CI-optional)
 
-```bash
-# tests/e2e/test_real_switch.sh
-# Tagged: @gpu_required
-gpumod mode switch code
-gpumod status --json | jq -e '.mode == "code"'
-gpumod simulate --add qwen3-reranker --json | jq -e '.fits == false'
+E2E tests use real SQLite databases and exercise the full service layer
+stack. GPU and Docker-dependent tests are marked with custom pytest
+markers and skip gracefully on machines without the required hardware.
+
+```python
+# tests/e2e/conftest.py detects GPU and Docker availability:
+# - @pytest.mark.gpu_required  -- skipped when nvidia-smi unavailable
+# - @pytest.mark.docker_required -- skipped when Docker daemon unavailable
+
+# CI configurations:
+# CPU-only CI:   pytest tests/ -m "not gpu_required and not docker_required"
+# GPU CI:        pytest tests/  (runs everything)
+# Docker CI:     pytest tests/ -m "not gpu_required"
 ```
+
+**E2E coverage:**
+- Mode switch lifecycle (DB + registry + lifecycle manager)
+- VRAM simulation with real DB and mocked GPU info
+- Service status through the full stack
+- GPU detection via `nvidia-smi` (on GPU machines)
+- Docker container status via Docker SDK (on Docker machines)
+- Fixture cleanup verification
 
 ---
 
