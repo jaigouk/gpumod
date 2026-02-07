@@ -192,3 +192,31 @@ class PresetConfig(BaseModel):
     sleep_mode: SleepMode = SleepMode.NONE
     unit_template: str | None = None
     unit_vars: dict[str, Any] = {}
+
+
+class SimulationAlternative(BaseModel):
+    """A suggested alternative when VRAM doesn't fit."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    strategy: str
+    description: str
+    affected_services: list[str]
+    vram_saved_mb: int
+    projected_total_mb: int
+    trade_offs: list[str]
+
+
+class SimulationResult(BaseModel):
+    """Result of a VRAM simulation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fits: bool
+    gpu_total_mb: int
+    current_usage_mb: int
+    proposed_usage_mb: int
+    headroom_mb: int
+    services: list[Service]
+    alternatives: list[SimulationAlternative]

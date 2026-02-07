@@ -22,6 +22,7 @@ from rich.table import Table
 from gpumod.cli_mode import mode_app
 from gpumod.cli_model import model_app
 from gpumod.cli_service import service_app
+from gpumod.cli_simulate import simulate_app
 from gpumod.cli_template import template_app
 from gpumod.db import Database
 from gpumod.registry import ModelRegistry
@@ -30,6 +31,7 @@ from gpumod.services.manager import ServiceManager
 from gpumod.services.registry import ServiceRegistry
 from gpumod.services.sleep import SleepController
 from gpumod.services.vram import VRAMTracker
+from gpumod.simulation import SimulationEngine
 from gpumod.templates.engine import TemplateEngine
 from gpumod.templates.presets import PresetLoader
 from gpumod.visualization import StatusPanel
@@ -60,6 +62,7 @@ class AppContext:
     model_registry: ModelRegistry
     template_engine: TemplateEngine
     preset_loader: PresetLoader
+    simulation: SimulationEngine
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +119,8 @@ async def create_context(db_path: Path | None = None) -> AppContext:
         preset_dirs.append(_BUILTIN_PRESETS_DIR)
     preset_loader = PresetLoader(preset_dirs=preset_dirs)
 
+    simulation = SimulationEngine(db=db, vram=vram, model_registry=model_registry)
+
     return AppContext(
         db=db,
         registry=registry,
@@ -126,6 +131,7 @@ async def create_context(db_path: Path | None = None) -> AppContext:
         model_registry=model_registry,
         template_engine=template_engine,
         preset_loader=preset_loader,
+        simulation=simulation,
     )
 
 
@@ -209,6 +215,7 @@ app.add_typer(service_app, name="service")
 app.add_typer(mode_app, name="mode")
 app.add_typer(template_app, name="template")
 app.add_typer(model_app, name="model")
+app.add_typer(simulate_app, name="simulate")
 
 
 # ---------------------------------------------------------------------------
