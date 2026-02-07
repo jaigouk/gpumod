@@ -94,9 +94,13 @@ class VRAMTracker:
             pid_el = proc_info.find("pid")
             mem_el = proc_info.find("used_memory")
             if pid_el is not None and mem_el is not None:
-                pid = int(pid_el.text.strip())  # type: ignore[union-attr]
+                pid_text = pid_el.text
+                mem_text = mem_el.text
+                if pid_text is None or mem_text is None:
+                    continue
+                pid = int(pid_text.strip())
                 # Format: "2500 MiB"
-                mem_str = mem_el.text.strip()  # type: ignore[union-attr]
+                mem_str = mem_text.strip()
                 mem_mb = int(mem_str.split()[0])
                 result[pid] = mem_mb
 

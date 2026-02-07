@@ -7,6 +7,7 @@ Uses aiosqlite with WAL mode and foreign keys enabled.
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
 import aiosqlite
@@ -20,9 +21,12 @@ from gpumod.models import (
     ServiceTemplate,
     SleepMode,
 )
+from gpumod.validation import validate_extra_config, validate_model_id, validate_vram_mb
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 _SCHEMA_VERSION = 2
 
@@ -100,6 +104,7 @@ class Database:
 
     async def connect(self) -> None:
         """Open the database connection and ensure the schema exists."""
+        logger.debug("Connecting to database at %s", self._db_path)
         self._conn = await aiosqlite.connect(self._db_path)
         # Enable WAL mode for better concurrent read performance.
         await self._conn.execute("PRAGMA journal_mode=WAL")
@@ -120,12 +125,14 @@ class Database:
         else:
             await self._conn.execute("UPDATE schema_version SET version = ?", (_SCHEMA_VERSION,))
         await self._conn.commit()
+        logger.debug("Database connected (schema v%d)", _SCHEMA_VERSION)
 
     async def close(self) -> None:
         """Close the database connection."""
         if self._conn is not None:
             await self._conn.close()
             self._conn = None
+            logger.debug("Database connection closed")
 
     async def __aenter__(self) -> Database:
         await self.connect()
@@ -202,7 +209,9 @@ class Database:
         conn = self._ensure_conn()
         cursor = await conn.execute("SELECT * FROM services ORDER BY id")
         rows = await cursor.fetchall()
-        return [self._row_to_service(r) for r in rows]
+        result = [self._row_to_service(r) for r in rows]
+        logger.debug("Listed %d services", len(result))
+        return result
 
     async def get_service(self, service_id: str) -> Service | None:
         """Return a single service by ID, or None if not found."""
@@ -210,11 +219,15 @@ class Database:
         cursor = await conn.execute("SELECT * FROM services WHERE id = ?", (service_id,))
         row = await cursor.fetchone()
         if row is None:
+            logger.debug("Service %r not found", service_id)
             return None
+        logger.debug("Retrieved service %r", service_id)
         return self._row_to_service(row)
 
     async def insert_service(self, service: Service) -> None:
         """Insert a service into the database."""
+        validate_vram_mb(service.vram_mb)
+        validate_extra_config(service.extra_config)
         conn = self._ensure_conn()
         await conn.execute(
             """
@@ -239,12 +252,19 @@ class Database:
             ),
         )
         await conn.commit()
+        logger.debug(
+            "Inserted service %r (driver=%s, vram=%dMB)",
+            service.id,
+            service.driver.value,
+            service.vram_mb,
+        )
 
     async def delete_service(self, service_id: str) -> None:
         """Delete a service by ID."""
         conn = self._ensure_conn()
         await conn.execute("DELETE FROM services WHERE id = ?", (service_id,))
         await conn.commit()
+        logger.debug("Deleted service %r", service_id)
 
     # ------------------------------------------------------------------
     # Modes CRUD
@@ -255,7 +275,9 @@ class Database:
         conn = self._ensure_conn()
         cursor = await conn.execute("SELECT * FROM modes ORDER BY id")
         rows = await cursor.fetchall()
-        return [self._row_to_mode(r) for r in rows]
+        result = [self._row_to_mode(r) for r in rows]
+        logger.debug("Listed %d modes", len(result))
+        return result
 
     async def get_mode(self, mode_id: str) -> Mode | None:
         """Return a single mode by ID, or None if not found."""
@@ -263,7 +285,9 @@ class Database:
         cursor = await conn.execute("SELECT * FROM modes WHERE id = ?", (mode_id,))
         row = await cursor.fetchone()
         if row is None:
+            logger.debug("Mode %r not found", mode_id)
             return None
+        logger.debug("Retrieved mode %r", mode_id)
         return self._row_to_mode(row)
 
     async def insert_mode(self, mode: Mode) -> None:
@@ -277,6 +301,7 @@ class Database:
             (mode.id, mode.name, mode.description, mode.total_vram_mb),
         )
         await conn.commit()
+        logger.debug("Inserted mode %r", mode.id)
 
     async def get_mode_services(self, mode_id: str) -> list[Service]:
         """Return services for a mode, ordered by start_order."""
@@ -292,7 +317,9 @@ class Database:
             (mode_id,),
         )
         rows = await cursor.fetchall()
-        return [self._row_to_service(r) for r in rows]
+        result = [self._row_to_service(r) for r in rows]
+        logger.debug("Mode %r has %d services", mode_id, len(result))
+        return result
 
     async def set_mode_services(
         self,
@@ -313,6 +340,7 @@ class Database:
                 (mode_id, sid, order),
             )
         await conn.commit()
+        logger.debug("Set %d services for mode %r", len(service_ids), mode_id)
 
     # ------------------------------------------------------------------
     # Settings
@@ -394,11 +422,14 @@ class Database:
 
     async def get_model(self, model_id: str) -> ModelInfo | None:
         """Return a model by ID, or None if not found."""
+        validate_model_id(model_id)
         conn = self._ensure_conn()
         cursor = await conn.execute("SELECT * FROM models WHERE id = ?", (model_id,))
         row = await cursor.fetchone()
         if row is None:
+            logger.debug("Model %r not found", model_id)
             return None
+        logger.debug("Retrieved model %r", model_id)
         return self._row_to_model_info(row)
 
     async def list_models(self) -> list[ModelInfo]:
@@ -406,10 +437,13 @@ class Database:
         conn = self._ensure_conn()
         cursor = await conn.execute("SELECT * FROM models ORDER BY id")
         rows = await cursor.fetchall()
-        return [self._row_to_model_info(r) for r in rows]
+        result = [self._row_to_model_info(r) for r in rows]
+        logger.debug("Listed %d models", len(result))
+        return result
 
     async def insert_model(self, model: ModelInfo) -> None:
         """Insert a model into the database."""
+        validate_model_id(model.id)
         conn = self._ensure_conn()
         await conn.execute(
             """
@@ -433,9 +467,11 @@ class Database:
             ),
         )
         await conn.commit()
+        logger.debug("Inserted model %r", model.id)
 
     async def delete_model(self, model_id: str) -> None:
         """Delete a model by ID."""
         conn = self._ensure_conn()
         await conn.execute("DELETE FROM models WHERE id = ?", (model_id,))
         await conn.commit()
+        logger.debug("Deleted model %r", model_id)

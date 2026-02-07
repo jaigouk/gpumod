@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
 from gpumod.db import Database
 from gpumod.models import (
     DriverType,
@@ -149,7 +151,7 @@ class TestServicesCRUD:
             svc = _make_service(
                 id="svc-roundtrip",
                 depends_on=["dep-a", "dep-b"],
-                extra_config={"key": "value"},
+                extra_config={"context_size": "4096"},
             )
             await db.insert_service(svc)
             got = await db.get_service("svc-roundtrip")
@@ -622,3 +624,119 @@ class TestModelsCRUD:
             assert got is not None
             assert got.quantizations == []
             assert got.capabilities == []
+
+
+# ---------------------------------------------------------------------------
+# DB-level validation (SEC-D6, SEC-V5)
+# ---------------------------------------------------------------------------
+
+
+class TestDBValidation:
+    """Tests for DB-level validation (SEC-D6, SEC-V5)."""
+
+    async def test_insert_service_rejects_unknown_extra_config_keys(self, tmp_path: Path) -> None:
+        """Extra config with unknown keys should be rejected."""
+        async with Database(tmp_path / "test.db") as db:
+            service = Service(
+                id="test-svc",
+                name="Test",
+                driver=DriverType.VLLM,
+                vram_mb=1000,
+                sleep_mode=SleepMode.NONE,
+                extra_config={"unknown_key": "value"},
+            )
+            with pytest.raises(ValueError, match="Unknown extra_config keys"):
+                await db.insert_service(service)
+
+    async def test_insert_service_rejects_oversized_vram(self, tmp_path: Path) -> None:
+        """VRAM exceeding 1TB should be rejected."""
+        async with Database(tmp_path / "test.db") as db:
+            service = Service(
+                id="test-svc",
+                name="Test",
+                driver=DriverType.VLLM,
+                vram_mb=2_000_000,
+                sleep_mode=SleepMode.NONE,
+            )
+            with pytest.raises(ValueError, match="exceeds maximum"):
+                await db.insert_service(service)
+
+    async def test_insert_service_rejects_negative_vram(self, tmp_path: Path) -> None:
+        """Negative VRAM should be rejected."""
+        async with Database(tmp_path / "test.db") as db:
+            service = Service(
+                id="test-svc",
+                name="Test",
+                driver=DriverType.VLLM,
+                vram_mb=-1,
+                sleep_mode=SleepMode.NONE,
+            )
+            with pytest.raises(ValueError, match="non-negative"):
+                await db.insert_service(service)
+
+    async def test_insert_service_accepts_valid_extra_config(self, tmp_path: Path) -> None:
+        """Known extra_config keys should be accepted."""
+        async with Database(tmp_path / "test.db") as db:
+            service = Service(
+                id="test-svc",
+                name="Test",
+                driver=DriverType.VLLM,
+                vram_mb=1000,
+                sleep_mode=SleepMode.NONE,
+                extra_config={"context_size": "4096", "quantization": "q4"},
+            )
+            await db.insert_service(service)
+            result = await db.get_service("test-svc")
+            assert result is not None
+            assert result.extra_config["context_size"] == "4096"
+
+    async def test_get_model_rejects_invalid_id(self, tmp_path: Path) -> None:
+        """Model IDs with path traversal should be rejected."""
+        async with Database(tmp_path / "test.db") as db:
+            with pytest.raises(ValueError, match="Invalid model_id"):
+                await db.get_model("../passwd")
+
+    async def test_insert_model_rejects_invalid_id(self, tmp_path: Path) -> None:
+        """Model IDs with invalid chars should be rejected at insert."""
+        async with Database(tmp_path / "test.db") as db:
+            model = ModelInfo(
+                id="../evil",
+                source=ModelSource.LOCAL,
+            )
+            with pytest.raises(ValueError, match="Invalid model_id"):
+                await db.insert_model(model)
+
+    async def test_get_model_accepts_valid_id(self, tmp_path: Path) -> None:
+        """Valid model IDs should work."""
+        async with Database(tmp_path / "test.db") as db:
+            result = await db.get_model("meta-llama/Llama-3.1-8B")
+            assert result is None  # Not found but no validation error
+
+    async def test_insert_service_accepts_empty_extra_config(self, tmp_path: Path) -> None:
+        """Empty extra_config should be accepted."""
+        async with Database(tmp_path / "test.db") as db:
+            service = Service(
+                id="test-empty",
+                name="Test",
+                driver=DriverType.VLLM,
+                vram_mb=1000,
+                sleep_mode=SleepMode.NONE,
+                extra_config={},
+            )
+            await db.insert_service(service)
+            result = await db.get_service("test-empty")
+            assert result is not None
+
+    async def test_validate_vram_zero_accepted(self, tmp_path: Path) -> None:
+        """Zero VRAM should be accepted (for utility services)."""
+        async with Database(tmp_path / "test.db") as db:
+            service = Service(
+                id="test-zero",
+                name="Test",
+                driver=DriverType.FASTAPI,
+                vram_mb=0,
+                sleep_mode=SleepMode.NONE,
+            )
+            await db.insert_service(service)
+            result = await db.get_service("test-zero")
+            assert result is not None

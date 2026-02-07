@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import TYPE_CHECKING
 
@@ -12,6 +13,8 @@ if TYPE_CHECKING:
     from gpumod.models import Service
     from gpumod.services.base import ServiceDriver
     from gpumod.services.registry import ServiceRegistry
+
+logger = logging.getLogger(__name__)
 
 
 class LifecycleError(Exception):
@@ -56,6 +59,7 @@ class LifecycleManager:
         Already-running dependencies are skipped.
         After each service is started, waits for its health check to pass.
         """
+        logger.info("Starting service %r (with dependencies)", service_id)
         service = await self._registry.get(service_id)
         start_order = await self._resolve_start_order(service)
 
@@ -65,10 +69,13 @@ class LifecycleManager:
             # Skip already-running services
             status = await driver.status(svc)
             if status.state in (ServiceState.RUNNING, ServiceState.SLEEPING):
+                logger.info("Service %r already running, skipping", svc.id)
                 continue
 
+            logger.info("Starting service %r", svc.id)
             await driver.start(svc)
             await self._wait_for_healthy(svc, driver)
+            logger.info("Service %r started and healthy", svc.id)
 
     async def stop(self, service_id: str) -> None:
         """Stop a service and all its transitive dependents in reverse dependency order.
@@ -76,6 +83,7 @@ class LifecycleManager:
         Already-stopped dependents are skipped.
         Dependents are stopped first (deepest first), then the target service.
         """
+        logger.info("Stopping service %r (with dependents)", service_id)
         service = await self._registry.get(service_id)
         stop_order = await self._resolve_stop_order(service)
 
@@ -85,12 +93,16 @@ class LifecycleManager:
             # Skip already-stopped services
             status = await driver.status(svc)
             if status.state in (ServiceState.STOPPED, ServiceState.UNKNOWN):
+                logger.info("Service %r already stopped, skipping", svc.id)
                 continue
 
+            logger.info("Stopping service %r", svc.id)
             await driver.stop(svc)
+            logger.info("Service %r stopped", svc.id)
 
     async def restart(self, service_id: str) -> None:
         """Restart a service by stopping it (and dependents) then starting it (and deps)."""
+        logger.info("Restarting service %r", service_id)
         await self.stop(service_id)
         await self.start(service_id)
 
@@ -132,6 +144,11 @@ class LifecycleManager:
 
             elapsed = time.monotonic() - start_time
             if elapsed + poll_interval > timeout:
+                logger.warning(
+                    "Health check timed out for service %r after %.1fs",
+                    service.id,
+                    timeout,
+                )
                 raise LifecycleError(
                     service_id=service.id,
                     operation="start",

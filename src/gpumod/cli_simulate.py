@@ -12,7 +12,6 @@ from rich.table import Table
 from gpumod.visualization import ComparisonView
 
 if TYPE_CHECKING:
-    from gpumod.cli import AppContext
     from gpumod.models import SimulationResult
 
 simulate_app = typer.Typer(name="simulate", help="Simulate VRAM requirements.")
@@ -25,20 +24,6 @@ _console = Console()
 # ---------------------------------------------------------------------------
 
 _CONTEXT_RE = re.compile(r"^([a-zA-Z0-9][a-zA-Z0-9_\-]{0,63})=(\d+)$")
-
-
-def _get_context() -> AppContext:
-    """Create and return the AppContext via run_async."""
-    from gpumod.cli import create_context, run_async
-
-    return run_async(create_context())  # type: ignore[no-any-return]
-
-
-def _close_db(ctx: AppContext) -> None:
-    """Close the database connection."""
-    from gpumod.cli import run_async
-
-    run_async(ctx.db.close())
 
 
 def _parse_context_overrides(raw: list[str] | None) -> dict[str, int] | None:
@@ -183,36 +168,34 @@ def simulate_mode(
     visual: bool = typer.Option(False, "--visual", help="Show VRAM bar visualization."),
 ) -> None:
     """Simulate VRAM usage for a mode with optional add/remove."""
-    from gpumod.cli import error_handler, json_output, run_async
+    from gpumod.cli import cli_context, error_handler, json_output, run_async
 
-    ctx = _get_context()
-    try:
-        with error_handler(console=_console):
-            # Parse comma-separated lists
-            add_ids = _parse_csv(add) if add else None
-            remove_ids = _parse_csv(remove) if remove else None
-            context_overrides = _parse_context_overrides(context_override)
+    async def _cmd() -> None:
+        async with cli_context() as ctx:
+            with error_handler(console=_console):
+                # Parse comma-separated lists
+                add_ids = _parse_csv(add) if add else None
+                remove_ids = _parse_csv(remove) if remove else None
+                context_overrides = _parse_context_overrides(context_override)
 
-            result: SimulationResult = run_async(
-                ctx.simulation.simulate_mode(
+                result: SimulationResult = await ctx.simulation.simulate_mode(
                     mode,
                     add=add_ids,
                     remove=remove_ids,
                     context_overrides=context_overrides,
                 )
-            )
 
-            if as_json:
-                json_output(result.model_dump(mode="json"), as_json=True)
-                return
+                if as_json:
+                    json_output(result.model_dump(mode="json"), as_json=True)
+                    return
 
-            if visual:
-                _render_visual(result, console=_console)
-                return
+                if visual:
+                    _render_visual(result, console=_console)
+                    return
 
-            _render_result(result, console=_console)
-    finally:
-        _close_db(ctx)
+                _render_result(result, console=_console)
+
+    run_async(_cmd())
 
 
 @simulate_app.command("services")
@@ -225,29 +208,27 @@ def simulate_services(
     visual: bool = typer.Option(False, "--visual", help="Show VRAM bar visualization."),
 ) -> None:
     """Simulate VRAM usage for an explicit list of services."""
-    from gpumod.cli import error_handler, json_output, run_async
+    from gpumod.cli import cli_context, error_handler, json_output, run_async
 
-    ctx = _get_context()
-    try:
-        with error_handler(console=_console):
-            service_ids = _parse_csv(services)
-            context_overrides = _parse_context_overrides(context_override)
+    async def _cmd() -> None:
+        async with cli_context() as ctx:
+            with error_handler(console=_console):
+                service_ids = _parse_csv(services)
+                context_overrides = _parse_context_overrides(context_override)
 
-            result: SimulationResult = run_async(
-                ctx.simulation.simulate_services(
+                result: SimulationResult = await ctx.simulation.simulate_services(
                     service_ids,
                     context_overrides=context_overrides,
                 )
-            )
 
-            if as_json:
-                json_output(result.model_dump(mode="json"), as_json=True)
-                return
+                if as_json:
+                    json_output(result.model_dump(mode="json"), as_json=True)
+                    return
 
-            if visual:
-                _render_visual(result, console=_console)
-                return
+                if visual:
+                    _render_visual(result, console=_console)
+                    return
 
-            _render_result(result, console=_console)
-    finally:
-        _close_db(ctx)
+                _render_result(result, console=_console)
+
+    run_async(_cmd())

@@ -2,7 +2,7 @@
 
 Defines the main Typer app, sub-apps for service/mode/template/model,
 the AppContext dataclass for backend dependency injection, and helper utilities
-(run_async, json_output, error_handler).
+(run_async, json_output, error_handler, cli_context).
 """
 
 from __future__ import annotations
@@ -10,10 +10,10 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import typer
 from rich.console import Console
@@ -21,9 +21,11 @@ from rich.table import Table
 
 from gpumod.cli_mode import mode_app
 from gpumod.cli_model import model_app
+from gpumod.cli_plan import plan_app
 from gpumod.cli_service import service_app
 from gpumod.cli_simulate import simulate_app
 from gpumod.cli_template import template_app
+from gpumod.config import get_settings
 from gpumod.db import Database
 from gpumod.registry import ModelRegistry
 from gpumod.services.lifecycle import LifecycleManager
@@ -37,7 +39,7 @@ from gpumod.templates.presets import PresetLoader
 from gpumod.visualization import StatusPanel
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import AsyncGenerator, Coroutine, Generator
 
 
 # ---------------------------------------------------------------------------
@@ -69,8 +71,15 @@ class AppContext:
 # Default configuration
 # ---------------------------------------------------------------------------
 
-_DEFAULT_DB_PATH = Path.home() / ".config" / "gpumod" / "gpumod.db"
-_BUILTIN_PRESETS_DIR = Path(__file__).parent.parent.parent / "presets"
+
+def _default_db_path() -> Path:
+    """Return the default database path from centralized settings."""
+    return get_settings().db_path
+
+
+def _builtin_presets_dir() -> Path:
+    """Return the built-in presets directory from centralized settings."""
+    return get_settings().presets_dir
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +101,7 @@ async def create_context(db_path: Path | None = None) -> AppContext:
     AppContext
         A fully-initialized context with all backend services.
     """
-    resolved_db_path = db_path if db_path is not None else _DEFAULT_DB_PATH
+    resolved_db_path = db_path if db_path is not None else _default_db_path()
 
     # Ensure parent directory exists.
     resolved_db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -114,9 +123,10 @@ async def create_context(db_path: Path | None = None) -> AppContext:
     model_registry = ModelRegistry(db)
     template_engine = TemplateEngine()
 
+    presets_dir = _builtin_presets_dir()
     preset_dirs: list[Path] = []
-    if _BUILTIN_PRESETS_DIR.is_dir():
-        preset_dirs.append(_BUILTIN_PRESETS_DIR)
+    if presets_dir.is_dir():
+        preset_dirs.append(presets_dir)
     preset_loader = PresetLoader(preset_dirs=preset_dirs)
 
     simulation = SimulationEngine(db=db, vram=vram, model_registry=model_registry)
@@ -136,11 +146,45 @@ async def create_context(db_path: Path | None = None) -> AppContext:
 
 
 # ---------------------------------------------------------------------------
+# cli_context — async context manager for CLI commands
+# ---------------------------------------------------------------------------
+
+
+@asynccontextmanager
+async def cli_context(
+    db_path: Path | None = None,
+) -> AsyncGenerator[AppContext, None]:
+    """Async context manager that creates an AppContext and closes the DB.
+
+    Replaces the repeated pattern of calling create_context() in a
+    try/finally with an explicit ctx.db.close() call.
+
+    Parameters
+    ----------
+    db_path:
+        Optional path forwarded to :func:`create_context`.
+
+    Yields
+    ------
+    AppContext
+        A fully-initialized context with all backend services.
+    """
+    ctx = await create_context(db_path=db_path)
+    try:
+        yield ctx
+    finally:
+        await ctx.db.close()
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def run_async(coro: Any) -> Any:  # noqa: ANN401
+_T = TypeVar("_T")
+
+
+def run_async(coro: Coroutine[Any, Any, _T]) -> _T:
     """Run an async coroutine from synchronous Typer command code.
 
     Parameters
@@ -150,8 +194,8 @@ def run_async(coro: Any) -> Any:  # noqa: ANN401
 
     Returns
     -------
-    Any
-        The return value of the coroutine.
+    _T
+        The return value of the coroutine, preserving the original type.
     """
     return asyncio.run(coro)
 
@@ -211,11 +255,18 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
+
+def run_cli() -> None:
+    """Entry point for the ``gpumod`` console script."""
+    app()
+
+
 app.add_typer(service_app, name="service")
 app.add_typer(mode_app, name="mode")
 app.add_typer(template_app, name="template")
 app.add_typer(model_app, name="model")
 app.add_typer(simulate_app, name="simulate")
+app.add_typer(plan_app, name="plan")
 
 
 # ---------------------------------------------------------------------------

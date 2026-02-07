@@ -373,3 +373,516 @@ class TestMCPMainEntryPoint:
         from gpumod.mcp_main import server
 
         assert isinstance(server, FastMCP)
+
+
+# ---------------------------------------------------------------------------
+# TestRequestIDMiddleware (SEC-A2)
+# ---------------------------------------------------------------------------
+
+
+class TestRequestIDMiddleware:
+    """Tests for request ID middleware (SEC-A2)."""
+
+    def test_request_id_middleware_is_attached_to_server(self) -> None:
+        from gpumod.mcp_server import RequestIDMiddleware, create_mcp_server
+
+        server = create_mcp_server()
+        has_rid_middleware = any(isinstance(m, RequestIDMiddleware) for m in server.middleware)
+        assert has_rid_middleware
+
+    async def test_request_id_set_in_contextvar_on_tool_call(self) -> None:
+        """RequestIDMiddleware sets a UUID in request_id_var during on_call_tool."""
+        from unittest.mock import AsyncMock
+
+        from gpumod.mcp_server import RequestIDMiddleware, request_id_var
+
+        middleware = RequestIDMiddleware()
+        captured_id: str = ""
+
+        async def capturing_call_next(ctx: object) -> str:
+            nonlocal captured_id
+            captured_id = request_id_var.get()
+            return "ok"
+
+        mock_context = AsyncMock()
+        await middleware.on_call_tool(mock_context, capturing_call_next)
+        assert captured_id != ""
+
+    async def test_request_id_is_valid_uuid(self) -> None:
+        """The request ID set by the middleware is a valid UUID4."""
+        import uuid
+        from unittest.mock import AsyncMock
+
+        from gpumod.mcp_server import RequestIDMiddleware, request_id_var
+
+        middleware = RequestIDMiddleware()
+        captured_id: str = ""
+
+        async def capturing_call_next(ctx: object) -> str:
+            nonlocal captured_id
+            captured_id = request_id_var.get()
+            return "ok"
+
+        mock_context = AsyncMock()
+        await middleware.on_call_tool(mock_context, capturing_call_next)
+
+        # Should parse as a valid UUID
+        parsed = uuid.UUID(captured_id)
+        assert str(parsed) == captured_id
+
+    async def test_request_id_propagates_through_tool_call(self) -> None:
+        """The request ID is available in the downstream call_next handler."""
+        from unittest.mock import AsyncMock
+
+        from gpumod.mcp_server import RequestIDMiddleware, request_id_var
+
+        middleware = RequestIDMiddleware()
+        ids_seen: list[str] = []
+
+        async def capturing_call_next(ctx: object) -> str:
+            ids_seen.append(request_id_var.get())
+            return "ok"
+
+        mock_context = AsyncMock()
+        await middleware.on_call_tool(mock_context, capturing_call_next)
+
+        assert len(ids_seen) == 1
+        assert ids_seen[0] != ""
+
+    async def test_different_requests_get_different_ids(self) -> None:
+        """Each tool call gets a unique request ID."""
+        from unittest.mock import AsyncMock
+
+        from gpumod.mcp_server import RequestIDMiddleware, request_id_var
+
+        middleware = RequestIDMiddleware()
+        ids_seen: list[str] = []
+
+        async def capturing_call_next(ctx: object) -> str:
+            ids_seen.append(request_id_var.get())
+            return "ok"
+
+        mock_context = AsyncMock()
+        await middleware.on_call_tool(mock_context, capturing_call_next)
+        await middleware.on_call_tool(mock_context, capturing_call_next)
+        await middleware.on_call_tool(mock_context, capturing_call_next)
+
+        assert len(ids_seen) == 3
+        assert len(set(ids_seen)) == 3  # All unique
+
+    async def test_request_id_set_on_resource_read(self) -> None:
+        """RequestIDMiddleware sets a UUID in request_id_var during on_read_resource."""
+        import uuid
+        from unittest.mock import AsyncMock
+
+        from gpumod.mcp_server import RequestIDMiddleware, request_id_var
+
+        middleware = RequestIDMiddleware()
+        captured_id: str = ""
+
+        async def capturing_call_next(ctx: object) -> str:
+            nonlocal captured_id
+            captured_id = request_id_var.get()
+            return "data"
+
+        mock_context = AsyncMock()
+        await middleware.on_read_resource(mock_context, capturing_call_next)
+
+        assert captured_id != ""
+        # Should also be a valid UUID
+        parsed = uuid.UUID(captured_id)
+        assert str(parsed) == captured_id
+
+    async def test_request_id_reset_after_tool_call(self) -> None:
+        """After the tool call completes, the context var is reset."""
+        from unittest.mock import AsyncMock
+
+        from gpumod.mcp_server import RequestIDMiddleware, request_id_var
+
+        middleware = RequestIDMiddleware()
+
+        async def ok_call_next(ctx: object) -> str:
+            return "ok"
+
+        mock_context = AsyncMock()
+
+        # Set a known value before the middleware call
+        token = request_id_var.set("before")
+        try:
+            await middleware.on_call_tool(mock_context, ok_call_next)
+            # After the middleware call, the var should be reset to "before"
+            assert request_id_var.get() == "before"
+        finally:
+            request_id_var.reset(token)
+
+    async def test_request_id_reset_after_resource_read(self) -> None:
+        """After the resource read completes, the context var is reset."""
+        from unittest.mock import AsyncMock
+
+        from gpumod.mcp_server import RequestIDMiddleware, request_id_var
+
+        middleware = RequestIDMiddleware()
+
+        async def ok_call_next(ctx: object) -> str:
+            return "data"
+
+        mock_context = AsyncMock()
+
+        token = request_id_var.set("before")
+        try:
+            await middleware.on_read_resource(mock_context, ok_call_next)
+            assert request_id_var.get() == "before"
+        finally:
+            request_id_var.reset(token)
+
+    async def test_request_id_reset_on_exception(self) -> None:
+        """The context var is reset even if the downstream call raises."""
+        from unittest.mock import AsyncMock
+
+        from gpumod.mcp_server import RequestIDMiddleware, request_id_var
+
+        middleware = RequestIDMiddleware()
+
+        async def failing_call_next(ctx: object) -> str:
+            msg = "boom"
+            raise RuntimeError(msg)
+
+        mock_context = AsyncMock()
+
+        token = request_id_var.set("before")
+        try:
+            with pytest.raises(RuntimeError, match="boom"):
+                await middleware.on_call_tool(mock_context, failing_call_next)
+            assert request_id_var.get() == "before"
+        finally:
+            request_id_var.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# TestRateLimitMiddleware (SEC-R2)
+# ---------------------------------------------------------------------------
+
+
+class TestRateLimitMiddleware:
+    """Tests for rate limiting middleware (SEC-R2)."""
+
+    async def test_allows_requests_under_limit(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from gpumod.mcp_server import RateLimitMiddleware
+
+        middleware = RateLimitMiddleware(max_requests=10, window_seconds=1.0)
+
+        async def ok_call_next(ctx: object) -> str:
+            return "success"
+
+        mock_context = AsyncMock()
+
+        # 10 requests should all succeed
+        for _ in range(10):
+            result = await middleware.on_call_tool(mock_context, ok_call_next)
+            assert result == "success"
+
+    async def test_rejects_over_limit(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from gpumod.mcp_server import RateLimitMiddleware
+
+        middleware = RateLimitMiddleware(max_requests=3, window_seconds=1.0)
+
+        async def ok_call_next(ctx: object) -> str:
+            return "success"
+
+        mock_context = AsyncMock()
+
+        # 3 requests should succeed
+        for _ in range(3):
+            await middleware.on_call_tool(mock_context, ok_call_next)
+
+        # 4th request should be rejected
+        with pytest.raises(RuntimeError, match="Rate limit exceeded"):
+            await middleware.on_call_tool(mock_context, ok_call_next)
+
+    async def test_configurable_rate_limit(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from gpumod.mcp_server import RateLimitMiddleware
+
+        middleware = RateLimitMiddleware(max_requests=2, window_seconds=1.0)
+
+        async def ok_call_next(ctx: object) -> str:
+            return "success"
+
+        mock_context = AsyncMock()
+
+        # 2 requests should succeed
+        await middleware.on_call_tool(mock_context, ok_call_next)
+        await middleware.on_call_tool(mock_context, ok_call_next)
+
+        # 3rd should fail
+        with pytest.raises(RuntimeError, match="Rate limit exceeded"):
+            await middleware.on_call_tool(mock_context, ok_call_next)
+
+    async def test_window_resets_after_expiry(self) -> None:
+        import time
+        from unittest.mock import AsyncMock, patch
+
+        from gpumod.mcp_server import RateLimitMiddleware
+
+        middleware = RateLimitMiddleware(max_requests=2, window_seconds=1.0)
+
+        async def ok_call_next(ctx: object) -> str:
+            return "success"
+
+        mock_context = AsyncMock()
+
+        # Use 2 requests
+        now = time.monotonic()
+        with patch("gpumod.mcp_server.time") as mock_time:
+            mock_time.monotonic.return_value = now
+            await middleware.on_call_tool(mock_context, ok_call_next)
+            await middleware.on_call_tool(mock_context, ok_call_next)
+
+            # Advance time past the window
+            mock_time.monotonic.return_value = now + 1.1
+            # Should succeed again after window reset
+            result = await middleware.on_call_tool(mock_context, ok_call_next)
+            assert result == "success"
+
+    def test_rate_limit_middleware_is_attached_to_server(self) -> None:
+        from gpumod.mcp_server import RateLimitMiddleware, create_mcp_server
+
+        server = create_mcp_server()
+        has_rate_middleware = any(isinstance(m, RateLimitMiddleware) for m in server.middleware)
+        assert has_rate_middleware
+
+    async def test_default_limit_is_10(self) -> None:
+        from gpumod.mcp_server import RateLimitMiddleware
+
+        middleware = RateLimitMiddleware()
+        assert middleware._max_requests == 10
+        assert middleware._window_seconds == 1.0
+        assert middleware._client_requests == {}
+
+
+# ---------------------------------------------------------------------------
+# TestPerClientRateLimit (SEC-R3)
+# ---------------------------------------------------------------------------
+
+
+class TestPerClientRateLimit:
+    """Tests for per-client rate limiting (SEC-R3)."""
+
+    async def test_two_clients_get_independent_quotas(self) -> None:
+        """Two distinct clients each get their full max_requests quota."""
+        from unittest.mock import AsyncMock
+
+        from gpumod.mcp_server import RateLimitMiddleware
+
+        middleware = RateLimitMiddleware(max_requests=3, window_seconds=1.0)
+
+        async def ok_call_next(ctx: object) -> str:
+            return "success"
+
+        # Client A context
+        client_a_context = AsyncMock()
+        client_a_context.client_id = "client-a"
+
+        # Client B context
+        client_b_context = AsyncMock()
+        client_b_context.client_id = "client-b"
+
+        # Both clients should be able to make 3 requests each
+        for _ in range(3):
+            result = await middleware.on_call_tool(client_a_context, ok_call_next)
+            assert result == "success"
+
+        for _ in range(3):
+            result = await middleware.on_call_tool(client_b_context, ok_call_next)
+            assert result == "success"
+
+    async def test_exceeding_one_client_does_not_affect_another(self) -> None:
+        """Hitting rate limit for one client leaves others unaffected."""
+        from unittest.mock import AsyncMock
+
+        from gpumod.mcp_server import RateLimitMiddleware
+
+        middleware = RateLimitMiddleware(max_requests=2, window_seconds=1.0)
+
+        async def ok_call_next(ctx: object) -> str:
+            return "success"
+
+        client_a_context = AsyncMock()
+        client_a_context.client_id = "client-a"
+
+        client_b_context = AsyncMock()
+        client_b_context.client_id = "client-b"
+
+        # Exhaust client A's quota
+        await middleware.on_call_tool(client_a_context, ok_call_next)
+        await middleware.on_call_tool(client_a_context, ok_call_next)
+
+        # Client A should be rate limited
+        with pytest.raises(RuntimeError, match="Rate limit exceeded"):
+            await middleware.on_call_tool(client_a_context, ok_call_next)
+
+        # Client B should still work
+        result = await middleware.on_call_tool(client_b_context, ok_call_next)
+        assert result == "success"
+
+    async def test_on_read_resource_enforces_rate_limit(self) -> None:
+        """on_read_resource should enforce rate limits just like on_call_tool."""
+        from unittest.mock import AsyncMock
+
+        from gpumod.mcp_server import RateLimitMiddleware
+
+        middleware = RateLimitMiddleware(max_requests=2, window_seconds=1.0)
+
+        async def ok_call_next(ctx: object) -> str:
+            return "resource content"
+
+        mock_context = AsyncMock()
+
+        # 2 resource reads should succeed
+        result = await middleware.on_read_resource(mock_context, ok_call_next)
+        assert result == "resource content"
+        result = await middleware.on_read_resource(mock_context, ok_call_next)
+        assert result == "resource content"
+
+        # 3rd should be rate limited
+        with pytest.raises(RuntimeError, match="Rate limit exceeded"):
+            await middleware.on_read_resource(mock_context, ok_call_next)
+
+    async def test_on_read_resource_shares_quota_with_tool_calls(self) -> None:
+        """Tool calls and resource reads share the same per-client quota."""
+        from unittest.mock import AsyncMock
+
+        from gpumod.mcp_server import RateLimitMiddleware
+
+        middleware = RateLimitMiddleware(max_requests=3, window_seconds=1.0)
+
+        async def ok_call_next(ctx: object) -> str:
+            return "ok"
+
+        mock_context = AsyncMock()
+
+        # Mix tool calls and resource reads
+        await middleware.on_call_tool(mock_context, ok_call_next)
+        await middleware.on_read_resource(mock_context, ok_call_next)
+        await middleware.on_call_tool(mock_context, ok_call_next)
+
+        # 4th request (either type) should be rate limited
+        with pytest.raises(RuntimeError, match="Rate limit exceeded"):
+            await middleware.on_read_resource(mock_context, ok_call_next)
+
+    async def test_per_client_window_expiration(self) -> None:
+        """After the window expires, a client's quota resets independently."""
+        import time
+        from unittest.mock import AsyncMock, patch
+
+        from gpumod.mcp_server import RateLimitMiddleware
+
+        middleware = RateLimitMiddleware(max_requests=2, window_seconds=1.0)
+
+        async def ok_call_next(ctx: object) -> str:
+            return "success"
+
+        client_a_context = AsyncMock()
+        client_a_context.client_id = "client-a"
+
+        client_b_context = AsyncMock()
+        client_b_context.client_id = "client-b"
+
+        now = time.monotonic()
+        with patch("gpumod.mcp_server.time") as mock_time:
+            mock_time.monotonic.return_value = now
+
+            # Exhaust client A's quota
+            await middleware.on_call_tool(client_a_context, ok_call_next)
+            await middleware.on_call_tool(client_a_context, ok_call_next)
+
+            # Also use one of client B's
+            await middleware.on_call_tool(client_b_context, ok_call_next)
+
+            # Client A should be rate limited
+            with pytest.raises(RuntimeError, match="Rate limit exceeded"):
+                await middleware.on_call_tool(client_a_context, ok_call_next)
+
+            # Advance time past the window
+            mock_time.monotonic.return_value = now + 1.1
+
+            # Client A should be able to make requests again
+            result = await middleware.on_call_tool(client_a_context, ok_call_next)
+            assert result == "success"
+
+            # Client B should also work (window expired for it too)
+            result = await middleware.on_call_tool(client_b_context, ok_call_next)
+            assert result == "success"
+
+    async def test_default_client_id_when_no_attribute(self) -> None:
+        """When context has no client_id attribute, uses '__default__'."""
+        from unittest.mock import AsyncMock
+
+        from gpumod.mcp_server import RateLimitMiddleware
+
+        middleware = RateLimitMiddleware(max_requests=2, window_seconds=1.0)
+
+        async def ok_call_next(ctx: object) -> str:
+            return "success"
+
+        # AsyncMock without client_id attribute
+        mock_context = AsyncMock(spec=[])
+
+        await middleware.on_call_tool(mock_context, ok_call_next)
+        assert "__default__" in middleware._client_requests
+
+    async def test_get_client_id_extracts_from_context(self) -> None:
+        """_get_client_id should extract client_id from context."""
+        from unittest.mock import AsyncMock
+
+        from gpumod.mcp_server import RateLimitMiddleware
+
+        middleware = RateLimitMiddleware()
+
+        # Context with string client_id
+        context_with_id = AsyncMock()
+        context_with_id.client_id = "test-client-42"
+        assert middleware._get_client_id(context_with_id) == "test-client-42"
+
+        # Context with int client_id (should be converted to string)
+        context_with_int_id = AsyncMock()
+        context_with_int_id.client_id = 123
+        assert middleware._get_client_id(context_with_int_id) == "123"
+
+        # Context without client_id
+        context_without_id = AsyncMock(spec=[])
+        assert middleware._get_client_id(context_without_id) == "__default__"
+
+    async def test_on_read_resource_with_per_client_tracking(self) -> None:
+        """Resource reads are tracked per client."""
+        from unittest.mock import AsyncMock
+
+        from gpumod.mcp_server import RateLimitMiddleware
+
+        middleware = RateLimitMiddleware(max_requests=2, window_seconds=1.0)
+
+        async def ok_call_next(ctx: object) -> str:
+            return "data"
+
+        client_a_context = AsyncMock()
+        client_a_context.client_id = "reader-a"
+
+        client_b_context = AsyncMock()
+        client_b_context.client_id = "reader-b"
+
+        # Exhaust client A's quota via resource reads
+        await middleware.on_read_resource(client_a_context, ok_call_next)
+        await middleware.on_read_resource(client_a_context, ok_call_next)
+
+        # Client A should be rate limited on resource reads
+        with pytest.raises(RuntimeError, match="Rate limit exceeded"):
+            await middleware.on_read_resource(client_a_context, ok_call_next)
+
+        # Client B can still read resources
+        result = await middleware.on_read_resource(client_b_context, ok_call_next)
+        assert result == "data"

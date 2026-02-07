@@ -14,6 +14,7 @@ from fastmcp import Context  # noqa: TCH002 -- runtime import needed for FastMCP
 
 from gpumod.simulation import SimulationError
 from gpumod.validation import (
+    sanitize_name,
     validate_context_override,
     validate_mode_id,
     validate_model_id,
@@ -84,6 +85,37 @@ def _simulation_error(message: str) -> dict[str, str]:
     return {"error": message, "code": "SIMULATION_ERROR"}
 
 
+def _sanitize_dict_names(data: dict[str, Any]) -> dict[str, Any]:
+    """Sanitize 'name' fields in a dict, recursively handling nested structures.
+
+    Strips ANSI escapes, Rich markup, and control characters from any
+    string value associated with a 'name' key.
+
+    Parameters
+    ----------
+    data:
+        A dictionary that may contain 'name' keys at various nesting levels.
+
+    Returns
+    -------
+    dict[str, Any]
+        A new dictionary with all 'name' values sanitized.
+    """
+    result: dict[str, Any] = {}
+    for key, value in data.items():
+        if key == "name" and isinstance(value, str):
+            result[key] = sanitize_name(value)
+        elif isinstance(value, dict):
+            result[key] = _sanitize_dict_names(value)
+        elif isinstance(value, list):
+            result[key] = [
+                _sanitize_dict_names(item) if isinstance(item, dict) else item for item in value
+            ]
+        else:
+            result[key] = value
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Read-only tools (6)
 # ---------------------------------------------------------------------------
@@ -94,21 +126,21 @@ async def gpu_status(ctx: Context) -> dict[str, Any]:
     manager = _get_manager(ctx)
     status = await manager.get_status()
     result: dict[str, Any] = status.model_dump(mode="json")
-    return result
+    return _sanitize_dict_names(result)
 
 
 async def list_services(ctx: Context) -> dict[str, Any]:
     """List all registered services with driver type and VRAM."""
     db = _get_db(ctx)
     services = await db.list_services()
-    return {"services": [s.model_dump(mode="json") for s in services]}
+    return {"services": [_sanitize_dict_names(s.model_dump(mode="json")) for s in services]}
 
 
 async def list_modes(ctx: Context) -> dict[str, Any]:
     """List all available GPU modes."""
     db = _get_db(ctx)
     modes = await db.list_modes()
-    return {"modes": [m.model_dump(mode="json") for m in modes]}
+    return {"modes": [_sanitize_dict_names(m.model_dump(mode="json")) for m in modes]}
 
 
 async def service_info(service_id: str, ctx: Context) -> dict[str, Any]:
@@ -123,7 +155,7 @@ async def service_info(service_id: str, ctx: Context) -> dict[str, Any]:
     if svc is None:
         return _not_found_error(f"Service not found: {service_id!r}")
     result: dict[str, Any] = svc.model_dump(mode="json")
-    return result
+    return _sanitize_dict_names(result)
 
 
 async def model_info(model_id: str, ctx: Context) -> dict[str, Any]:
@@ -138,7 +170,7 @@ async def model_info(model_id: str, ctx: Context) -> dict[str, Any]:
     if model is None:
         return _not_found_error(f"Model not found: {model_id!r}")
     result: dict[str, Any] = model.model_dump(mode="json")
-    return result
+    return _sanitize_dict_names(result)
 
 
 async def simulate_mode(
@@ -192,7 +224,7 @@ async def simulate_mode(
         return _simulation_error(str(exc))
 
     result: dict[str, Any] = sim_result.model_dump(mode="json")
-    return result
+    return _sanitize_dict_names(result)
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +248,7 @@ async def switch_mode(mode_id: str, ctx: Context) -> dict[str, Any]:
         return _not_found_error(str(exc))
 
     result: dict[str, Any] = mode_result.model_dump(mode="json")
-    return result
+    return _sanitize_dict_names(result)
 
 
 async def start_service(service_id: str, ctx: Context) -> dict[str, Any]:

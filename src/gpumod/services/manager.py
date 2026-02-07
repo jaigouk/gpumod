@@ -92,9 +92,12 @@ class ServiceManager:
         ModeResult
             The result of the switch operation.
         """
+        logger.info("Switching to mode %r", target_mode_id)
+
         # 1. Validate target mode exists
         target_mode = await self._db.get_mode(target_mode_id)
         if target_mode is None:
+            logger.warning("Mode not found: %r", target_mode_id)
             return ModeResult(
                 success=False,
                 mode_id=target_mode_id,
@@ -123,6 +126,12 @@ class ServiceManager:
             total_target_vram += await self._vram.estimate_service_vram(svc)
 
         if total_target_vram > gpu_info.vram_total_mb:
+            logger.warning(
+                "VRAM exceeded for mode %r: requires %dMB, available %dMB",
+                target_mode_id,
+                total_target_vram,
+                gpu_info.vram_total_mb,
+            )
             return ModeResult(
                 success=False,
                 mode_id=target_mode_id,
@@ -134,14 +143,23 @@ class ServiceManager:
 
         # 5. Stop services not in target mode (free VRAM first)
         for service_id in sorted(to_stop):
+            logger.info("Stopping service %r (not in target mode)", service_id)
             await self._lifecycle.stop(service_id)
 
         # 6. Start services not in current mode
         for service_id in sorted(to_start):
+            logger.info("Starting service %r (required by target mode)", service_id)
             await self._lifecycle.start(service_id)
 
         # 7. Update current mode in DB
         await self._db.set_current_mode(target_mode_id)
+
+        logger.info(
+            "Mode switch to %r complete: started=%s, stopped=%s",
+            target_mode_id,
+            sorted(to_start),
+            sorted(to_stop),
+        )
 
         return ModeResult(
             success=True,
@@ -165,6 +183,7 @@ class ServiceManager:
         SystemStatus
             The current system status.
         """
+        logger.info("Gathering system status")
         current_mode = await self._db.get_current_mode()
 
         # Gather service statuses concurrently
@@ -211,6 +230,7 @@ class ServiceManager:
         service_id:
             The ID of the service to start.
         """
+        logger.info("Starting service %r", service_id)
         await self._lifecycle.start(service_id)
 
     async def stop_service(self, service_id: str) -> None:
@@ -221,4 +241,5 @@ class ServiceManager:
         service_id:
             The ID of the service to stop.
         """
+        logger.info("Stopping service %r", service_id)
         await self._lifecycle.stop(service_id)

@@ -6,11 +6,12 @@ status panels, and comparison views for service management.
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING
 
 from rich.panel import Panel
 from rich.text import Text
+
+from gpumod.validation import sanitize_name  # noqa: TCH001 -- runtime import needed
 
 if TYPE_CHECKING:
     from gpumod.models import SystemStatus
@@ -33,30 +34,6 @@ _STATE_COLORS: dict[str, str] = {
     "stopped": "dim",
     "unknown": "dim",
 }
-
-
-def _sanitize_name(name: str) -> str:
-    """Sanitize a service name to prevent terminal escape injection.
-
-    Strips Rich markup tags and ANSI control characters from the name.
-
-    Parameters
-    ----------
-    name:
-        The raw service name to sanitize.
-
-    Returns
-    -------
-    str
-        A cleaned service name safe for terminal display.
-    """
-    # Strip ANSI escape sequences
-    cleaned = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", name)
-    # Strip Rich markup tags like [bold red]...[/bold red]
-    cleaned = re.sub(r"\[/?[a-zA-Z0-9_ ]+\]", "", cleaned)
-    # Remove any remaining control characters (except newline/tab)
-    cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", cleaned)
-    return cleaned
 
 
 def _mb_to_gb_label(mb: int) -> str:
@@ -130,9 +107,7 @@ class VRAMBar:
         is_over = total_used > gpu_total_mb
 
         # Sanitize all service names
-        sanitized_services = [
-            (_sanitize_name(name), vram, state) for name, vram, state in services
-        ]
+        sanitized_services = [(sanitize_name(name), vram, state) for name, vram, state in services]
 
         if is_over:
             return self._render_over_capacity(gpu_total_mb, total_used, sanitized_services, width)
@@ -380,7 +355,7 @@ class StatusPanel:
             state = si.status.state.value
             color = self._bar.state_color(state)
             vram = si.status.vram_mb if si.status.vram_mb is not None else si.service.vram_mb
-            name = _sanitize_name(si.service.name)
+            name = sanitize_name(si.service.name)
             service_lines.append(
                 f"  [{color}]{_FILLED_CHAR}[/{color}] {name}: {vram} MB ({state})"
             )

@@ -11,7 +11,12 @@ from typing import TYPE_CHECKING, Any
 
 from fastmcp import Context  # noqa: TCH002 — runtime import needed for FastMCP DI
 
-from gpumod.validation import validate_mode_id, validate_model_id, validate_service_id
+from gpumod.validation import (  # noqa: TCH001
+    sanitize_name,
+    validate_mode_id,
+    validate_model_id,
+    validate_service_id,
+)
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -73,9 +78,10 @@ def _format_modes_table(modes: list[Mode]) -> str:
         "|----|------|-------------|-----------|",
     ]
     for mode in modes:
-        desc = mode.description or "-"
+        name = sanitize_name(mode.name)
+        desc = sanitize_name(mode.description) if mode.description else "-"
         vram = str(mode.total_vram_mb) if mode.total_vram_mb is not None else "-"
-        lines.append(f"| {mode.id} | {mode.name} | {desc} | {vram} |")
+        lines.append(f"| {mode.id} | {name} | {desc} | {vram} |")
     return "\n".join(lines)
 
 
@@ -88,8 +94,9 @@ def _format_services_table(services: list[Service]) -> str:
         "|----|------|--------|------|-----------|",
     ]
     for svc in services:
+        name = sanitize_name(svc.name)
         port = str(svc.port) if svc.port is not None else "-"
-        lines.append(f"| {svc.id} | {svc.name} | {svc.driver.value} | {port} | {svc.vram_mb} |")
+        lines.append(f"| {svc.id} | {name} | {svc.driver.value} | {port} | {svc.vram_mb} |")
     return "\n".join(lines)
 
 
@@ -103,7 +110,7 @@ def _format_models_table(models: list[ModelInfo]) -> str:
     ]
     for model in models:
         params = f"{model.parameters_b:.1f}" if model.parameters_b is not None else "-"
-        arch = model.architecture or "-"
+        arch = sanitize_name(model.architecture) if model.architecture else "-"
         vram = str(model.base_vram_mb) if model.base_vram_mb is not None else "-"
         lines.append(f"| {model.id} | {model.source.value} | {params} | {arch} | {vram} |")
     return "\n".join(lines)
@@ -111,11 +118,12 @@ def _format_models_table(models: list[ModelInfo]) -> str:
 
 def _format_mode_detail(mode: Mode, services: list[Service]) -> str:
     """Format a detailed view of a single mode."""
+    mode_name = sanitize_name(mode.name)
     lines = [
-        f"# Mode: {mode.name}",
+        f"# Mode: {mode_name}",
         "",
         f"- **ID:** {mode.id}",
-        f"- **Description:** {mode.description or '-'}",
+        f"- **Description:** {sanitize_name(mode.description) if mode.description else '-'}",
         f"- **Total VRAM:** {mode.total_vram_mb or '-'} MB",
         "",
     ]
@@ -125,7 +133,8 @@ def _format_mode_detail(mode: Mode, services: list[Service]) -> str:
         lines.append("| ID | Name | Driver | VRAM (MB) |")
         lines.append("|----|------|--------|-----------|")
         for svc in services:
-            lines.append(f"| {svc.id} | {svc.name} | {svc.driver.value} | {svc.vram_mb} |")
+            svc_name = sanitize_name(svc.name)
+            lines.append(f"| {svc.id} | {svc_name} | {svc.driver.value} | {svc.vram_mb} |")
     else:
         lines.append("*No services assigned to this mode.*")
     return "\n".join(lines)
@@ -133,15 +142,17 @@ def _format_mode_detail(mode: Mode, services: list[Service]) -> str:
 
 def _format_service_detail(service: Service) -> str:
     """Format a detailed view of a single service."""
+    name = sanitize_name(service.name)
     lines = [
-        f"# Service: {service.name}",
+        f"# Service: {name}",
         "",
         f"- **ID:** {service.id}",
         f"- **Driver:** {service.driver.value}",
         f"- **Port:** {service.port or '-'}",
         f"- **VRAM:** {service.vram_mb} MB",
         f"- **Sleep Mode:** {service.sleep_mode.value}",
-        f"- **Health Endpoint:** {service.health_endpoint}",
+        f"- **Health Endpoint:** "
+        f"{sanitize_name(service.health_endpoint) if service.health_endpoint else '-'}",
         f"- **Model ID:** {service.model_id or '-'}",
         f"- **Startup Timeout:** {service.startup_timeout}s",
     ]
@@ -153,12 +164,13 @@ def _format_service_detail(service: Service) -> str:
 def _format_model_detail(model: ModelInfo) -> str:
     """Format a detailed view of a single model."""
     params = f"{model.parameters_b:.1f}B" if model.parameters_b is not None else "-"
+    arch = sanitize_name(model.architecture) if model.architecture else "-"
     lines = [
         f"# Model: {model.id}",
         "",
         f"- **Source:** {model.source.value}",
         f"- **Parameters:** {params}",
-        f"- **Architecture:** {model.architecture or '-'}",
+        f"- **Architecture:** {arch}",
         f"- **Base VRAM:** {model.base_vram_mb or '-'} MB",
         f"- **KV Cache per 1k tokens:** {model.kv_cache_per_1k_tokens_mb or '-'} MB",
     ]

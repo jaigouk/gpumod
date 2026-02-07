@@ -404,3 +404,118 @@ class TestResourceSecurity:
             assert "/home/" not in output
             assert "/tmp/" not in output
             assert "/var/" not in output
+
+
+# ---------------------------------------------------------------------------
+# TestResourceNameSanitization (SEC-E3)
+# ---------------------------------------------------------------------------
+
+
+class TestResourceNameSanitization:
+    """Tests that names with ANSI escapes or Rich markup are stripped in resource output."""
+
+    async def test_services_resource_strips_ansi_from_names(self) -> None:
+        from gpumod.mcp_resources import services_resource
+
+        svc = _make_service(name="\x1b[31mEvil Service\x1b[0m")
+        db = _make_mock_db(services=[svc])
+        ctx = _make_mock_ctx(db)
+        result = await services_resource(ctx=ctx)
+        assert "\x1b[" not in result
+        assert "Evil Service" in result
+
+    async def test_modes_resource_strips_rich_markup_from_names(self) -> None:
+        from gpumod.mcp_resources import modes_resource
+
+        mode = _make_mode(name="[bold red]Malicious Mode[/bold red]")
+        db = _make_mock_db(modes=[mode])
+        ctx = _make_mock_ctx(db)
+        result = await modes_resource(ctx=ctx)
+        assert "[bold" not in result
+        assert "Malicious Mode" in result
+
+    async def test_service_detail_strips_ansi_from_name(self) -> None:
+        from gpumod.mcp_resources import service_detail_resource
+
+        svc = _make_service(name="\x1b[32mGreen\x1b[0m Svc")
+        db = _make_mock_db(service=svc)
+        ctx = _make_mock_ctx(db)
+        result = await service_detail_resource(service_id="vllm-chat", ctx=ctx)
+        assert "\x1b[" not in result
+        assert "Green Svc" in result
+
+    async def test_mode_detail_strips_rich_markup(self) -> None:
+        from gpumod.mcp_resources import mode_detail_resource
+
+        mode = _make_mode(name="[red]Bad[/red] Mode")
+        svc = _make_service(name="[bold]Service[/bold]")
+        db = _make_mock_db(mode=mode, mode_services=[svc])
+        ctx = _make_mock_ctx(db)
+        result = await mode_detail_resource(mode_id="chat", ctx=ctx)
+        assert "[red]" not in result
+        assert "[bold]" not in result
+        assert "Bad Mode" in result
+        assert "Service" in result
+
+    async def test_models_resource_strips_ansi(self) -> None:
+        from gpumod.mcp_resources import models_resource
+
+        model = _make_model(architecture="\x1b[33myellow-arch\x1b[0m")
+        db = _make_mock_db(models=[model])
+        ctx = _make_mock_ctx(db)
+        result = await models_resource(ctx=ctx)
+        assert "\x1b[" not in result
+
+
+# ---------------------------------------------------------------------------
+# TestResourceSanitization (SEC-E3 — descriptions & health endpoints)
+# ---------------------------------------------------------------------------
+
+
+class TestResourceSanitization:
+    """Tests for sanitization in MCP resources (SEC-E3)."""
+
+    def test_mode_description_ansi_sanitized(self) -> None:
+        """Mode description with ANSI escapes should be sanitized."""
+        from gpumod.mcp_resources import _format_modes_table
+        from gpumod.models import Mode
+
+        mode = Mode(
+            id="test",
+            name="Test Mode",
+            description="\x1b[31mEvil description\x1b[0m",
+        )
+        result = _format_modes_table([mode])
+        assert "\x1b" not in result
+        assert "Evil description" in result
+
+    def test_health_endpoint_rich_markup_sanitized(self) -> None:
+        """Health endpoint with Rich markup should be sanitized."""
+        from gpumod.mcp_resources import _format_service_detail
+        from gpumod.models import DriverType, Service, SleepMode
+
+        service = Service(
+            id="svc1",
+            name="Test Service",
+            driver=DriverType.VLLM,
+            vram_mb=1000,
+            health_endpoint="[bold red]/evil[/bold red]",
+            sleep_mode=SleepMode.NONE,
+        )
+        result = _format_service_detail(service)
+        assert "[bold red]" not in result
+        assert "/evil" in result
+
+    def test_mode_detail_description_sanitized(self) -> None:
+        """Mode detail description with escapes should be sanitized."""
+        from gpumod.mcp_resources import _format_mode_detail
+        from gpumod.models import Mode
+
+        mode = Mode(
+            id="test",
+            name="Test Mode",
+            description="Normal \x1b[31minjected\x1b[0m text",
+        )
+        result = _format_mode_detail(mode, [])
+        assert "\x1b" not in result
+        assert "Normal" in result

@@ -3,6 +3,8 @@
 Creates and configures the FastMCP server with:
 - Lifespan management (DB connect on startup, close on shutdown)
 - Error sanitization middleware (SEC-E1)
+- Request ID middleware (SEC-A2)
+- Rate limiting middleware (SEC-R2)
 - Strict input validation (SEC-V2)
 """
 
@@ -10,12 +12,16 @@ from __future__ import annotations
 
 import logging
 import re
+import time
+import uuid
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 from fastmcp import FastMCP
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
+from gpumod.config import get_settings
 from gpumod.db import Database
 from gpumod.mcp_resources import register_resources
 from gpumod.mcp_tools import register_tools
@@ -34,6 +40,12 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Request ID context variable (SEC-A2)
+# ---------------------------------------------------------------------------
+
+request_id_var: ContextVar[str] = ContextVar("request_id_var", default="")
 
 # ---------------------------------------------------------------------------
 # Error sanitization (SEC-E1)
@@ -148,10 +160,124 @@ class ErrorSanitizationMiddleware(Middleware):
 
 
 # ---------------------------------------------------------------------------
-# Lifespan (startup / shutdown)
+# Request ID middleware (SEC-A2)
 # ---------------------------------------------------------------------------
 
-_DEFAULT_DB_PATH_SUFFIX = ".config/gpumod/gpumod.db"
+
+class RequestIDMiddleware(Middleware):
+    """Middleware that generates a UUID per MCP request for correlation (SEC-A2).
+
+    Sets a unique request ID in the ``request_id_var`` context variable for
+    each tool call and resource read. The ID is logged at INFO level and can
+    be used downstream for request correlation across service layers.
+    """
+
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[Any],
+        call_next: Any,
+    ) -> Any:
+        """Generate a request ID and set it before processing the tool call."""
+        rid = str(uuid.uuid4())
+        token = request_id_var.set(rid)
+        try:
+            logger.info("MCP tool call [request_id=%s]", rid)
+            return await call_next(context)
+        finally:
+            request_id_var.reset(token)
+
+    async def on_read_resource(
+        self,
+        context: MiddlewareContext[Any],
+        call_next: Any,
+    ) -> Any:
+        """Generate a request ID and set it before reading the resource."""
+        rid = str(uuid.uuid4())
+        token = request_id_var.set(rid)
+        try:
+            logger.info("MCP resource read [request_id=%s]", rid)
+            return await call_next(context)
+        finally:
+            request_id_var.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# Rate limiting middleware (SEC-R2)
+# ---------------------------------------------------------------------------
+
+
+class RateLimitMiddleware(Middleware):
+    """Middleware that enforces per-client request rate limiting (SEC-R2, SEC-R3).
+
+    Uses a sliding window algorithm to track request timestamps per client
+    and reject requests that exceed the configured limit. Each client gets
+    an independent quota keyed by client ID.
+
+    Parameters
+    ----------
+    max_requests:
+        Maximum number of requests allowed within the window. Default 10.
+    window_seconds:
+        Duration of the sliding window in seconds. Default 1.0.
+    """
+
+    def __init__(self, max_requests: int = 10, window_seconds: float = 1.0) -> None:
+        self._max_requests = max_requests
+        self._window_seconds = window_seconds
+        self._client_requests: dict[str, list[float]] = {}
+
+    def _get_client_id(self, context: MiddlewareContext[Any]) -> str:
+        """Extract a client identifier from the middleware context.
+
+        Falls back to ``'__default__'`` if no client info is available.
+        """
+        client_id = getattr(context, "client_id", None)
+        if client_id is not None:
+            return str(client_id)
+        return "__default__"
+
+    def _check_rate(self, client_id: str) -> None:
+        """Check if the current request exceeds the rate limit for a client.
+
+        Raises
+        ------
+        RuntimeError
+            If the rate limit has been exceeded.
+        """
+        now = time.monotonic()
+        # Remove expired timestamps outside the sliding window
+        requests = self._client_requests.get(client_id, [])
+        requests = [t for t in requests if now - t < self._window_seconds]
+        if len(requests) >= self._max_requests:
+            msg = "Rate limit exceeded"
+            raise RuntimeError(msg)
+        requests.append(now)
+        self._client_requests[client_id] = requests
+
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[Any],
+        call_next: Any,
+    ) -> Any:
+        """Enforce rate limit on tool calls."""
+        client_id = self._get_client_id(context)
+        self._check_rate(client_id)
+        return await call_next(context)
+
+    async def on_read_resource(
+        self,
+        context: MiddlewareContext[Any],
+        call_next: Any,
+    ) -> Any:
+        """Enforce rate limit on resource reads."""
+        client_id = self._get_client_id(context)
+        self._check_rate(client_id)
+        return await call_next(context)
+
+
+# ---------------------------------------------------------------------------
+# Lifespan (startup / shutdown)
+# ---------------------------------------------------------------------------
 
 
 @asynccontextmanager
@@ -172,11 +298,10 @@ async def gpumod_lifespan(
         The FastMCP server instance (received from the lifespan protocol).
     db_path:
         Optional path to the SQLite database.  Defaults to
-        ``~/.config/gpumod/gpumod.db``.
+        the value from centralized settings.
     """
-    from pathlib import Path as _Path
-
-    resolved_db_path = db_path if db_path is not None else _Path.home() / _DEFAULT_DB_PATH_SUFFIX
+    settings = get_settings()
+    resolved_db_path = db_path if db_path is not None else settings.db_path
 
     # Ensure parent directory exists.
     resolved_db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -199,9 +324,9 @@ async def gpumod_lifespan(
     simulation = SimulationEngine(db=db, vram=vram, model_registry=model_registry)
     template_engine = TemplateEngine()
 
-    # Discover built-in presets directory.
-    builtin_presets_dir = _Path(__file__).parent.parent.parent / "presets"
-    preset_dirs: list[_Path] = []
+    # Discover built-in presets directory from centralized settings.
+    builtin_presets_dir = settings.presets_dir
+    preset_dirs: list[Path] = []
     if builtin_presets_dir.is_dir():
         preset_dirs.append(builtin_presets_dir)
     preset_loader = PresetLoader(preset_dirs=preset_dirs)
@@ -249,8 +374,9 @@ def create_mcp_server(
     -------
     FastMCP
         A fully-configured FastMCP server instance with error sanitization
-        middleware, strict input validation, and a lifespan that manages
-        the backend service dependencies.
+        middleware, request ID middleware, rate limiting, strict input
+        validation, and a lifespan that manages the backend service
+        dependencies.
     """
 
     @asynccontextmanager
@@ -265,7 +391,11 @@ def create_mcp_server(
             "Manages vLLM, llama.cpp, and FastAPI services on NVIDIA GPUs."
         ),
         lifespan=_lifespan,
-        middleware=[ErrorSanitizationMiddleware()],
+        middleware=[
+            RequestIDMiddleware(),
+            ErrorSanitizationMiddleware(),
+            RateLimitMiddleware(),
+        ],
         strict_input_validation=True,
     )
 

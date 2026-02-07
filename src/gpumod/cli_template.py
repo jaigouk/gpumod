@@ -4,16 +4,13 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
-
-if TYPE_CHECKING:
-    from gpumod.cli import AppContext
 
 template_app = typer.Typer(name="template", help="Manage service templates.")
 
@@ -29,20 +26,6 @@ _SAFE_UNIT_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _get_context() -> AppContext:
-    """Create and return the AppContext via run_async."""
-    from gpumod.cli import create_context, run_async
-
-    return run_async(create_context())  # type: ignore[no-any-return]
-
-
-def _close_db(ctx: AppContext) -> None:
-    """Close the database connection."""
-    from gpumod.cli import run_async
-
-    run_async(ctx.db.close())
 
 
 def _validate_install_path(target: Path, base_dir: Path) -> None:
@@ -86,13 +69,11 @@ def _get_unit_name(service: Any) -> str:
     return unit_name
 
 
-def _build_settings(ctx: AppContext) -> dict[str, str]:
+async def _build_settings(ctx: Any) -> dict[str, str]:  # noqa: ANN401
     """Build a settings dict from DB settings for template rendering."""
-    from gpumod.cli import run_async
-
     settings: dict[str, str] = {}
     for key in ("user", "cuda_devices", "working_dir"):
-        val: str | None = run_async(ctx.db.get_setting(key))
+        val: str | None = await ctx.db.get_setting(key)
         if val is not None:
             settings[key] = val
     return settings
@@ -108,32 +89,32 @@ def list_templates(
     as_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """List available Jinja2 service templates."""
-    from gpumod.cli import error_handler, json_output
+    from gpumod.cli import cli_context, error_handler, json_output, run_async
 
-    ctx = _get_context()
-    try:
-        with error_handler(console=_console):
-            templates = ctx.template_engine.available_templates()
+    async def _cmd() -> None:
+        async with cli_context() as ctx:
+            with error_handler(console=_console):
+                templates = ctx.template_engine.available_templates()
 
-            if not templates:
-                if as_json:
-                    json_output([], as_json=True)
-                else:
-                    _console.print("[dim]No templates available.[/dim]")
-                return
+                if not templates:
+                    if as_json:
+                        json_output([], as_json=True)
+                    else:
+                        _console.print("[dim]No templates available.[/dim]")
+                    return
 
-            if json_output(templates, as_json=as_json) is None:
-                return
+                if json_output(templates, as_json=as_json) is None:
+                    return
 
-            table = Table(title="Available Templates")
-            table.add_column("Template Name", style="cyan")
+                table = Table(title="Available Templates")
+                table.add_column("Template Name", style="cyan")
 
-            for name in templates:
-                table.add_row(name)
+                for name in templates:
+                    table.add_row(name)
 
-            _console.print(table)
-    finally:
-        _close_db(ctx)
+                _console.print(table)
+
+    run_async(_cmd())
 
 
 @template_app.command("show")
@@ -142,29 +123,29 @@ def show_template(
     as_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Show a rendered template with sample context."""
-    from gpumod.cli import error_handler, json_output
+    from gpumod.cli import cli_context, error_handler, json_output, run_async
 
-    ctx = _get_context()
-    try:
-        with error_handler(console=_console):
-            rendered = ctx.template_engine.render(template_name, {})
+    async def _cmd() -> None:
+        async with cli_context() as ctx:
+            with error_handler(console=_console):
+                rendered = ctx.template_engine.render(template_name, {})
 
-            if as_json:
-                json_output(
-                    {"template_name": template_name, "rendered": rendered},
-                    as_json=True,
+                if as_json:
+                    json_output(
+                        {"template_name": template_name, "rendered": rendered},
+                        as_json=True,
+                    )
+                    return
+
+                _console.print(
+                    Panel(
+                        Syntax(rendered, "ini", theme="monokai"),
+                        title=f"Template: {template_name}",
+                        border_style="blue",
+                    )
                 )
-                return
 
-            _console.print(
-                Panel(
-                    Syntax(rendered, "ini", theme="monokai"),
-                    title=f"Template: {template_name}",
-                    border_style="blue",
-                )
-            )
-    finally:
-        _close_db(ctx)
+    run_async(_cmd())
 
 
 @template_app.command("generate")
@@ -174,45 +155,45 @@ def generate_template(
     output: str | None = typer.Option(None, "--output", "-o", help="Write rendered unit to file."),
 ) -> None:
     """Generate a systemd unit file for a registered service."""
-    from gpumod.cli import error_handler, json_output, run_async
+    from gpumod.cli import cli_context, error_handler, json_output, run_async
 
-    ctx = _get_context()
-    try:
-        with error_handler(console=_console):
-            service = run_async(ctx.db.get_service(service_id))
-            if service is None:
-                msg = f"Service not found: {service_id!r}"
-                raise KeyError(msg)
+    async def _cmd() -> None:
+        async with cli_context() as ctx:
+            with error_handler(console=_console):
+                service = await ctx.db.get_service(service_id)
+                if service is None:
+                    msg = f"Service not found: {service_id!r}"
+                    raise KeyError(msg)
 
-            settings = _build_settings(ctx)
-            unit_vars = service.extra_config.get("unit_vars")
-            rendered = ctx.template_engine.render_service_unit(
-                service, settings, unit_vars=unit_vars
-            )
-
-            if output is not None:
-                out_path = Path(output)
-                out_path.parent.mkdir(parents=True, exist_ok=True)
-                out_path.write_text(rendered)
-                _console.print(f"[green]Wrote unit file to [bold]{out_path}[/bold][/green]")
-                return
-
-            if as_json:
-                json_output(
-                    {"service_id": service_id, "rendered": rendered},
-                    as_json=True,
+                settings = await _build_settings(ctx)
+                unit_vars = service.extra_config.get("unit_vars")
+                rendered = ctx.template_engine.render_service_unit(
+                    service, settings, unit_vars=unit_vars
                 )
-                return
 
-            _console.print(
-                Panel(
-                    Syntax(rendered, "ini", theme="monokai"),
-                    title=f"Unit file for service: {service_id}",
-                    border_style="blue",
+                if output is not None:
+                    out_path = Path(output)
+                    out_path.parent.mkdir(parents=True, exist_ok=True)
+                    out_path.write_text(rendered)
+                    _console.print(f"[green]Wrote unit file to [bold]{out_path}[/bold][/green]")
+                    return
+
+                if as_json:
+                    json_output(
+                        {"service_id": service_id, "rendered": rendered},
+                        as_json=True,
+                    )
+                    return
+
+                _console.print(
+                    Panel(
+                        Syntax(rendered, "ini", theme="monokai"),
+                        title=f"Unit file for service: {service_id}",
+                        border_style="blue",
+                    )
                 )
-            )
-    finally:
-        _close_db(ctx)
+
+    run_async(_cmd())
 
 
 @template_app.command("install")
@@ -225,42 +206,42 @@ def install_template(
     Renders the unit and writes it to the systemd directory.
     Requires --yes for confirmation unless previewing.
     """
-    from gpumod.cli import error_handler, run_async
+    from gpumod.cli import cli_context, error_handler, run_async
 
-    ctx = _get_context()
-    try:
-        with error_handler(console=_console):
-            service = run_async(ctx.db.get_service(service_id))
-            if service is None:
-                msg = f"Service not found: {service_id!r}"
-                raise KeyError(msg)
+    async def _cmd() -> None:
+        async with cli_context() as ctx:
+            with error_handler(console=_console):
+                service = await ctx.db.get_service(service_id)
+                if service is None:
+                    msg = f"Service not found: {service_id!r}"
+                    raise KeyError(msg)
 
-            settings = _build_settings(ctx)
-            unit_vars = service.extra_config.get("unit_vars")
-            rendered = ctx.template_engine.render_service_unit(
-                service, settings, unit_vars=unit_vars
-            )
-
-            unit_name = _get_unit_name(service)
-            target_path = _SYSTEMD_UNIT_DIR / f"{unit_name}.service"
-
-            if not yes:
-                _console.print(
-                    Panel(
-                        Syntax(rendered, "ini", theme="monokai"),
-                        title=f"Preview: {target_path}",
-                        border_style="yellow",
-                    )
+                settings = await _build_settings(ctx)
+                unit_vars = service.extra_config.get("unit_vars")
+                rendered = ctx.template_engine.render_service_unit(
+                    service, settings, unit_vars=unit_vars
                 )
-                _console.print("[yellow]Pass --yes to confirm installation.[/yellow]")
-                return
 
-            # Validate target path is safe
-            _validate_install_path(target_path, _SYSTEMD_UNIT_DIR)
+                unit_name = _get_unit_name(service)
+                target_path = _SYSTEMD_UNIT_DIR / f"{unit_name}.service"
 
-            # Write the unit file
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            target_path.write_text(rendered)
-            _console.print(f"[green]Installed unit file: [bold]{target_path}[/bold][/green]")
-    finally:
-        _close_db(ctx)
+                if not yes:
+                    _console.print(
+                        Panel(
+                            Syntax(rendered, "ini", theme="monokai"),
+                            title=f"Preview: {target_path}",
+                            border_style="yellow",
+                        )
+                    )
+                    _console.print("[yellow]Pass --yes to confirm installation.[/yellow]")
+                    return
+
+                # Validate target path is safe
+                _validate_install_path(target_path, _SYSTEMD_UNIT_DIR)
+
+                # Write the unit file
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                target_path.write_text(rendered)
+                _console.print(f"[green]Installed unit file: [bold]{target_path}[/bold][/green]")
+
+    run_async(_cmd())

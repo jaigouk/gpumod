@@ -675,3 +675,75 @@ class TestOutputSanitization:
         # Round-trip must produce equivalent dict
         deserialized = json.loads(serialized)
         assert deserialized == result
+
+
+# ---------------------------------------------------------------------------
+# TestOutputNameSanitization (SEC-E3)
+# ---------------------------------------------------------------------------
+
+
+class TestOutputNameSanitization:
+    """Tests that service/mode/model names with ANSI or Rich markup are stripped in tool output."""
+
+    async def test_list_services_strips_ansi_from_names(self) -> None:
+        from gpumod.mcp_tools import list_services
+
+        svc = _make_service(name="\x1b[31mEvil Service\x1b[0m")
+        db = AsyncMock()
+        db.list_services.return_value = [svc]
+        ctx = _make_mock_ctx(db=db)
+
+        result = await list_services(ctx=ctx)
+
+        for s in result["services"]:
+            assert "\x1b[" not in s["name"]
+            assert "Evil Service" in s["name"]
+
+    async def test_list_modes_strips_rich_markup_from_names(self) -> None:
+        from gpumod.mcp_tools import list_modes
+
+        mode = _make_mode(name="[bold red]Malicious Mode[/bold red]")
+        db = AsyncMock()
+        db.list_modes.return_value = [mode]
+        ctx = _make_mock_ctx(db=db)
+
+        result = await list_modes(ctx=ctx)
+
+        for m in result["modes"]:
+            assert "[bold" not in m["name"]
+            assert "Malicious Mode" in m["name"]
+
+    async def test_service_info_strips_ansi_from_name(self) -> None:
+        from gpumod.mcp_tools import service_info
+
+        svc = _make_service(name="\x1b[32mGreen\x1b[0m Service")
+        db = AsyncMock()
+        db.get_service.return_value = svc
+        ctx = _make_mock_ctx(db=db)
+
+        result = await service_info(service_id="vllm-chat", ctx=ctx)
+
+        assert "\x1b[" not in result["name"]
+        assert "Green Service" in result["name"]
+
+    async def test_gpu_status_strips_ansi_from_service_names(self) -> None:
+        from gpumod.mcp_tools import gpu_status
+        from gpumod.models import ServiceInfo, ServiceState, ServiceStatus
+
+        svc = _make_service(name="\x1b[31mBad\x1b[0m")
+        status_obj = _make_system_status(
+            services=[
+                ServiceInfo(
+                    service=svc,
+                    status=ServiceStatus(state=ServiceState.RUNNING, vram_mb=4000),
+                )
+            ]
+        )
+        manager = AsyncMock()
+        manager.get_status.return_value = status_obj
+        ctx = _make_mock_ctx(manager=manager)
+
+        result = await gpu_status(ctx=ctx)
+
+        serialized = json.dumps(result)
+        assert "\x1b[" not in serialized

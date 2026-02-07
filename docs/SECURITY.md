@@ -1,10 +1,10 @@
-# gpumod Security Model for MCP Tools
+# gpumod Security Model
 
 This document defines the threat model, input validation specification, and security
-requirements for exposing gpumod operations via MCP (Model Context Protocol) tools.
+requirements for gpumod. Covers MCP tool exposure (Phase 4) and LLM-facing AI
+planning (Phase 5).
 
-All Phase 4 implementation tickets (T1-T6) **must** reference this document and follow
-its specifications.
+All implementation tickets **must** reference this document and follow its specifications.
 
 ---
 
@@ -27,6 +27,20 @@ attack surface.
 | T9 | Resource exhaustion via MCP flooding | LLM sends rapid-fire tool calls | Server overload | SEC-R2: Rate limit middleware (default 10 req/s) | SEC-R2 |
 | T10 | Terminal escape injection | Service/mode names with ANSI escapes returned to LLM, then displayed to user | Terminal manipulation | SEC-E3: Sanitize names in all output (existing `_sanitize_name()` pattern) | SEC-E3 |
 | T11 | Extra fields in tool input | LLM sends unexpected kwargs that bypass validation | Logic bypass | SEC-V2: FastMCP `strict_input_validation=True`; Pydantic `extra="forbid"` on all models | SEC-V2 |
+
+### 1.2 LLM Integration Threats (Phase 5)
+
+The `gpumod plan` command calls external LLM APIs (OpenAI, Anthropic, Ollama) and uses
+their responses to generate VRAM allocation plans. This creates additional attack surfaces.
+
+| # | Threat | Vector | Impact | Mitigation | Ref |
+|---|--------|--------|--------|------------|-----|
+| T12 | Indirect prompt injection via DB-stored names | Attacker stores malicious service/mode name in DB (e.g., `"ignore previous instructions..."`) that gets included in LLM prompt | LLM produces manipulated plan output | SEC-L2: Prompt template hardening with clear instruction boundaries; SEC-L1: validate all IDs in response regardless of LLM output | SEC-L1, SEC-L2 |
+| T13 | LLM response manipulation | LLM returns malicious plan (e.g., stop all services, allocate impossible VRAM) | Service disruption if auto-executed | SEC-L4: LLM output is advisory only, never auto-executed; SimulationEngine validates plan feasibility | SEC-L4 |
+| T14 | API key leakage | API key appears in error messages, logs, or LLM prompt context | Credential theft, unauthorized API usage | SEC-L3: API key stored as SecretStr, never logged, never in exception messages | SEC-L3 |
+| T15 | LLM response parsing injection | LLM returns crafted JSON with unexpected fields or injection payloads in ID fields | ID validation bypass, potential shell injection downstream | SEC-L1: All IDs in LLM response validated via validation.py before use; Pydantic strict parsing | SEC-L1 |
+| T16 | Excessive LLM API calls (cost exhaustion) | Automated or rapid-fire `gpumod plan suggest` calls | Unexpected API billing costs | SEC-R2: Rate limiting; CLI is interactive (human-speed); MCP rate limit middleware | SEC-R2 |
+| T17 | Sensitive data sent to external LLM APIs | Full DB dump or internal config sent as prompt context | Data exfiltration to third-party API | SEC-L5: Data minimization — only service IDs, VRAM numbers, and mode names sent; no paths, credentials, or full configs | SEC-L5 |
 
 ---
 
@@ -156,14 +170,85 @@ Use the existing `visualization._sanitize_name()` pattern, extracted to `validat
 
 ---
 
-## 5. Rate Limiting (SEC-R1, SEC-R2)
+## 5. LLM Security Controls (SEC-L1 through SEC-L5)
 
-### 5.1 Simulation Alternatives Cap (SEC-R1)
+### 5.1 LLM Response Validation (SEC-L1)
+
+All IDs in LLM-generated plans **must** be validated via `validation.py` before use:
+- Service IDs validated against `SERVICE_ID_RE`
+- Mode IDs validated against `MODE_ID_RE`
+- Model IDs validated against `MODEL_ID_RE`
+- VRAM values validated as positive integers within GPU capacity
+- Invalid IDs in LLM response **must** raise `LLMResponseError` with a user-friendly
+  message — never silently accepted
+
+Implementation: `llm/response_validator.py` parses LLM JSON output against Pydantic
+models, then validates every ID field via the shared validators.
+
+### 5.2 Prompt Template Hardening (SEC-L2)
+
+LLM prompt templates **must** follow these rules:
+- All templates stored in `llm/prompts.py` as Python constants (not user-configurable files)
+- Clear instruction boundaries: system prompt separated from user data
+- DB-sourced values (service names, mode names) placed in a clearly delimited data
+  section, not interpolated into instruction text
+- No f-string or `.format()` with user-controlled values in prompt construction
+- Template variables limited to: service IDs, mode IDs, VRAM numbers, GPU capacity
+
+Pattern:
+```python
+SYSTEM_PROMPT = """You are a GPU resource planner. Analyze the following GPU state
+and suggest an optimal service allocation plan.
+
+RULES:
+- Only use service IDs from the PROVIDED list
+- VRAM allocations must be positive integers
+- Total VRAM must not exceed GPU capacity
+"""
+
+# Data section constructed separately, never interpolated into instructions
+def build_user_prompt(services: list[dict], gpu_capacity: int) -> str:
+    data = json.dumps({"services": services, "gpu_capacity_mb": gpu_capacity})
+    return f"GPU STATE:\n{data}\n\nProvide your plan as JSON."
+```
+
+### 5.3 API Key Management (SEC-L3)
+
+LLM API keys **must** be handled securely:
+- Stored as `SecretStr` in `GpumodSettings` (pydantic-settings)
+- Loaded exclusively from environment variables (`GPUMOD_LLM_API_KEY`)
+- Never logged at any level (SecretStr `__repr__` returns `'**********'`)
+- Never included in exception messages or error responses
+- Never sent to the LLM as prompt context
+- Ollama backend (local) does not require an API key
+
+### 5.4 LLM Output Sandboxing (SEC-L4)
+
+LLM-generated plans are **advisory only** and **never auto-executed**:
+- `gpumod plan suggest` displays a table of recommendations
+- Output includes suggested CLI commands the user can copy-paste
+- No service start/stop/switch operations triggered by LLM output
+- The plan is validated against SimulationEngine to show feasibility
+- `--dry-run` flag shows the prompt without calling the LLM API
+
+### 5.5 Data Minimization (SEC-L5)
+
+Only the minimum necessary data is sent to external LLM APIs:
+- **Sent:** Service IDs, mode IDs, VRAM allocations (MB), GPU total capacity
+- **Never sent:** Database paths, file paths, API keys, environment variables,
+  full service configurations, user credentials, systemd unit contents
+- Ollama backend runs locally — data does not leave the machine
+
+---
+
+## 6. Rate Limiting (SEC-R1, SEC-R2)
+
+### 6.1 Simulation Alternatives Cap (SEC-R1)
 
 `SimulationEngine._generate_alternatives()` **must** cap output at **10 alternatives**.
 This prevents CPU exhaustion from combinatorial exploration.
 
-### 5.2 Request Rate Limit (SEC-R2)
+### 6.2 Request Rate Limit (SEC-R2)
 
 The MCP server **should** implement rate limiting middleware:
 - Default: 10 requests per second per connection
@@ -172,9 +257,9 @@ The MCP server **should** implement rate limiting middleware:
 
 ---
 
-## 6. Existing Security Controls Audit
+## 7. Existing Security Controls Audit
 
-### 6.1 Strengths (defense-in-depth)
+### 7.1 Strengths (defense-in-depth)
 
 | Control | Location | Status | Notes |
 |---------|----------|--------|-------|
@@ -187,7 +272,7 @@ The MCP server **should** implement rate limiting middleware:
 | **SEC-D4**: Pydantic `extra="forbid"` | `models.py` (all models) | Good | Rejects unexpected fields |
 | **SEC-D5**: Name sanitization | `visualization.py:38-59` | Good | Strips ANSI, Rich markup, control chars |
 
-### 6.2 Gaps (addressed by this spec)
+### 7.2 Gaps (addressed by this spec)
 
 | Gap | Severity | Addressed By |
 |-----|----------|--------------|
@@ -199,16 +284,16 @@ The MCP server **should** implement rate limiting middleware:
 
 ---
 
-## 7. Recommended Deployment Configuration
+## 8. Recommended Deployment Configuration
 
-### 7.1 Transport
+### 8.1 Transport
 
 | Mode | Use Case | Security |
 |------|----------|----------|
 | **stdio** (default) | Claude Desktop, local LLM clients | Process-level isolation, no network exposure |
 | **SSE** | Remote or multi-client | **Must** bind to `localhost` only; use reverse proxy + TLS for remote access |
 
-### 7.2 MCP Client Configuration
+### 8.2 MCP Client Configuration
 
 ```json
 {
@@ -227,33 +312,100 @@ The MCP server **should** implement rate limiting middleware:
 
 ---
 
-## 8. Implementation Checklist
+## 9. Implementation Checklist
 
 Tickets **must** check off relevant items before closing.
 
-### Input Validation
-- [ ] `validation.py` module created with shared regexes and validators
-- [ ] All MCP tool string args validated via SEC-V1 before business logic
-- [ ] All MCP resource template params validated via SEC-V1
-- [ ] `SimulationEngine` validates IDs via SEC-V1 before DB lookups
-- [ ] CLI `simulate` command validates `--add`/`--remove` IDs via SEC-V1
-- [ ] FastMCP created with `strict_input_validation=True` (SEC-V2)
+### Phase 4: Input Validation
+- [x] `validation.py` module created with shared regexes and validators
+- [x] All MCP tool string args validated via SEC-V1 before business logic
+- [x] All MCP resource template params validated via SEC-V1
+- [x] `SimulationEngine` validates IDs via SEC-V1 before DB lookups
+- [x] CLI `simulate` command validates IDs (delegates to SimulationEngine)
+- [x] FastMCP created with `strict_input_validation=True` (SEC-V2)
 
-### Output Sanitization
-- [ ] `ErrorSanitizationMiddleware` strips internal paths (SEC-E1)
-- [ ] MCP resources contain no absolute paths (SEC-E2)
-- [ ] Service/mode/model names sanitized in all MCP output (SEC-E3)
+### Phase 4: Output Sanitization
+- [x] `ErrorSanitizationMiddleware` strips internal paths (SEC-E1)
+- [x] MCP resources contain no absolute paths (SEC-E2)
+- [x] Service/mode/model names sanitized in all MCP output (SEC-E3)
 
-### Authorization & Audit
-- [ ] Tools classified as read-only or mutating in descriptions (SEC-A1)
-- [ ] Mutating tools log operations at INFO level (SEC-A1)
+### Phase 4: Authorization & Audit
+- [x] Tools classified as read-only or mutating in descriptions (SEC-A1)
+- [x] Mutating tools log operations at INFO level (SEC-A1)
 
-### Rate Limiting & Resource Protection
-- [ ] Simulation alternatives capped at 10 (SEC-R1)
-- [ ] Rate limit middleware implemented (SEC-R2)
+### Phase 4: Rate Limiting & Resource Protection
+- [x] Simulation alternatives capped at 10 (SEC-R1)
+- [x] Rate limit middleware implemented (SEC-R2)
 
-### Testing
-- [ ] Input validation tests: shell injection, SQL injection, template injection, path traversal
-- [ ] Error sanitization tests: no internal paths in error responses
-- [ ] Rate limit tests: excess requests rejected
-- [ ] Integration tests verify end-to-end security controls
+### Phase 4: Testing
+- [x] Input validation tests: shell injection, SQL injection, template injection, path traversal
+- [x] Error sanitization tests: no internal paths in error responses
+- [x] Rate limit tests: excess requests rejected
+- [x] Integration tests verify end-to-end security controls
+
+### Phase 5: LLM Security Controls
+- [x] LLM response IDs validated via validation.py (SEC-L1)
+- [x] Prompt templates hardened with instruction boundaries (SEC-L2)
+- [x] API key stored as SecretStr, never logged or in errors (SEC-L3)
+- [x] LLM output advisory only, never auto-executed (SEC-L4)
+- [x] Data minimization — only IDs and VRAM sent to LLM (SEC-L5)
+
+### Phase 5: Security Hardening
+- [x] RateLimitMiddleware registered on MCP server (SEC-R2)
+- [x] `sanitize_name()` called in mcp_tools.py and mcp_resources.py (SEC-E3)
+- [x] `visualization._sanitize_name()` replaced with import from validation.py (DRY)
+- [x] `run_async()` properly typed — zero `type: ignore` in CLI modules
+
+### Phase 5: Integration Testing
+- [x] Rate limiter rejects excess MCP requests end-to-end
+- [x] LLM response with injected IDs rejected (SEC-L1)
+- [x] API key never appears in any error output (SEC-L3)
+- [x] Config flows through CLI -> services -> DB path
+
+### Phase 6: Security Hardening & Observability
+
+#### Rate Limiting (SEC-R3)
+- [x] Per-client rate limiting with independent quotas (SEC-R3)
+- [x] Resource reads (`on_read_resource`) enforce rate limit (SEC-R2 update)
+
+#### JSON & LLM Response Safety (SEC-P1, SEC-P2)
+- [x] `safe_json_loads()` rejects payloads >1MB (SEC-P1)
+- [x] `safe_json_loads()` rejects nesting depth >50 (SEC-P1)
+- [x] `PlanSuggestion.reasoning` capped at 10,000 chars (SEC-P2)
+- [x] Reasoning field sanitized (terminal escapes stripped) (SEC-P2)
+- [x] All `json.loads()` in LLM backends replaced with `safe_json_loads()` (SEC-P1)
+
+#### URL & Path Validation (SEC-V3, SEC-V4)
+- [x] `llm_base_url` rejects `file://` scheme (SEC-V3)
+- [x] `llm_base_url` rejects metadata IP ranges (169.254.x.x) (SEC-V3)
+- [x] `db_path` must resolve under `$HOME` or `/tmp` (SEC-V4)
+
+#### Sanitization & Prompt Defense (SEC-E3, SEC-L2 updates)
+- [x] Mode description sanitized in MCP resource output (SEC-E3)
+- [x] Service/mode names sanitized before LLM prompt JSON (SEC-L2)
+- [x] `cli_mode.py` sanitizes names in Rich output (SEC-E3)
+
+#### DB Validation (SEC-D6, SEC-V5)
+- [x] `extra_config` validated against allowed key set (SEC-D6)
+- [x] `vram_mb` validated with upper bound (SEC-V5)
+- [x] Model IDs validated at DB boundary (SEC-V1 update)
+
+#### HTTP Hardening (SEC-N1, SEC-N2)
+- [x] Explicit per-phase timeouts on httpx clients (SEC-N1)
+- [x] Response `Content-Type` validated as `application/json` (SEC-N2)
+- [x] Total lifecycle timeout via `asyncio.wait_for` (SEC-N1)
+
+#### Observability (SEC-A2, SEC-A3)
+- [x] `RequestIDMiddleware` generates UUID per MCP request (SEC-A2)
+- [x] Structured logging in `ServiceManager`, `Database`, `LifecycleManager` (SEC-A3)
+- [x] Request ID propagates through tool call → response (SEC-A2)
+
+#### Code Quality
+- [ ] `cli_context()` async context manager in `cli.py` (DRY)
+- [ ] All 6 CLI modules use `cli_context()` (DRY)
+- [ ] Zero `type: ignore` comments in `src/gpumod/` (type safety)
+- [ ] Dependencies pinned with upper bounds in `pyproject.toml`
+
+#### Integration Testing
+- [ ] Integration tests cover all 15 audit findings
+- [ ] 900+ total tests, 97%+ coverage

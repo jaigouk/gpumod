@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 import typer.testing
 
 from gpumod.cli import app
@@ -356,3 +357,95 @@ class TestInitCommand:
 
         assert result.exit_code == 0
         mock_ctx.db.close.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# TestRunAsyncTypeSafety
+# ---------------------------------------------------------------------------
+
+
+class TestRunAsyncTypeSafety:
+    """Tests that run_async is properly typed and preserves return type."""
+
+    def test_run_async_returns_typed_value(self) -> None:
+        """run_async should return the correct type from the coroutine."""
+        from gpumod.cli import run_async
+
+        async def return_int() -> int:
+            return 42
+
+        result = run_async(return_int())
+        assert result == 42
+        assert isinstance(result, int)
+
+    def test_run_async_returns_string(self) -> None:
+        """run_async preserves string return type."""
+        from gpumod.cli import run_async
+
+        async def return_str() -> str:
+            return "hello"
+
+        result = run_async(return_str())
+        assert result == "hello"
+        assert isinstance(result, str)
+
+
+# ---------------------------------------------------------------------------
+# cli_context tests
+# ---------------------------------------------------------------------------
+
+
+class TestCliContext:
+    """Tests for the cli_context() async context manager."""
+
+    async def test_cli_context_yields_app_context(self) -> None:
+        """cli_context() yields a valid AppContext."""
+        from gpumod.cli import cli_context
+
+        mock_ctx = _make_mock_context()
+
+        with patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)):
+            async with cli_context() as ctx:
+                assert ctx is mock_ctx
+
+    async def test_cli_context_closes_db(self) -> None:
+        """cli_context() closes the database on normal exit."""
+        from gpumod.cli import cli_context
+
+        mock_ctx = _make_mock_context()
+
+        with patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)):
+            async with cli_context() as ctx:
+                pass  # Normal exit
+
+        ctx.db.close.assert_awaited_once()
+
+    async def test_cli_context_closes_db_on_exception(self) -> None:
+        """cli_context() closes the database even when an exception occurs."""
+        from gpumod.cli import cli_context
+
+        mock_ctx = _make_mock_context()
+
+        with (
+            patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)),
+            pytest.raises(RuntimeError, match="test error"),
+        ):
+            async with cli_context() as ctx:
+                raise RuntimeError("test error")
+
+        ctx.db.close.assert_awaited_once()
+
+    async def test_cli_context_forwards_db_path(self) -> None:
+        """cli_context() forwards the db_path argument to create_context."""
+        from pathlib import Path
+
+        from gpumod.cli import cli_context
+
+        mock_ctx = _make_mock_context()
+        mock_create = AsyncMock(return_value=mock_ctx)
+
+        with patch("gpumod.cli.create_context", new=mock_create):
+            async with cli_context(db_path=Path("/tmp/test.db")):
+                pass
+
+        mock_create.assert_awaited_once_with(db_path=Path("/tmp/test.db"))

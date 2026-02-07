@@ -117,6 +117,84 @@ def validate_context_override(key: str, value: int) -> tuple[str, int]:
     return key, value
 
 
+# ---------------------------------------------------------------------------
+# DB-level validation (SEC-D6, SEC-V5)
+# ---------------------------------------------------------------------------
+
+# Allowed keys for service extra_config (SEC-D6)
+EXTRA_CONFIG_ALLOWED_KEYS: frozenset[str] = frozenset(
+    {
+        "unit_vars",
+        "context_size",
+        "quantization",
+        "tensor_parallel",
+        "gpu_memory_utilization",
+        "max_model_len",
+        "dtype",
+        "rope_scaling",
+        "chat_template",
+        "trust_remote_code",
+    }
+)
+
+# Maximum VRAM in MB (1 TB = 1,048,576 MB) — no single GPU exceeds this
+MAX_VRAM_MB = 1_048_576
+
+
+def validate_extra_config(config: dict[str, object]) -> dict[str, object]:
+    """Validate extra_config keys against the allowed set (SEC-D6).
+
+    Parameters
+    ----------
+    config:
+        The extra configuration dict to validate.
+
+    Returns
+    -------
+    dict[str, object]
+        The validated config (unchanged).
+
+    Raises
+    ------
+    ValueError
+        If any key is not in the allowed set.
+    """
+    unknown = set(config.keys()) - EXTRA_CONFIG_ALLOWED_KEYS
+    if unknown:
+        msg = f"Unknown extra_config keys: {sorted(unknown)}"
+        raise ValueError(msg)
+    return config
+
+
+def validate_vram_mb(value: int, *, max_mb: int = MAX_VRAM_MB) -> int:
+    """Validate VRAM value is within reasonable bounds (SEC-V5).
+
+    Parameters
+    ----------
+    value:
+        The VRAM value in MB.
+    max_mb:
+        Maximum allowed VRAM in MB. Default 1TB.
+
+    Returns
+    -------
+    int
+        The validated VRAM value.
+
+    Raises
+    ------
+    ValueError
+        If the value is negative, zero, or exceeds max_mb.
+    """
+    if value < 0:
+        msg = f"VRAM must be non-negative, got {value}"
+        raise ValueError(msg)
+    if value > max_mb:
+        msg = f"VRAM {value} MB exceeds maximum of {max_mb} MB"
+        raise ValueError(msg)
+    return value
+
+
 def sanitize_name(name: str) -> str:
     """Sanitize a service name to prevent terminal escape injection.
 
