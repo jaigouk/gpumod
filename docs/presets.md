@@ -1,3 +1,8 @@
+---
+title: Presets Reference
+description: YAML preset schema for gpumod — define vLLM, llama.cpp, FastAPI, and Docker service configurations for repeatable GPU deployments.
+---
+
 # Presets Reference
 
 Presets are YAML files that define service configurations for repeatable
@@ -146,19 +151,23 @@ unit_vars:
 ## Example: Docker container preset
 
 ```yaml
-id: qdrant
-name: Qdrant Vector DB
+id: ollama
+name: Ollama LLM Server
 driver: docker
-port: 6333
-vram_mb: 0
-health_endpoint: /healthz
-startup_timeout: 30
+port: 11434
+vram_mb: 8192
+health_endpoint: /api/tags
+startup_timeout: 120
 extra_config:
-  image: qdrant/qdrant:v1.11
+  image: ollama/ollama:latest
   ports:
-    - "6333:6333"
+    - "11434:11434"
+  runtime: nvidia
+  volumes:
+    ~/ollama-models: /root/.ollama
   environment:
-    QDRANT__STORAGE__ON_DISK_PAYLOAD: "true"
+    OLLAMA_MODELS: /root/.ollama
+    OLLAMA_NUM_PARALLEL: "2"
 ```
 
 Docker presets use `extra_config` for container settings (image, ports,

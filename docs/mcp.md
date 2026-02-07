@@ -1,3 +1,8 @@
+---
+title: MCP Server Integration
+description: Set up gpumod's MCP server for Claude Code, Cursor, Claude Desktop, and Antigravity to manage GPU services from AI assistants.
+---
+
 # MCP Server Integration
 
 gpumod includes an MCP (Model Context Protocol) server that lets AI

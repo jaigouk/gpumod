@@ -1,3 +1,8 @@
+---
+title: Security Model
+description: Threat model, input validation, rate limiting, LLM security controls, and container security for gpumod's MCP server and service management.
+---
+
 # gpumod Security Model
 
 This document defines the threat model, input validation specification, and security

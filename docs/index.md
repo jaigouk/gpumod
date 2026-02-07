@@ -1,3 +1,8 @@
+---
+title: gpumod - GPU Service Manager for ML Workloads
+description: Manage vLLM, llama.cpp, FastAPI, and Docker inference services on NVIDIA GPUs with VRAM simulation, mode switching, and MCP integration for AI assistants.
+---
+
 # gpumod
 
 GPU Service Manager for ML workloads on Linux/NVIDIA systems.
@@ -25,57 +30,27 @@ assistant integration.
 - **Interactive TUI** -- Terminal dashboard with live GPU status
 - **Rich CLI** -- Beautiful output with tables, VRAM bar charts, and JSON mode
 
-## Installation
-
-Requires [uv](https://docs.astral.sh/uv/), Python >= 3.12, Linux with
-NVIDIA GPU, and `nvidia-smi` in PATH.
-
-```bash
-git clone https://github.com/jaigouk/gpumod.git
-cd gpumod
-uv sync
-
-# Install globally so `gpumod` is always on your PATH
-uv tool install -e .
-```
-
 ## Quick Start
 
 ```bash
+# Clone and install
+git clone https://github.com/jaigouk/gpumod.git
+cd gpumod
+uv sync
+uv tool install -e .  # makes `gpumod` available globally
+
 # Initialize database and load presets
 gpumod init
 
 # Check GPU status
 gpumod status
 
-# List services
-gpumod service list
-```
-
-## Deploying a Service
-
-gpumod auto-generates systemd unit files from presets — no manual unit files needed.
-
-```bash
-# Preview the generated unit file
+# Deploy a service (auto-generates systemd unit file)
 gpumod template generate vllm-chat
-
-# Install it to /etc/systemd/system/
 sudo gpumod template install vllm-chat --yes
-
-# Start the service (uses sudo systemctl internally)
 gpumod service start vllm-chat
-```
 
-For passwordless operation, configure a sudoers rule — see the
-[Getting Started](https://jaigouk.com/gpumod/getting-started/) guide.
-
-## Mode Switching
-
-Modes bundle services together and fit them within your VRAM budget.
-
-```bash
-# Simulate VRAM usage before switching
+# Simulate VRAM usage before switching modes
 gpumod simulate mode coding-mode
 
 # Switch modes (starts/stops services automatically)
@@ -84,6 +59,9 @@ gpumod mode switch coding-mode
 # Launch interactive TUI
 gpumod tui
 ```
+
+See the [Getting Started](getting-started.md) guide for sudoers configuration
+and full deployment instructions.
 
 ## MCP Integration
 
@@ -102,31 +80,16 @@ IDE to let AI assistants query GPU status, simulate VRAM, and switch modes.
 }
 ```
 
-See [docs/mcp.md](docs/mcp.md) for setup instructions for Claude Code,
+See [MCP Integration](mcp.md) for setup instructions for Claude Code,
 Cursor, Claude Desktop, and Antigravity.
 
-## Security
+## Requirements
 
-Input validation at every boundary, error sanitization, rate limiting,
-parameterized queries, sandboxed templates, and no `shell=True`. See
-[docs/SECURITY.md](docs/SECURITY.md) for the full threat model.
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [CLI Reference](docs/cli.md) | All commands: status, service, mode, simulate, model, template, plan, tui |
-| [MCP Integration](docs/mcp.md) | MCP server setup for Claude Code, Cursor, Claude Desktop, Antigravity |
-| [Configuration](docs/configuration.md) | Environment variables, LLM backends, settings |
-| [Presets](docs/presets.md) | YAML preset schema, driver types, built-in examples |
-| [AI Planning](docs/ai-planning.md) | LLM-assisted VRAM allocation planning |
-| [Architecture](docs/ARCHITECTURE.md) | System design and component overview |
-| [Security](docs/SECURITY.md) | Threat model, input validation, security controls |
-| [Benchmarks](docs/benchmarks/README.md) | LLM benchmark framework and results |
-| [Contributing](docs/contributing.md) | Development setup, tests, code quality, PR process |
+- [uv](https://docs.astral.sh/uv/) >= 0.4
+- Python >= 3.12
+- Linux with NVIDIA GPU
+- `nvidia-smi` in PATH
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE) for details.
-
-Copyright 2026 Jaigouk Kim
+Apache License 2.0 -- Copyright 2026 Jaigouk Kim
