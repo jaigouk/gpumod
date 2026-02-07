@@ -89,9 +89,9 @@ class TestModeFilesExist:
     def test_mode_file_exists(self, filename: str) -> None:
         assert (MODES_DIR / filename).exists(), f"Missing mode: {filename}"
 
-    def test_exactly_6_modes(self) -> None:
+    def test_exactly_7_modes(self) -> None:
         yamls = list(MODES_DIR.glob("*.yaml")) + list(MODES_DIR.glob("*.yml"))
-        assert len(yamls) == 6, f"Expected 6 mode files, found {len(yamls)}"
+        assert len(yamls) == 7, f"Expected 7 mode files, found {len(yamls)}"
 
 
 class TestModeServiceLists:

@@ -358,3 +358,129 @@ class TestEstimateKvCachePer1k:
             num_attention_heads=32,
         )
         assert result > 0
+
+
+# ---------------------------------------------------------------------------
+# GGUF repo support — estimate VRAM from HuggingFace file listings
+# ---------------------------------------------------------------------------
+
+
+class TestGGUFRepoEstimation:
+    """HuggingFaceFetcher should estimate VRAM for GGUF repos without download.
+
+    GGUF repos (e.g. unsloth/Nemotron-3-Nano-30B-A3B-GGUF) contain
+    pre-quantized model files. The HF API returns file sizes via siblings,
+    so we can estimate VRAM from file size alone — no download needed.
+    """
+
+    async def test_fetch_detects_gguf_repo_and_estimates_vram(self) -> None:
+        """fetch() should estimate base_vram_mb from GGUF file size when no safetensors."""
+        fetcher = HuggingFaceFetcher()
+        mock_info = _make_hf_model_info(
+            model_id="unsloth/Nemotron-3-Nano-30B-A3B-GGUF",
+            safetensors=None,
+            config={
+                "architectures": ["NemotronHMoEForCausalLM"],
+                "hidden_size": 4096,
+                "num_hidden_layers": 40,
+                "num_attention_heads": 32,
+                "num_key_value_heads": 8,
+            },
+            siblings=[
+                {"rfilename": "config.json", "size": 1024},
+                {"rfilename": "README.md", "size": 5000},
+                {
+                    "rfilename": "Nemotron-3-Nano-30B-A3B-Q4_K_M.gguf",
+                    "size": 17_500_000_000,
+                },
+                {
+                    "rfilename": "Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf",
+                    "size": 23_000_000_000,
+                },
+                {
+                    "rfilename": "Nemotron-3-Nano-30B-A3B-UD-Q8_K_XL.gguf",
+                    "size": 38_000_000_000,
+                },
+            ],
+        )
+        mock_info.safetensors = None
+
+        with patch(
+            "gpumod.fetchers.huggingface.model_info",
+            return_value=mock_info,
+        ):
+            result = await fetcher.fetch("unsloth/Nemotron-3-Nano-30B-A3B-GGUF")
+
+        # Should pick the smallest GGUF as a reasonable default
+        assert result.base_vram_mb is not None
+        assert result.base_vram_mb > 0
+        # Notes should mention GGUF files found
+        assert result.notes is not None
+        assert "GGUF" in result.notes
+
+    async def test_fetch_gguf_repo_with_quant_filter(self) -> None:
+        """fetch() with quant param should pick the matching GGUF file size."""
+        fetcher = HuggingFaceFetcher()
+        mock_info = _make_hf_model_info(
+            model_id="unsloth/Nemotron-3-Nano-30B-A3B-GGUF",
+            safetensors=None,
+            config=None,
+            siblings=[
+                {"rfilename": "config.json", "size": 1024},
+                {
+                    "rfilename": "Nemotron-3-Nano-30B-A3B-Q4_K_M.gguf",
+                    "size": 17_500_000_000,
+                },
+                {
+                    "rfilename": "Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf",
+                    "size": 23_000_000_000,
+                },
+            ],
+        )
+        mock_info.safetensors = None
+        mock_info.config = None
+
+        with patch(
+            "gpumod.fetchers.huggingface.model_info",
+            return_value=mock_info,
+        ):
+            result = await fetcher.fetch(
+                "unsloth/Nemotron-3-Nano-30B-A3B-GGUF",
+                quant="Q4_K_XL",
+            )
+
+        # Should estimate from the 23GB file (Q4_K_XL)
+        assert result.base_vram_mb is not None
+        expected_mb = int(23_000_000_000 / (1024 * 1024) * 1.1)
+        assert abs(result.base_vram_mb - expected_mb) < 100
+        assert "Q4_K_XL" in result.quantizations
+
+    async def test_fetch_gguf_repo_lists_available_quants(self) -> None:
+        """fetch() on a GGUF repo should list all available quantizations."""
+        fetcher = HuggingFaceFetcher()
+        mock_info = _make_hf_model_info(
+            model_id="unsloth/Model-GGUF",
+            safetensors=None,
+            config=None,
+            siblings=[
+                {
+                    "rfilename": "Model-Q4_K_M.gguf",
+                    "size": 4_000_000_000,
+                },
+                {
+                    "rfilename": "Model-Q8_0.gguf",
+                    "size": 8_000_000_000,
+                },
+            ],
+        )
+        mock_info.safetensors = None
+        mock_info.config = None
+
+        with patch(
+            "gpumod.fetchers.huggingface.model_info",
+            return_value=mock_info,
+        ):
+            result = await fetcher.fetch("unsloth/Model-GGUF")
+
+        assert "Q4_K_M" in result.quantizations
+        assert "Q8_0" in result.quantizations

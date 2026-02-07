@@ -65,7 +65,8 @@ class ModelRegistry:
             If the fetcher fails to retrieve model info.
         """
         if source == ModelSource.HUGGINGFACE:
-            model_info = await self._hf_fetcher.fetch(model_id)
+            quant = kwargs.get("quant")
+            model_info = await self._hf_fetcher.fetch(model_id, quant=quant)
         elif source == ModelSource.GGUF:
             file_path = kwargs.get("file_path")
             if file_path is None:

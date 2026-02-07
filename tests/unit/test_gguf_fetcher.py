@@ -18,8 +18,8 @@ if TYPE_CHECKING:
 # Helpers — minimal GGUF file creation
 # ---------------------------------------------------------------------------
 
-# GGUF magic bytes: "GGUF" in little-endian = 0x46475547
-_GGUF_MAGIC = 0x46475547
+# GGUF magic bytes: b"GGUF" read as uint32-LE → 0x46554747
+_GGUF_MAGIC = 0x46554747
 
 # GGUF metadata value types
 _GGUF_TYPE_STRING = 8
@@ -464,3 +464,78 @@ class TestParseHeaderEdgeCases:
         fetcher = GGUFFetcher()
         header = fetcher._parse_header(filepath)
         assert header.get("key1") == "value1"
+
+
+# ---------------------------------------------------------------------------
+# Bug fix: GGUF magic must match real files (b"GGUF" as LE uint32)
+# ---------------------------------------------------------------------------
+
+
+class TestRealGGUFMagic:
+    """The GGUF magic bytes are b'GGUF' = [0x47, 0x47, 0x55, 0x46].
+
+    Read as little-endian uint32 this is 0x46554747.
+    A previous bug used 0x46475547 which rejected real GGUF files.
+    """
+
+    def test_accepts_real_gguf_magic_bytes(self, tmp_path: Path) -> None:
+        """_parse_header should accept the real b'GGUF' magic."""
+        data = bytearray()
+        # Write literal ASCII bytes G G U F
+        data.extend(b"GGUF")
+        data.extend(struct.pack("<I", 3))  # version
+        data.extend(struct.pack("<Q", 0))  # tensor_count
+        data.extend(struct.pack("<Q", 0))  # kv_count
+
+        filepath = tmp_path / "real.gguf"
+        filepath.write_bytes(bytes(data))
+
+        fetcher = GGUFFetcher()
+        header = fetcher._parse_header(filepath)
+        assert header["version"] == 3
+
+    def test_rejects_non_gguf_magic(self, tmp_path: Path) -> None:
+        """_parse_header should reject files that don't start with b'GGUF'."""
+        data = bytearray()
+        data.extend(b"GGML")  # wrong magic
+        data.extend(struct.pack("<I", 3))
+        data.extend(struct.pack("<Q", 0))
+        data.extend(struct.pack("<Q", 0))
+
+        filepath = tmp_path / "notgguf.gguf"
+        filepath.write_bytes(bytes(data))
+
+        fetcher = GGUFFetcher()
+        with pytest.raises(ValueError, match="Invalid GGUF magic"):
+            fetcher._parse_header(filepath)
+
+
+# ---------------------------------------------------------------------------
+# Bug fix: quant detection should handle UD- prefixed quants
+# ---------------------------------------------------------------------------
+
+
+class TestQuantDetection:
+    """Quant patterns like UD-Q4_K_XL should be detected from filenames."""
+
+    @pytest.mark.asyncio
+    async def test_detects_ud_q4_k_xl_quant(self, tmp_path: Path) -> None:
+        """Filename containing UD-Q4_K_XL should detect Q4_K_XL quantization."""
+        gguf_file = _create_minimal_gguf(
+            tmp_path,
+            filename="Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf",
+        )
+        fetcher = GGUFFetcher()
+        info = await fetcher.fetch(str(gguf_file))
+        assert "Q4_K_XL" in info.quantizations
+
+    @pytest.mark.asyncio
+    async def test_detects_ud_q8_k_xl_quant(self, tmp_path: Path) -> None:
+        """Filename containing UD-Q8_K_XL should detect Q8_K_XL quantization."""
+        gguf_file = _create_minimal_gguf(
+            tmp_path,
+            filename="Model-UD-Q8_K_XL.gguf",
+        )
+        fetcher = GGUFFetcher()
+        info = await fetcher.fetch(str(gguf_file))
+        assert "Q8_K_XL" in info.quantizations

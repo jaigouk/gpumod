@@ -17,8 +17,8 @@ from gpumod.models import ModelInfo, ModelSource
 if TYPE_CHECKING:
     from pathlib import Path
 
-# GGUF magic number: "GGUF" in little-endian
-_GGUF_MAGIC = 0x46475547
+# GGUF magic number: bytes b"GGUF" read as uint32-LE → 0x46554747
+_GGUF_MAGIC = 0x46554747
 
 # Minimum header size: magic(4) + version(4) + tensor_count(8) + kv_count(8) = 24 bytes
 _MIN_HEADER_SIZE = 24
@@ -96,6 +96,8 @@ class GGUFFetcher:
         quantizations: list[str] = []
         name_upper = path.stem.upper()
         for quant in (
+            "Q4_K_XL",
+            "Q8_K_XL",
             "Q4_K_M",
             "Q4_K_S",
             "Q5_K_M",
