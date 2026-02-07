@@ -21,44 +21,44 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     User Interfaces                          │
-│           CLI · Interactive TUI · MCP Server                 │
+│                     User Interfaces                         │
+│           CLI · Interactive TUI · MCP Server                │
 └──────────────────────────┬──────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                   SERVICES LAYER (Core)                      │
+│                   SERVICES LAYER (Core)                     │
 ├─────────────────────────────────────────────────────────────┤
-│  ServiceManager: orchestrates all service operations         │
-│  ├── ServiceRegistry: discovers & tracks services            │
-│  ├── LifecycleManager: start/stop/restart with ordering      │
-│  ├── HealthMonitor: continuous health checking               │
-│  ├── VRAMTracker: real-time GPU memory tracking              │
-│  └── SleepController: L1/L2/router sleep management          │
-│                                                              │
-│  Service Drivers (runtime-specific):                         │
-│  ├── VLLMDriver: vLLM serve processes                        │
-│  ├── LlamaCppDriver: llama.cpp server (router mode)          │
-│  ├── FastAPIDriver: custom FastAPI servers (ASR, etc.)       │
-│  └── DockerDriver: containerized services                    │
+│  ServiceManager: orchestrates all service operations        │
+│  ├── ServiceRegistry: discovers & tracks services           │
+│  ├── LifecycleManager: start/stop/restart with ordering     │
+│  ├── HealthMonitor: continuous health checking              │
+│  ├── VRAMTracker: real-time GPU memory tracking             │
+│  └── SleepController: L1/L2/router sleep management         │
+│                                                             │
+│  Service Drivers (runtime-specific):                        │
+│  ├── VLLMDriver: vLLM serve processes                       │
+│  ├── LlamaCppDriver: llama.cpp server (router mode)         │
+│  ├── FastAPIDriver: custom FastAPI servers (ASR, etc.)      │
+│  └── DockerDriver: containerized services                   │
 └──────────────────────────┬──────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                   CONFIGURATION LAYER                        │
+│                   CONFIGURATION LAYER                       │
 ├─────────────────────────────────────────────────────────────┤
-│  SQLite DB: services, modes, profiles, settings              │
-│  Templates: Jinja2 for systemd units, configs                │
-│  Presets: YAML definitions for common setups                 │
+│  SQLite DB: services, modes, profiles, settings             │
+│  Templates: Jinja2 for systemd units, configs               │
+│  Presets: YAML definitions for common setups                │
 └──────────────────────────┬──────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                   SYSTEM LAYER                               │
+│                   SYSTEM LAYER                              │
 ├─────────────────────────────────────────────────────────────┤
-│  systemd: unit management (systemctl start/stop/status)      │
-│  nvidia-smi: GPU info, VRAM usage                            │
-│  HTTP: health endpoints, sleep/wake APIs                     │
+│  systemd: unit management (systemctl start/stop/status)     │
+│  nvidia-smi: GPU info, VRAM usage                           │
+│  HTTP: health endpoints, sleep/wake APIs                    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -97,14 +97,15 @@ class ServiceStatus:
 
 Each service type has a specialized driver implementing the `ServiceDriver` ABC:
 
-| Driver | Sleep Support | Health Check | Examples |
-| ------ | ------------- | ------------ | -------- |
-| **VLLMDriver** | L1, L2 (via API) | `/health` | vllm-embedding, vllm-chat |
-| **LlamaCppDriver** | Router (load/unload) | `/health` | glm-code (devstral) |
-| **FastAPIDriver** | Custom (if implemented) | Configurable | qwen3-asr, custom servers |
-| **DockerDriver** | Container stop/start | Configurable | qdrant, langfuse |
+| Driver             | Sleep Support           | Health Check | Examples                  |
+| ------------------ | ----------------------- | ------------ | ------------------------- |
+| **VLLMDriver**     | L1, L2 (via API)        | `/health`    | vllm-embedding, vllm-chat |
+| **LlamaCppDriver** | Router (load/unload)    | `/health`    | glm-code (devstral)       |
+| **FastAPIDriver**  | Custom (if implemented) | Configurable | qwen3-asr, custom servers |
+| **DockerDriver**   | Container stop/start    | Configurable | qdrant, langfuse          |
 
 **Driver Responsibilities:**
+
 - Start/stop services via systemd or container runtime
 - Check health via HTTP endpoints
 - Manage sleep states (L1, L2, router)
@@ -116,6 +117,7 @@ Each service type has a specialized driver implementing the `ServiceDriver` ABC:
 The `ServiceManager` coordinates all service operations:
 
 **Key Operations:**
+
 - `switch_mode(target_mode)` - Switch between GPU modes with pre-flight VRAM checks
 - `get_status()` - Full system status (GPU, VRAM, services)
 - `start_service(service_id)` - Start with dependency ordering
@@ -123,6 +125,7 @@ The `ServiceManager` coordinates all service operations:
 
 **Pre-Flight Checks:**
 Before switching modes, ServiceManager:
+
 1. Calculates projected VRAM usage
 2. Compares against GPU capacity
 3. Returns alternatives if exceeds
@@ -133,11 +136,13 @@ Before switching modes, ServiceManager:
 The `LifecycleManager` handles service startup/shutdown with dependency ordering:
 
 **Dependency Resolution:**
+
 - Services can declare `depends_on` (e.g., Chat depends on Embedding)
 - Topological sort ensures correct startup order
 - Reverse order for shutdown (dependents stop first)
 
 **Health Waiting:**
+
 - After starting, waits for health endpoint to respond
 - Configurable timeout per service
 - Fails fast on unhealthy starts
@@ -147,12 +152,14 @@ The `LifecycleManager` handles service startup/shutdown with dependency ordering
 The `VRAMTracker` monitors GPU memory usage:
 
 **Data Sources:**
+
 - `nvidia-smi --query-gpu=memory.used,memory.free` for totals
 - `nvidia-smi -q -x` for per-process breakdown
 - Service configs for estimated VRAM (when idle)
 
 **Estimation:**
 For services not yet running, VRAM is estimated from:
+
 1. Stored `vram_mb` in service config
 2. Model info (weights + KV cache calculation)
 3. Historical usage patterns
@@ -170,6 +177,7 @@ The `SleepController` manages GPU memory optimization:
 
 **Auto-Sleep:**
 Services can be configured to sleep after idle timeout:
+
 ```python
 await sleep_controller.auto_sleep_idle(idle_timeout=300)
 ```
@@ -331,6 +339,7 @@ unit_vars:
 Before deploying services, gpumod simulates VRAM requirements:
 
 **Simulation Flow:**
+
 1. Fetch current VRAM usage
 2. Calculate target mode requirements
 3. Compare against GPU capacity
@@ -363,10 +372,10 @@ proposed (add reranker):
 
 **Data Sources:**
 
-| Source | API | Data Retrieved |
-| ------ | --- | -------------- |
-| **HuggingFace** | `huggingface_hub` | Model config, parameter count, safetensors size |
-| **Ollama** | `GET /api/show` | GGUF quantization, actual VRAM from running models |
+| Source          | API               | Data Retrieved                                     |
+| --------------- | ----------------- | -------------------------------------------------- |
+| **HuggingFace** | `huggingface_hub` | Model config, parameter count, safetensors size    |
+| **Ollama**      | `GET /api/show`   | GGUF quantization, actual VRAM from running models |
 
 **VRAM Estimation:**
 
@@ -384,12 +393,12 @@ total_vram = base_vram_mb + kv_cache_mb
 
 A **mode** is a named collection of services for a specific use case:
 
-| Mode | Services | VRAM | Use Case |
-| ---- | -------- | ---- | -------- |
-| **code** | embedding-code, glm-code | ~22GB | Agentic coding |
-| **rag** | embedding-code, embedding, hyde, reranker, chat | ~13.5GB peak | RAG pipeline |
-| **speak** | embedding, asr, tts, chat | ~23GB | Voice conversations |
-| **blank** | (none) | 0GB | Manual GPU usage |
+| Mode      | Services                                        | VRAM         | Use Case            |
+| --------- | ----------------------------------------------- | ------------ | ------------------- |
+| **code**  | embedding-code, glm-code                        | ~22GB        | Agentic coding      |
+| **rag**   | embedding-code, embedding, hyde, reranker, chat | ~13.5GB peak | RAG pipeline        |
+| **speak** | embedding, asr, tts, chat                       | ~23GB        | Voice conversations |
+| **blank** | (none)                                          | 0GB          | Manual GPU usage    |
 
 ### Switch Workflow
 
@@ -476,11 +485,11 @@ gpumod init                          # First-time setup
 
 ```
 ┌─────────────────────────────── gpumod ────────────────────────────────┐
-│ ▐█▌ RTX 4090 (24GB) │ code │ VRAM: 21.7/24GB [██████████░░] 90%      │
+│ ▐█▌ RTX 4090 (24GB) │ code │ VRAM: 21.7/24GB [██████████░░] 90%       │
 ├───────────────────────────────────────────────────────────────────────┤
 │                                                                       │
-│  ● vllm-embedding-code   2.5GB  running                              │
-│  ● glm-code (devstral)  19.1GB  running  32K ctx                     │
+│  ● vllm-embedding-code   2.5GB  running                               │
+│  ● glm-code (devstral)  19.1GB  running  32K ctx                      │
 │  ○ vllm-embedding        stopped                                      │
 │  ○ qwen3-asr             stopped                                      │
 │                                                                       │
@@ -494,7 +503,7 @@ gpumod init                          # First-time setup
 │   Alternatives:                                                       │
 │   [1] Use L2 sleep (time-share)                                       │
 │   [2] Reduce context: 32K→16K (-3GB)                                  │
-│   [3] Switch to bge-reranker-base (1.5GB)                            │
+│   [3] Switch to bge-reranker-base (1.5GB)                             │
 │                                                                       │
 │ > _                                                                   │
 ├───────────────────────────────────────────────────────────────────────┤
@@ -510,7 +519,7 @@ gpumod init                          # First-time setup
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     User Interfaces                          │
+│                     User Interfaces                         │
 ├───────────────┬───────────────┬─────────────────────────────┤
 │  CLI Commands │ Interactive   │  External MCP Clients       │
 │  gpumod ...   │ /slash cmds   │  (Claude Code, etc.)        │
@@ -520,15 +529,15 @@ gpumod init                          # First-time setup
                         │
                         ▼
         ┌───────────────────────────────────┐
-        │         MCP Server (FastMCP)       │
+        │         MCP Server (FastMCP)      │
         ├───────────────────────────────────┤
-        │  Tools:                            │
-        │  - gpu_mode_switch(mode)           │
-        │  - gpu_mode_status()               │
-        │  - simulate_mode(mode, add=[])     │
-        │  - model_info(model_id)            │
-        │  - service_list()                  │
-        │  - plan_with_ai(prompt)            │
+        │  Tools:                           │
+        │  - gpu_mode_switch(mode)          │
+        │  - gpu_mode_status()              │
+        │  - simulate_mode(mode, add=[])    │
+        │  - model_info(model_id)           │
+        │  - service_list()                 │
+        │  - plan_with_ai(prompt)           │
         └───────────────────────────────────┘
 ```
 
@@ -536,16 +545,16 @@ gpumod init                          # First-time setup
 
 ### MCP Tools
 
-| Tool | Purpose | Example |
-| ---- | ------- | ------- |
-| `gpu_mode_switch` | Switch to a mode | `{"mode": "rag"}` |
-| `gpu_mode_status` | Get current status | `{}` |
-| `gpu_mode_verify` | Verify mode health | `{"mode": "rag"}` |
-| `simulate_mode` | Pre-flight simulation | `{"mode": "code", "add": ["qwen3-reranker"]}` |
-| `model_info` | Fetch model metadata | `{"model_id": "Qwen/Qwen3-VL-2B"}` |
-| `service_list` | List all services | `{}` |
-| `service_status` | Get service status | `{"service_id": "vllm-chat"}` |
-| `plan_with_ai` | AI planning chat | `{"prompt": "add vision model"}` |
+| Tool              | Purpose               | Example                                       |
+| ----------------- | --------------------- | --------------------------------------------- |
+| `gpu_mode_switch` | Switch to a mode      | `{"mode": "rag"}`                             |
+| `gpu_mode_status` | Get current status    | `{}`                                          |
+| `gpu_mode_verify` | Verify mode health    | `{"mode": "rag"}`                             |
+| `simulate_mode`   | Pre-flight simulation | `{"mode": "code", "add": ["qwen3-reranker"]}` |
+| `model_info`      | Fetch model metadata  | `{"model_id": "Qwen/Qwen3-VL-2B"}`            |
+| `service_list`    | List all services     | `{}`                                          |
+| `service_status`  | Get service status    | `{"service_id": "vllm-chat"}`                 |
+| `plan_with_ai`    | AI planning chat      | `{"prompt": "add vision model"}`              |
 
 ---
 
@@ -560,12 +569,12 @@ gpumod init                          # First-time setup
 
 ### Out of Scope (v0.1)
 
-| Feature | Why | Future? |
-| ------- | --- | ------- |
-| macOS/Windows | No systemd | Maybe v0.3 with launchd/WSL |
-| AMD/Intel GPUs | Different tooling (rocm-smi) | Maybe v0.2 |
-| Multi-GPU | Complexity, rare use case | v0.2 |
-| Remote GPU | Network latency, auth | v0.2 |
+| Feature        | Why                          | Future?                     |
+| -------------- | ---------------------------- | --------------------------- |
+| macOS/Windows  | No systemd                   | Maybe v0.3 with launchd/WSL |
+| AMD/Intel GPUs | Different tooling (rocm-smi) | Maybe v0.2                  |
+| Multi-GPU      | Complexity, rare use case    | v0.2                        |
+| Remote GPU     | Network latency, auth        | v0.2                        |
 
 ---
 
