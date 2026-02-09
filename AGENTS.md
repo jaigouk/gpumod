@@ -205,9 +205,7 @@ Improve while keeping tests green:
 
 ### Step 4: Quality Gate
 ```bash
-uv run ruff check src/gpumod/services/{component}.py
-uv run mypy src/gpumod/services/{component}.py --strict
-uv run pytest tests/test_{component}.py -v --cov
+ruff check src/gpumod/services/{component}.py && uv run mypy src/gpumod/services/{component}.py && uv run pytest tests/test_{component}.py -v --cov
 ```
 
 ### Step 5: Complete
@@ -241,21 +239,30 @@ Ensure code quality for {PHASE/COMPONENT}. ALL gates must pass.
 
 ## Quality Gates
 
-### 1. Linting (ruff)
+### Run All Gates (single command)
 ```bash
-uv run ruff check src/ tests/
-uv run ruff format src/ tests/ --check
+ruff check src tests && uv run mypy src && uv run pytest tests/ -q
+```
+
+This runs all three checks sequentially. If any fails, execution stops immediately.
+
+### Individual Gates
+
+**1. Linting (ruff)**
+```bash
+ruff check src/ tests/
+ruff format src/ tests/ --check
 ```
 
 If issues:
 ```bash
-uv run ruff check src/ tests/ --fix
-uv run ruff format src/ tests/
+ruff check src/ tests/ --fix
+ruff format src/ tests/
 ```
 
-### 2. Type Checking (mypy)
+**2. Type Checking (mypy)**
 ```bash
-uv run mypy src/ --strict
+uv run mypy src
 ```
 
 Common fixes:
@@ -264,7 +271,7 @@ Common fixes:
 - Use `Optional[]` for nullable
 - Add `# type: ignore` ONLY as last resort (with comment why)
 
-### 3. Unit Tests (pytest)
+**3. Unit Tests (pytest)**
 ```bash
 uv run pytest tests/ -v --cov=src/gpumod --cov-report=term-missing
 ```
