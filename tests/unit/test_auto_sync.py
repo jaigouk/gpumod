@@ -188,8 +188,10 @@ class TestAutoSyncErrorHandling:
                 pass
 
             # Should log warning
-            assert any("sync" in record.message.lower() or "error" in record.message.lower()
-                      for record in caplog.records)
+            assert any(
+                "sync" in record.message.lower() or "error" in record.message.lower()
+                for record in caplog.records
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -103,11 +103,14 @@ class UnitFileInstaller:
 
         try:
             rendered = self._template_engine.render_service_unit(
-                service, settings, unit_vars=unit_vars,
+                service,
+                settings,
+                unit_vars=unit_vars,
             )
         except Exception:
             logger.exception(
-                "Failed to render unit file for service %r", service.id,
+                "Failed to render unit file for service %r",
+                service.id,
             )
             return
 
@@ -121,9 +124,10 @@ class UnitFileInstaller:
         if not self._daemon_reload_needed:
             return
 
-
         proc = await asyncio.create_subprocess_exec(
-            "systemctl", "--user", "daemon-reload",
+            "systemctl",
+            "--user",
+            "daemon-reload",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

@@ -187,7 +187,8 @@ class LifecycleManager:
                     state,
                 )
                 reason = await self._reason_with_journal(
-                    f"process exited ({state})", unit_name,
+                    f"process exited ({state})",
+                    unit_name,
                 )
                 raise LifecycleError(
                     service_id=service.id,
@@ -203,7 +204,8 @@ class LifecycleManager:
                     timeout_s,
                 )
                 reason = await self._reason_with_journal(
-                    f"health check timed out after {timeout_s}s", unit_name,
+                    f"health check timed out after {timeout_s}s",
+                    unit_name,
                 )
                 raise LifecycleError(
                     service_id=service.id,

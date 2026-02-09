@@ -78,7 +78,10 @@ async def sync_presets(db: Database, loader: PresetLoader) -> PresetSyncResult:
             deleted += 1
 
     return PresetSyncResult(
-        inserted=inserted, updated=updated, unchanged=unchanged, deleted=deleted,
+        inserted=inserted,
+        updated=updated,
+        unchanged=unchanged,
+        deleted=deleted,
     )
 
 
@@ -97,6 +100,7 @@ def _service_differs(existing: Service, new: Service) -> bool:
         or existing.startup_timeout != new.startup_timeout
         or existing.extra_config != new.extra_config
     )
+
 
 _YAML_EXTENSIONS = frozenset({".yaml", ".yml"})
 

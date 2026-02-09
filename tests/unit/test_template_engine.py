@@ -200,9 +200,7 @@ class TestRenderVllmUnit:
         result = engine.render_service_unit(vllm_service, default_settings)
         assert "HF_HOME=/data/.cache/huggingface" in result
 
-    def test_dtype_rendered(
-        self, vllm_service: Service, default_settings: dict[str, str]
-    ) -> None:
+    def test_dtype_rendered(self, vllm_service: Service, default_settings: dict[str, str]) -> None:
         from gpumod.templates.engine import TemplateEngine
 
         engine = TemplateEngine()
@@ -210,9 +208,7 @@ class TestRenderVllmUnit:
         result = engine.render_service_unit(vllm_service, default_settings, unit_vars=unit_vars)
         assert "--dtype float16" in result
 
-    def test_enforce_eager(
-        self, vllm_service: Service, default_settings: dict[str, str]
-    ) -> None:
+    def test_enforce_eager(self, vllm_service: Service, default_settings: dict[str, str]) -> None:
         from gpumod.templates.engine import TemplateEngine
 
         engine = TemplateEngine()
@@ -251,9 +247,7 @@ class TestRenderVllmUnit:
         result = engine.render_service_unit(vllm_service, default_settings, unit_vars=unit_vars)
         assert "--task generate" in result
 
-    def test_hf_overrides(
-        self, vllm_service: Service, default_settings: dict[str, str]
-    ) -> None:
+    def test_hf_overrides(self, vllm_service: Service, default_settings: dict[str, str]) -> None:
         from gpumod.templates.engine import TemplateEngine
 
         engine = TemplateEngine()
@@ -283,9 +277,7 @@ class TestRenderVllmUnit:
         result = engine.render_service_unit(vllm_service, default_settings, unit_vars=unit_vars)
         assert "--trust-remote-code" in result
 
-    def test_max_num_seqs(
-        self, vllm_service: Service, default_settings: dict[str, str]
-    ) -> None:
+    def test_max_num_seqs(self, vllm_service: Service, default_settings: dict[str, str]) -> None:
         from gpumod.templates.engine import TemplateEngine
 
         engine = TemplateEngine()
@@ -293,9 +285,7 @@ class TestRenderVllmUnit:
         result = engine.render_service_unit(vllm_service, default_settings, unit_vars=unit_vars)
         assert "--max-num-seqs 8" in result
 
-    def test_extra_args(
-        self, vllm_service: Service, default_settings: dict[str, str]
-    ) -> None:
+    def test_extra_args(self, vllm_service: Service, default_settings: dict[str, str]) -> None:
         from gpumod.templates.engine import TemplateEngine
 
         engine = TemplateEngine()
