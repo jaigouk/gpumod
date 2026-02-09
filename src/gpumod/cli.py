@@ -491,3 +491,88 @@ def init(
 
     with error_handler(console=console):
         run_async(_cmd())
+
+
+def _format_sync_summary(
+    preset_result: Any,
+    mode_result: Any,
+) -> list[str]:
+    """Build summary parts from sync results."""
+    parts = []
+    if preset_result.inserted > 0:
+        parts.append(f"{preset_result.inserted} inserted")
+    if preset_result.updated > 0:
+        parts.append(f"{preset_result.updated} updated")
+    if preset_result.deleted > 0:
+        parts.append(f"{preset_result.deleted} deleted")
+    if mode_result.inserted > 0:
+        parts.append(f"{mode_result.inserted} modes inserted")
+    if mode_result.updated > 0:
+        parts.append(f"{mode_result.updated} modes updated")
+    if mode_result.deleted > 0:
+        parts.append(f"{mode_result.deleted} modes deleted")
+    return parts
+
+
+@app.command()
+def watch(
+    timeout: float = typer.Option(
+        None,
+        "--timeout",
+        help="Stop watching after N seconds (for testing).",
+    ),
+    debounce: int = typer.Option(
+        500,
+        "--debounce",
+        help="Debounce window in milliseconds.",
+    ),
+    no_sync: bool = typer.Option(
+        False,
+        "--no-sync",
+        help="Skip initial sync before starting watcher.",
+    ),
+) -> None:
+    """Watch preset/mode directories for changes and auto-sync.
+
+    Monitors YAML files for changes and automatically syncs to the database.
+    Useful for rapid iteration during development.
+    """
+    from gpumod.watcher import run_watcher
+
+    console = Console()
+
+    async def _run_watch() -> None:
+        async with cli_context(no_sync=no_sync) as ctx:
+            console.print("[bold]gpumod watch[/bold] starting...")
+            console.print(f"  Preset dirs: {[str(d) for d in ctx.preset_loader.preset_dirs]}")
+            console.print(f"  Mode dirs: {[str(d) for d in ctx.mode_loader.mode_dirs]}")
+            console.print(f"  Debounce: {debounce}ms\n")
+            console.print("[dim]Watching for changes. Press Ctrl+C to stop.[/dim]")
+
+            async def do_sync() -> None:
+                """Sync presets and modes, print summary."""
+                try:
+                    preset_result = await sync_presets(ctx.db, ctx.preset_loader)
+                    mode_result = await sync_modes(ctx.db, ctx.mode_loader)
+                    parts = _format_sync_summary(preset_result, mode_result)
+                    if parts:
+                        console.print(f"[green]Synced:[/green] {', '.join(parts)}")
+                    else:
+                        console.print("[dim]No changes detected.[/dim]")
+                except Exception as exc:
+                    console.print(f"[red]Sync error:[/red] {exc}")
+                    logger.exception("Sync failed")
+
+            try:
+                await run_watcher(
+                    preset_dirs=ctx.preset_loader.preset_dirs,
+                    mode_dirs=ctx.mode_loader.mode_dirs,
+                    sync_fn=do_sync,
+                    debounce_ms=debounce,
+                    watch_timeout=timeout,
+                )
+            except KeyboardInterrupt:
+                console.print("\n[dim]Watcher stopped.[/dim]")
+
+    with error_handler(console=console):
+        run_async(_run_watch())
