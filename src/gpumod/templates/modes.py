@@ -35,6 +35,11 @@ class ModeLoader:
     def __init__(self, mode_dirs: list[Path] | None = None) -> None:
         self._mode_dirs = mode_dirs if mode_dirs is not None else []
 
+    @property
+    def mode_dirs(self) -> list[Path]:
+        """Return the configured mode directories."""
+        return self._mode_dirs
+
     def load_file(self, path: Path) -> Mode:
         """Load a single YAML mode file.
 

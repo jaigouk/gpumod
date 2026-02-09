@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Coroutine
 
 import typer
 from rich.console import Console
@@ -12,7 +16,7 @@ preset_app = typer.Typer(name="preset", help="Manage service presets.")
 _console = Console()
 
 
-def _run_async(coro):  # noqa: ANN001, ANN202
+def _run_async[T](coro: Coroutine[Any, Any, T]) -> T:
     """Run an async coroutine from synchronous CLI code."""
     import asyncio
 

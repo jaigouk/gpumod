@@ -123,6 +123,11 @@ class PresetLoader:
         """
         self._preset_dirs = preset_dirs if preset_dirs is not None else []
 
+    @property
+    def preset_dirs(self) -> list[Path]:
+        """Return the configured preset directories."""
+        return self._preset_dirs
+
     def load_file(self, path: Path) -> PresetConfig:
         """Load a single YAML preset file.
 
