@@ -107,4 +107,26 @@ services before starting the new ones.
 - devstral-small-2 blocked on upstream vllm/mistral tokenizer compatibility
 - Stale MCP server process doesn't pick up uncommitted code changes until Claude Code restarts
 
-**Test count:** 1312 passing
+**Test count:** 1407 passing
+
+---
+
+### 2026-02-09 (v0.1.1)
+
+| Step | Feature | Result | Notes |
+|------|---------|--------|-------|
+| 1 | gpumod watch --help | PASS | Command registered, shows --timeout, --debounce, --no-sync options |
+| 2 | watch file filtering | PASS | Rejects .swp, .tmp, ~ backup files; accepts .yaml/.yml |
+| 3 | watch debounce | PASS | Rapid events coalesced into single sync (500ms default) |
+| 4 | watch error handling | PASS | Malformed YAML logged as warning, watcher continues |
+| 5 | auto-sync on startup | PASS | cli_context() and MCP lifespan call sync_presets/sync_modes |
+| 6 | --no-sync flag | PASS | Skips auto-sync when specified |
+
+**New features in v0.1.1:**
+
+- `gpumod watch` command for filesystem hot-reload (gpumod-7nz)
+- Auto-sync presets and modes on CLI/MCP startup (gpumod-9h8)
+- Mode sync from YAML with delete detection (gpumod-652)
+- Preset sync from YAML with delete detection (gpumod-7ug)
+
+**Test count:** 1407 passing

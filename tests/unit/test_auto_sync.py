@@ -223,7 +223,8 @@ class TestNoSyncFlag:
         """gpumod status should have a --no-sync flag."""
         result = runner.invoke(app, ["status", "--help"])
         assert result.exit_code == 0
-        assert "--no-sync" in result.output
+        # Rich/Typer output may contain ANSI codes that split --no-sync
+        assert "no-sync" in result.output
 
     def test_status_with_no_sync_skips_sync(self) -> None:
         """gpumod status --no-sync should skip auto-sync."""
