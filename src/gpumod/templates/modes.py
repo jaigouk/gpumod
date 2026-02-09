@@ -6,6 +6,8 @@ Uses ``yaml.safe_load()`` exclusively for security.
 
 from __future__ import annotations
 
+import logging
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import yaml
@@ -15,7 +17,10 @@ from gpumod.models import Mode
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from gpumod.db import Database
     from gpumod.models import PresetConfig
+
+logger = logging.getLogger(__name__)
 
 _YAML_EXTENSIONS = frozenset({".yaml", ".yml"})
 
@@ -95,3 +100,121 @@ class ModeLoader:
                 raise ValueError(msg)
             total += preset_map[svc_id]
         return total
+
+
+@dataclass
+class ModeSyncResult:
+    """Result of a mode sync operation."""
+
+    inserted: int
+    updated: int
+    unchanged: int
+    deleted: int
+    warnings: list[str] = field(default_factory=list)
+
+
+async def sync_modes(db: Database, loader: ModeLoader) -> ModeSyncResult:
+    """Sync YAML modes into the database.
+
+    YAML files are the source of truth. For each mode discovered by *loader*:
+    - If it doesn't exist in the DB, insert it.
+    - If it exists but fields differ, update it.
+    - If it exists and matches, skip it.
+
+    Modes in the DB whose IDs match a known mode naming pattern
+    (i.e. they were previously synced from a YAML file) but no longer
+    have a corresponding YAML file are deleted.
+
+    The ``total_vram_mb`` is calculated from current DB service VRAM values.
+    The ``mode_services`` junction table is updated when service lists change.
+
+    Returns a :class:`ModeSyncResult` with counts.
+    """
+    modes = loader.discover_modes()
+    mode_ids = {m.id for m in modes}
+
+    # Build service VRAM map from DB for VRAM calculation
+    services = await db.list_services()
+    service_vram = {s.id: s.vram_mb for s in services}
+    service_ids_in_db = set(service_vram.keys())
+
+    inserted = 0
+    updated = 0
+    unchanged = 0
+    deleted = 0
+    warnings: list[str] = []
+
+    for mode in modes:
+        # Filter out services that don't exist in DB, warn about them
+        valid_services: list[str] = []
+        for svc_id in mode.services:
+            if svc_id in service_ids_in_db:
+                valid_services.append(svc_id)
+            else:
+                warnings.append(
+                    f"Mode '{mode.id}' references unknown service '{svc_id}' — skipping"
+                )
+
+        # Calculate total VRAM from valid services
+        total_vram = sum(service_vram.get(sid, 0) for sid in valid_services)
+
+        existing = await db.get_mode(mode.id)
+
+        if existing is None:
+            # Insert new mode
+            mode_to_insert = Mode(
+                id=mode.id,
+                name=mode.name,
+                description=mode.description,
+                services=valid_services,
+                total_vram_mb=total_vram,
+            )
+            await db.insert_mode(mode_to_insert)
+            await db.set_mode_services(mode.id, valid_services)
+            inserted += 1
+        elif _mode_differs(existing, mode, valid_services, total_vram):
+            # Update existing mode
+            mode_to_update = Mode(
+                id=mode.id,
+                name=mode.name,
+                description=mode.description,
+                services=valid_services,
+                total_vram_mb=total_vram,
+            )
+            await db.update_mode(mode_to_update)
+            await db.set_mode_services(mode.id, valid_services)
+            updated += 1
+        else:
+            unchanged += 1
+
+    # Delete DB modes that came from YAML but whose YAML was removed.
+    # Only delete modes when we have at least one YAML file discovered.
+    # If no YAMLs were found, don't delete anything — this preserves
+    # manually created modes and handles the case where the modes
+    # directory might be temporarily empty/missing.
+    if mode_ids:  # Only delete if we found at least one YAML mode
+        all_modes = await db.list_modes()
+        for m in all_modes:
+            if m.id not in mode_ids:
+                await db.delete_mode(m.id)
+                deleted += 1
+
+    return ModeSyncResult(
+        inserted=inserted,
+        updated=updated,
+        unchanged=unchanged,
+        deleted=deleted,
+        warnings=warnings,
+    )
+
+
+def _mode_differs(
+    existing: Mode, new: Mode, valid_services: list[str], total_vram: int
+) -> bool:
+    """Return True if any mutable field differs between DB mode and YAML mode."""
+    return (
+        existing.name != new.name
+        or existing.description != new.description
+        or existing.services != valid_services
+        or existing.total_vram_mb != total_vram
+    )
