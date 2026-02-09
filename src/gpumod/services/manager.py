@@ -132,9 +132,34 @@ class ServiceManager:
         target_services = await self._db.get_mode_services(target_mode_id)
         target_service_ids = {s.id for s in target_services}
 
-        # 3. Compute diff
-        to_stop = current_service_ids - target_service_ids
+        # 3. Compute diff (include orphan services from prior modes)
+        # Get ALL services currently running or sleeping on the system
+        running_services = await self._registry.list_running()
+        running_service_ids = {s.id for s in running_services}
+
+        logger.debug(
+            "Mode switch state: current_mode=%r, target_mode=%r, "
+            "current_mode_services=%s, target_services=%s, running_services=%s",
+            current_mode_id,
+            target_mode_id,
+            sorted(current_service_ids),
+            sorted(target_service_ids),
+            sorted(running_service_ids),
+        )
+
+        # to_stop includes:
+        # 1. Services defined in current mode but not in target mode
+        # 2. Services actually running/sleeping that aren't in target mode (orphans)
+        to_stop = (current_service_ids | running_service_ids) - target_service_ids
         to_start = target_service_ids - current_service_ids
+
+        # Log orphan detection
+        orphan_services = running_service_ids - current_service_ids - target_service_ids
+        if orphan_services:
+            logger.info(
+                "Detected orphan services from prior modes: %s",
+                sorted(orphan_services),
+            )
 
         # 4. VRAM pre-flight check
         gpu_info = await self._vram.get_gpu_info()
@@ -160,6 +185,30 @@ class ServiceManager:
 
         # 5. Handle outgoing services (free VRAM first)
         slept_ids, stopped_ids = await self._handle_outgoing_services(to_stop)
+
+        # 5.5 Wait for VRAM to be released before starting incoming services
+        if to_start:
+            # Find the largest VRAM requirement among incoming services
+            max_incoming_vram = 0
+            for svc_id in to_start:
+                svc = await self._registry.get(svc_id)
+                max_incoming_vram = max(max_incoming_vram, svc.vram_mb)
+
+            if max_incoming_vram > 0:
+                logger.info(
+                    "Waiting for VRAM release before starting services (need %d MB)",
+                    max_incoming_vram,
+                )
+                vram_released = await self._vram.wait_for_vram_release(
+                    required_mb=max_incoming_vram,
+                    timeout_s=120.0,
+                    poll_interval_s=0.5,
+                    safety_margin_mb=512,
+                )
+                if not vram_released:
+                    logger.warning(
+                        "VRAM wait timed out, proceeding with service start anyway"
+                    )
 
         # 6. Handle incoming services
         woken_ids, started_ids = await self._handle_incoming_services(to_start)
@@ -210,12 +259,17 @@ class ServiceManager:
                 await self._lifecycle.sleep(service_id)
                 slept_ids.append(service_id)
             elif status.state == ServiceState.SLEEPING:
-                logger.info("Service %r already sleeping, skipping", service_id)
-                slept_ids.append(service_id)
-            else:
+                # Orphan sleeping service - must be stopped to free VRAM
+                logger.info(
+                    "Stopping sleeping service %r (orphan, not in target mode)", service_id
+                )
+                await self._lifecycle.stop(service_id)
+                stopped_ids.append(service_id)
+            elif status.state in (ServiceState.RUNNING, ServiceState.UNKNOWN):
                 logger.info("Stopping service %r (not in target mode)", service_id)
                 await self._lifecycle.stop(service_id)
                 stopped_ids.append(service_id)
+            # STOPPED services don't need any action
 
         return slept_ids, stopped_ids
 

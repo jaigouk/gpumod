@@ -166,3 +166,95 @@ class TestEstimateServiceVram:
         svc = _make_service()
         result = await tracker.estimate_service_vram(svc)
         assert result == 3000
+
+
+class TestWaitForVramRelease:
+    """wait_for_vram_release polls GPU memory until enough is free."""
+
+    async def test_returns_immediately_when_vram_available(self) -> None:
+        """When free VRAM >= required, returns True immediately."""
+        tracker = VRAMTracker()
+        # Mock pynvml to return 20000 MB free
+        with patch.object(tracker, "_get_free_vram_mb", return_value=20000):
+            result = await tracker.wait_for_vram_release(
+                required_mb=10000,
+                timeout_s=5.0,
+                poll_interval_s=0.1,
+            )
+        assert result is True
+
+    async def test_polls_until_vram_released(self) -> None:
+        """Polls multiple times until VRAM is released."""
+        tracker = VRAMTracker()
+        # Mock: first call returns low VRAM, second returns enough
+        free_values = [5000, 5000, 20000]  # 3rd call has enough
+        call_count = 0
+
+        async def mock_get_free(device_id: int = 0) -> int:
+            nonlocal call_count
+            val = free_values[min(call_count, len(free_values) - 1)]
+            call_count += 1
+            return val
+
+        with patch.object(tracker, "_get_free_vram_mb", side_effect=mock_get_free):
+            result = await tracker.wait_for_vram_release(
+                required_mb=10000,
+                timeout_s=5.0,
+                poll_interval_s=0.01,
+            )
+        assert result is True
+        assert call_count == 3
+
+    async def test_timeout_returns_false(self) -> None:
+        """When timeout expires without enough VRAM, returns False."""
+        tracker = VRAMTracker()
+        # Always return insufficient VRAM
+        with patch.object(tracker, "_get_free_vram_mb", return_value=1000):
+            result = await tracker.wait_for_vram_release(
+                required_mb=10000,
+                timeout_s=0.1,  # Short timeout
+                poll_interval_s=0.02,
+            )
+        assert result is False
+
+    async def test_includes_safety_margin(self) -> None:
+        """Free VRAM must exceed required + safety margin."""
+        tracker = VRAMTracker()
+        # Mock: exactly required amount (10000), but not enough with margin
+        with patch.object(tracker, "_get_free_vram_mb", return_value=10000):
+            result = await tracker.wait_for_vram_release(
+                required_mb=10000,
+                timeout_s=0.1,
+                poll_interval_s=0.02,
+                safety_margin_mb=512,
+            )
+        # Should fail because 10000 < 10000 + 512
+        assert result is False
+
+    async def test_pynvml_used_when_available(self) -> None:
+        """Uses pynvml when available for faster polling."""
+        tracker = VRAMTracker()
+        mock_nvml = MagicMock()
+        mock_memory = MagicMock()
+        mock_memory.free = 20 * 1024 * 1024 * 1024  # 20 GB in bytes
+
+        with (
+            patch.object(tracker, "_pynvml_available", True),
+            patch("gpumod.services.vram.pynvml", mock_nvml),
+        ):
+            mock_nvml.nvmlDeviceGetHandleByIndex.return_value = MagicMock()
+            mock_nvml.nvmlDeviceGetMemoryInfo.return_value = mock_memory
+            free_mb = await tracker._get_free_vram_mb()
+
+        assert free_mb == 20 * 1024  # 20 GB in MB
+
+    async def test_fallback_to_nvidia_smi(self) -> None:
+        """Falls back to nvidia-smi when pynvml unavailable."""
+        tracker = VRAMTracker()
+        tracker._pynvml_available = False
+
+        proc = _make_fake_process(stdout=USAGE_CSV)  # "21700, 2864\n"
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc):
+            free_mb = await tracker._get_free_vram_mb()
+
+        assert free_mb == 2864

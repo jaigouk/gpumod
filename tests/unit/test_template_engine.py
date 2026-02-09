@@ -322,6 +322,26 @@ class TestRenderVllmUnit:
         assert "--enable-sleep-mode" in result
         assert "--sleep-level 2" in result
 
+    def test_kill_mode_control_group(
+        self, vllm_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        """vLLM spawns child processes (EngineCore, workers); KillMode must kill them all."""
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        result = engine.render_service_unit(vllm_service, default_settings)
+        assert "KillMode=control-group" in result
+
+    def test_timeout_stop_sec(
+        self, vllm_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        """vLLM needs time to gracefully unload model before SIGKILL."""
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        result = engine.render_service_unit(vllm_service, default_settings)
+        assert "TimeoutStopSec=" in result
+
 
 # ── render_service_unit for llamacpp ────────────────────────────────────
 
