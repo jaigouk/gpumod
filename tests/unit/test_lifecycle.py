@@ -650,3 +650,291 @@ class TestWaitForHealthyJournalInError:
             )
 
         mock_journal.assert_called_once_with("svc-a.service")
+
+
+# ---------------------------------------------------------------------------
+# Test: SleepResult / WakeResult dataclasses
+# ---------------------------------------------------------------------------
+
+
+class TestSleepResult:
+    """Test SleepResult dataclass."""
+
+    def test_sleep_result_success(self) -> None:
+        """SleepResult should have success, skipped, reason, latency_ms fields."""
+        from gpumod.services.lifecycle import SleepResult
+
+        result = SleepResult(success=True, latency_ms=42.5)
+        assert result.success is True
+        assert result.skipped is False
+        assert result.reason is None
+        assert result.latency_ms == 42.5
+
+    def test_sleep_result_skipped(self) -> None:
+        """SleepResult can indicate a skipped operation."""
+        from gpumod.services.lifecycle import SleepResult
+
+        result = SleepResult(success=False, skipped=True, reason="driver does not support sleep")
+        assert result.success is False
+        assert result.skipped is True
+        assert result.reason == "driver does not support sleep"
+
+
+class TestWakeResult:
+    """Test WakeResult dataclass."""
+
+    def test_wake_result_success(self) -> None:
+        """WakeResult should have success, skipped, reason, latency_ms fields."""
+        from gpumod.services.lifecycle import WakeResult
+
+        result = WakeResult(success=True, latency_ms=15.0)
+        assert result.success is True
+        assert result.skipped is False
+        assert result.reason is None
+        assert result.latency_ms == 15.0
+
+    def test_wake_result_skipped(self) -> None:
+        """WakeResult can indicate a skipped operation."""
+        from gpumod.services.lifecycle import WakeResult
+
+        result = WakeResult(success=False, skipped=True, reason="service not sleeping")
+        assert result.success is False
+        assert result.skipped is True
+        assert result.reason == "service not sleeping"
+
+
+# ---------------------------------------------------------------------------
+# Test: LifecycleManager.sleep()
+# ---------------------------------------------------------------------------
+
+
+class TestLifecycleManagerSleep:
+    """Tests for LifecycleManager.sleep() method."""
+
+    async def test_sleep_delegates_to_driver(self) -> None:
+        """sleep() should call driver.sleep() for sleep-capable services."""
+        from gpumod.services.lifecycle import SleepResult
+
+        svc = _make_service(id="vllm-chat")
+        registry = _build_mock_registry(services={"vllm-chat": svc})
+        driver = _build_mock_driver(state=ServiceState.RUNNING)
+        driver.supports_sleep = True
+        driver.sleep = AsyncMock()
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+        result = await lm.sleep("vllm-chat", level=1)
+
+        assert isinstance(result, SleepResult)
+        assert result.success is True
+        driver.sleep.assert_awaited_once_with(svc, 1)
+
+    async def test_sleep_returns_skipped_for_non_capable_driver(self) -> None:
+        """sleep() should return skipped=True for services with supports_sleep=False."""
+        from gpumod.services.lifecycle import SleepResult
+
+        svc = _make_service(id="embedding-svc")
+        registry = _build_mock_registry(services={"embedding-svc": svc})
+        driver = _build_mock_driver(state=ServiceState.RUNNING)
+        driver.supports_sleep = False
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+        result = await lm.sleep("embedding-svc", level=1)
+
+        assert isinstance(result, SleepResult)
+        assert result.success is False
+        assert result.skipped is True
+        assert "does not support sleep" in (result.reason or "")
+
+    async def test_sleep_returns_skipped_if_already_sleeping(self) -> None:
+        """sleep() should be idempotent - skip if already sleeping."""
+        from gpumod.services.lifecycle import SleepResult
+
+        svc = _make_service(id="vllm-chat")
+        registry = _build_mock_registry(services={"vllm-chat": svc})
+        driver = _build_mock_driver(state=ServiceState.SLEEPING)
+        driver.supports_sleep = True
+        driver.sleep = AsyncMock()
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+        result = await lm.sleep("vllm-chat", level=1)
+
+        assert isinstance(result, SleepResult)
+        assert result.success is True  # Idempotent success
+        assert result.skipped is True
+        driver.sleep.assert_not_awaited()
+
+    async def test_sleep_returns_error_if_not_running(self) -> None:
+        """sleep() should return error if service is not RUNNING or SLEEPING."""
+        from gpumod.services.lifecycle import SleepResult
+
+        svc = _make_service(id="vllm-chat")
+        registry = _build_mock_registry(services={"vllm-chat": svc})
+        driver = _build_mock_driver(state=ServiceState.STOPPED)
+        driver.supports_sleep = True
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+        result = await lm.sleep("vllm-chat", level=1)
+
+        assert isinstance(result, SleepResult)
+        assert result.success is False
+        assert result.skipped is False
+        reason_lower = (result.reason or "").lower()
+        assert "stopped" in reason_lower or "not running" in reason_lower
+
+    async def test_sleep_returns_error_for_unknown_service(self) -> None:
+        """sleep() should return error for non-existent service."""
+        from gpumod.services.lifecycle import SleepResult
+
+        registry = _build_mock_registry(services={})
+        lm = LifecycleManager(registry)
+        result = await lm.sleep("unknown-svc", level=1)
+
+        assert isinstance(result, SleepResult)
+        assert result.success is False
+        assert "not found" in (result.reason or "").lower()
+
+    async def test_sleep_includes_latency_ms(self) -> None:
+        """sleep() result should include latency in milliseconds."""
+        from gpumod.services.lifecycle import SleepResult
+
+        svc = _make_service(id="vllm-chat")
+        registry = _build_mock_registry(services={"vllm-chat": svc})
+        driver = _build_mock_driver(state=ServiceState.RUNNING)
+        driver.supports_sleep = True
+        driver.sleep = AsyncMock()
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+        result = await lm.sleep("vllm-chat", level=1)
+
+        assert isinstance(result, SleepResult)
+        assert result.latency_ms is not None
+        assert result.latency_ms >= 0
+
+    async def test_sleep_passes_level_to_driver(self) -> None:
+        """sleep(level=2) should pass level=2 to driver."""
+        svc = _make_service(id="vllm-chat")
+        registry = _build_mock_registry(services={"vllm-chat": svc})
+        driver = _build_mock_driver(state=ServiceState.RUNNING)
+        driver.supports_sleep = True
+        driver.sleep = AsyncMock()
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+        await lm.sleep("vllm-chat", level=2)
+
+        driver.sleep.assert_awaited_once_with(svc, 2)
+
+
+# ---------------------------------------------------------------------------
+# Test: LifecycleManager.wake()
+# ---------------------------------------------------------------------------
+
+
+class TestLifecycleManagerWake:
+    """Tests for LifecycleManager.wake() method."""
+
+    async def test_wake_delegates_to_driver(self) -> None:
+        """wake() should call driver.wake() for sleeping services."""
+        from gpumod.services.lifecycle import WakeResult
+
+        svc = _make_service(id="vllm-chat")
+        registry = _build_mock_registry(services={"vllm-chat": svc})
+        driver = _build_mock_driver(state=ServiceState.SLEEPING)
+        driver.supports_sleep = True
+        driver.wake = AsyncMock()
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+        result = await lm.wake("vllm-chat")
+
+        assert isinstance(result, WakeResult)
+        assert result.success is True
+        driver.wake.assert_awaited_once_with(svc)
+
+    async def test_wake_returns_skipped_if_not_sleeping(self) -> None:
+        """wake() should return skipped=True if service is not sleeping."""
+        from gpumod.services.lifecycle import WakeResult
+
+        svc = _make_service(id="vllm-chat")
+        registry = _build_mock_registry(services={"vllm-chat": svc})
+        driver = _build_mock_driver(state=ServiceState.RUNNING)
+        driver.supports_sleep = True
+        driver.wake = AsyncMock()
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+        result = await lm.wake("vllm-chat")
+
+        assert isinstance(result, WakeResult)
+        assert result.success is True  # Idempotent success
+        assert result.skipped is True
+        driver.wake.assert_not_awaited()
+
+    async def test_wake_returns_error_for_non_capable_driver(self) -> None:
+        """wake() should return error for drivers that don't support sleep."""
+        from gpumod.services.lifecycle import WakeResult
+
+        svc = _make_service(id="embedding-svc")
+        registry = _build_mock_registry(services={"embedding-svc": svc})
+        driver = _build_mock_driver(state=ServiceState.SLEEPING)
+        driver.supports_sleep = False
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+        result = await lm.wake("embedding-svc")
+
+        assert isinstance(result, WakeResult)
+        assert result.success is False
+        assert "does not support" in (result.reason or "").lower()
+
+    async def test_wake_returns_error_for_stopped_service(self) -> None:
+        """wake() should return error if service is STOPPED."""
+        from gpumod.services.lifecycle import WakeResult
+
+        svc = _make_service(id="vllm-chat")
+        registry = _build_mock_registry(services={"vllm-chat": svc})
+        driver = _build_mock_driver(state=ServiceState.STOPPED)
+        driver.supports_sleep = True
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+        result = await lm.wake("vllm-chat")
+
+        assert isinstance(result, WakeResult)
+        assert result.success is False
+        assert "stopped" in (result.reason or "").lower()
+
+    async def test_wake_returns_error_for_unknown_service(self) -> None:
+        """wake() should return error for non-existent service."""
+        from gpumod.services.lifecycle import WakeResult
+
+        registry = _build_mock_registry(services={})
+        lm = LifecycleManager(registry)
+        result = await lm.wake("unknown-svc")
+
+        assert isinstance(result, WakeResult)
+        assert result.success is False
+        assert "not found" in (result.reason or "").lower()
+
+    async def test_wake_includes_latency_ms(self) -> None:
+        """wake() result should include latency in milliseconds."""
+        from gpumod.services.lifecycle import WakeResult
+
+        svc = _make_service(id="vllm-chat")
+        registry = _build_mock_registry(services={"vllm-chat": svc})
+        driver = _build_mock_driver(state=ServiceState.SLEEPING)
+        driver.supports_sleep = True
+        driver.wake = AsyncMock()
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+        result = await lm.wake("vllm-chat")
+
+        assert isinstance(result, WakeResult)
+        assert result.latency_ms is not None
+        assert result.latency_ms >= 0

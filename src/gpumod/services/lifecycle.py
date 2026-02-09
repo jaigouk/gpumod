@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from gpumod.models import ServiceState, SleepMode
@@ -20,6 +21,50 @@ if TYPE_CHECKING:
 _DEAD_STATES: frozenset[str] = frozenset({"failed", "inactive", "dead"})
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SleepResult:
+    """Result of a sleep operation.
+
+    Attributes
+    ----------
+    success:
+        True if the operation completed (or was idempotent no-op).
+    skipped:
+        True if the operation was skipped (already sleeping, or not applicable).
+    reason:
+        Human-readable explanation if operation failed or was skipped.
+    latency_ms:
+        Time taken in milliseconds, if measured.
+    """
+
+    success: bool
+    skipped: bool = False
+    reason: str | None = None
+    latency_ms: float | None = None
+
+
+@dataclass
+class WakeResult:
+    """Result of a wake operation.
+
+    Attributes
+    ----------
+    success:
+        True if the operation completed (or was idempotent no-op).
+    skipped:
+        True if the operation was skipped (already running, or not applicable).
+    reason:
+        Human-readable explanation if operation failed or was skipped.
+    latency_ms:
+        Time taken in milliseconds, if measured.
+    """
+
+    success: bool
+    skipped: bool = False
+    reason: str | None = None
+    latency_ms: float | None = None
 
 
 class LifecycleError(Exception):
@@ -127,6 +172,135 @@ class LifecycleManager:
         logger.info("Restarting service %r", service_id)
         await self.stop(service_id)
         await self.start(service_id)
+
+    async def sleep(self, service_id: str, level: int = 1) -> SleepResult:
+        """Put a service to sleep without stopping the process.
+
+        This is an idempotent operation: sleeping an already-sleeping service
+        returns success with skipped=True.
+
+        Parameters
+        ----------
+        service_id:
+            The ID of the service to sleep.
+        level:
+            Sleep level (1 or 2). Level semantics are driver-specific.
+
+        Returns
+        -------
+        SleepResult:
+            Result indicating success, skip, or failure with reason.
+        """
+        start_time = time.monotonic()
+
+        try:
+            service = await self._registry.get(service_id)
+        except KeyError:
+            return SleepResult(
+                success=False,
+                reason=f"Service not found: {service_id!r}",
+            )
+
+        driver = self._registry.get_driver(service.driver)
+        status = await driver.status(service)
+        elapsed_ms = (time.monotonic() - start_time) * 1000
+
+        # Check if driver supports sleep
+        if not driver.supports_sleep:
+            return SleepResult(
+                success=False,
+                skipped=True,
+                reason=f"Driver does not support sleep: {service.driver}",
+                latency_ms=elapsed_ms,
+            )
+
+        # Idempotent: already sleeping is a success
+        if status.state == ServiceState.SLEEPING:
+            return SleepResult(
+                success=True,
+                skipped=True,
+                reason="Already sleeping",
+                latency_ms=elapsed_ms,
+            )
+
+        # Must be running to sleep
+        if status.state != ServiceState.RUNNING:
+            return SleepResult(
+                success=False,
+                reason=f"Service is {status.state}, must be RUNNING to sleep",
+                latency_ms=elapsed_ms,
+            )
+
+        # Perform sleep
+        logger.info("Putting service %r to sleep (level=%d)", service_id, level)
+        await driver.sleep(service, level)
+        elapsed_ms = (time.monotonic() - start_time) * 1000
+        logger.info("Service %r is now sleeping", service_id)
+
+        return SleepResult(success=True, latency_ms=elapsed_ms)
+
+    async def wake(self, service_id: str) -> WakeResult:
+        """Wake a sleeping service.
+
+        This is an idempotent operation: waking an already-running service
+        returns success with skipped=True.
+
+        Parameters
+        ----------
+        service_id:
+            The ID of the service to wake.
+
+        Returns
+        -------
+        WakeResult:
+            Result indicating success, skip, or failure with reason.
+        """
+        start_time = time.monotonic()
+
+        try:
+            service = await self._registry.get(service_id)
+        except KeyError:
+            return WakeResult(
+                success=False,
+                reason=f"Service not found: {service_id!r}",
+            )
+
+        driver = self._registry.get_driver(service.driver)
+        status = await driver.status(service)
+        elapsed_ms = (time.monotonic() - start_time) * 1000
+
+        # Check if driver supports sleep/wake
+        if not driver.supports_sleep:
+            return WakeResult(
+                success=False,
+                reason=f"Driver does not support sleep/wake: {service.driver}",
+                latency_ms=elapsed_ms,
+            )
+
+        # Idempotent: already running is a success
+        if status.state == ServiceState.RUNNING:
+            return WakeResult(
+                success=True,
+                skipped=True,
+                reason="Already running",
+                latency_ms=elapsed_ms,
+            )
+
+        # Must be sleeping to wake (stopped services can't be woken)
+        if status.state != ServiceState.SLEEPING:
+            return WakeResult(
+                success=False,
+                reason=f"Service is {status.state}, must be SLEEPING to wake",
+                latency_ms=elapsed_ms,
+            )
+
+        # Perform wake
+        logger.info("Waking service %r", service_id)
+        await driver.wake(service)
+        elapsed_ms = (time.monotonic() - start_time) * 1000
+        logger.info("Service %r is now awake", service_id)
+
+        return WakeResult(success=True, latency_ms=elapsed_ms)
 
     # ------------------------------------------------------------------
     # Health waiting
