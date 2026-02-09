@@ -29,7 +29,6 @@ class VLLMDriver(ServiceDriver):
 
     def __init__(self, http_timeout: float = 10.0) -> None:
         self._http_timeout = http_timeout
-        self._sleeping = False
 
     # ------------------------------------------------------------------
     # ServiceDriver interface
@@ -74,7 +73,7 @@ class VLLMDriver(ServiceDriver):
                     health_ok=False,
                 )
 
-            sleeping = await self._is_sleeping(service)
+            sleeping = await self.is_sleeping(service)
             if sleeping:
                 return ServiceStatus(state=ServiceState.SLEEPING, health_ok=True)
 
@@ -87,33 +86,85 @@ class VLLMDriver(ServiceDriver):
     # Sleep / Wake
     # ------------------------------------------------------------------
 
-    async def sleep(self, service: Service, level: str = "l1") -> None:
-        """Put the vLLM model to sleep via POST /sleep."""
+    async def sleep(self, service: Service, level: int = 1) -> None:
+        """Put the vLLM model to sleep via POST /sleep?level=N.
+
+        Parameters
+        ----------
+        service:
+            The service to put to sleep.
+        level:
+            Sleep level (1 or 2).
+            L1: Offloads weights to CPU RAM, discards KV cache. Wake is instant.
+            L2: Discards weights and KV cache. Wake takes 2-5s.
+
+        Raises
+        ------
+        ValueError:
+            If level is not 1 or 2.
+        httpx.ConnectError:
+            If the service is not reachable.
+        """
+        if level not in (1, 2):
+            msg = f"Invalid sleep level: {level}. Must be 1 or 2."
+            raise ValueError(msg)
+
         async with httpx.AsyncClient(timeout=self._http_timeout) as client:
             await client.post(
                 f"http://localhost:{service.port}/sleep",
-                json={"level": level},
+                params={"level": level},
             )
-        self._sleeping = True
 
-    async def wake(self, service: Service) -> None:
-        """Wake the vLLM model via POST /wake."""
+    async def wake(self, service: Service, tags: str | None = None) -> None:
+        """Wake the vLLM model via POST /wake_up.
+
+        Parameters
+        ----------
+        service:
+            The service to wake.
+        tags:
+            Optional comma-separated tags for selective wake (e.g., "weights").
+            Used for L2 sleep to wake components incrementally.
+
+        Raises
+        ------
+        httpx.ConnectError:
+            If the service is not reachable.
+        """
+        params = {"tags": tags} if tags else None
         async with httpx.AsyncClient(timeout=self._http_timeout) as client:
-            await client.post(f"http://localhost:{service.port}/wake")
-        self._sleeping = False
+            await client.post(
+                f"http://localhost:{service.port}/wake_up",
+                params=params,
+            )
+
+    async def is_sleeping(self, service: Service) -> bool:
+        """Check if the vLLM model is currently sleeping via GET /is_sleeping.
+
+        Returns False if the service is not reachable, endpoint doesn't exist
+        (dev mode off), or response is malformed.
+
+        Returns
+        -------
+        bool:
+            True if the model is sleeping, False otherwise.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=self._http_timeout) as client:
+                resp = await client.get(
+                    f"http://localhost:{service.port}/is_sleeping"
+                )
+                if resp.status_code != 200:
+                    return False
+                data = resp.json()
+                return data.get("is_sleeping", False)
+        except (httpx.ConnectError, httpx.TimeoutException, OSError):
+            return False
 
     @property
     def supports_sleep(self) -> bool:
         """VLLMDriver supports L1 and L2 sleep."""
         return True
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    async def _is_sleeping(self, service: Service) -> bool:
-        """Return True if the service is currently sleeping."""
-        return self._sleeping
 
     @staticmethod
     def _validate_unit_name(service: Service) -> None:
