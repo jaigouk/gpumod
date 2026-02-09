@@ -158,11 +158,7 @@ class LlamaCppDriver(ServiceDriver):
         Returns an empty list on any connection or parsing error.
         """
         all_models = await self._get_all_models(service)
-        return [
-            m
-            for m in all_models
-            if m.get("status", {}).get("value") == "loaded"
-        ]
+        return [m for m in all_models if m.get("status", {}).get("value") == "loaded"]
 
     async def _discover_model_to_load(self, service: Service) -> str | None:
         """Find a model to load from the server's available models.
@@ -171,10 +167,7 @@ class LlamaCppDriver(ServiceDriver):
         the first unloaded model.
         """
         all_models = await self._get_all_models(service)
-        unloaded = [
-            m for m in all_models
-            if m.get("status", {}).get("value") != "loaded"
-        ]
+        unloaded = [m for m in all_models if m.get("status", {}).get("value") != "loaded"]
 
         if not unloaded:
             return None

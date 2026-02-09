@@ -1129,9 +1129,7 @@ class TestPopulateModeServices:
 
             modes = await db.list_modes()
             dumped = modes[0].model_dump(mode="json")
-            assert dumped["services"] == ["svc-1"], (
-                "model_dump must preserve populated services"
-            )
+            assert dumped["services"] == ["svc-1"], "model_dump must preserve populated services"
 
     async def test_services_survive_sanitize_roundtrip(self, tmp_path: Path) -> None:
         """Services must survive the full MCP serialization path."""
@@ -1145,14 +1143,10 @@ class TestPopulateModeServices:
 
             modes = await db.list_modes()
             # Exact MCP tool code path
-            result = [
-                _sanitize_dict_names(m.model_dump(mode="json")) for m in modes
-            ]
+            result = [_sanitize_dict_names(m.model_dump(mode="json")) for m in modes]
             assert result[0]["services"] == ["svc-a", "svc-b"]
 
-    async def test_get_mode_services_consistent_with_list_modes(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_get_mode_services_consistent_with_list_modes(self, tmp_path: Path) -> None:
         """get_mode_services() and list_modes() must return the same service IDs."""
         async with Database(tmp_path / "test.db") as db:
             for sid in ("svc-x", "svc-y"):
@@ -1171,9 +1165,7 @@ class TestPopulateModeServices:
 
             assert list_mode_services == join_service_ids
 
-    async def test_populate_mode_services_after_adding_services(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_populate_mode_services_after_adding_services(self, tmp_path: Path) -> None:
         """Services added AFTER mode creation must still appear."""
         async with Database(tmp_path / "test.db") as db:
             await db.insert_service(_make_service(id="late-svc"))

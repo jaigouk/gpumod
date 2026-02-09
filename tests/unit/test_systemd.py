@@ -137,7 +137,10 @@ class TestSystemctl:
     )
     @patch("gpumod.services.systemd.asyncio.create_subprocess_exec")
     async def test_all_commands_use_user_scope_not_sudo(
-        self, mock_exec: MagicMock, func, expected_cmd: str,
+        self,
+        mock_exec: MagicMock,
+        func,
+        expected_cmd: str,
     ) -> None:
         """start/stop/restart must use 'systemctl --user', never 'sudo'."""
         mock_exec.return_value = _make_process_mock(returncode=0)
@@ -371,7 +374,8 @@ class TestJournalLogs:
 
     @patch("gpumod.services.systemd.asyncio.create_subprocess_exec")
     async def test_returns_empty_list_on_subprocess_error(
-        self, mock_exec: MagicMock,
+        self,
+        mock_exec: MagicMock,
     ) -> None:
         """journal_logs() returns [] on subprocess failure, never raises."""
         mock_exec.side_effect = OSError("command not found")
@@ -382,11 +386,14 @@ class TestJournalLogs:
 
     @patch("gpumod.services.systemd.asyncio.create_subprocess_exec")
     async def test_returns_empty_list_on_nonzero_exit(
-        self, mock_exec: MagicMock,
+        self,
+        mock_exec: MagicMock,
     ) -> None:
         """journal_logs() returns [] when journalctl exits non-zero."""
         mock_exec.return_value = _make_process_mock(
-            stdout="", stderr="No journal files", returncode=1,
+            stdout="",
+            stderr="No journal files",
+            returncode=1,
         )
 
         result = await journal_logs("test.service")
@@ -403,7 +410,8 @@ class TestJournalLogs:
     async def test_strips_trailing_empty_lines(self, mock_exec: MagicMock) -> None:
         """journal_logs() strips trailing empty lines from output."""
         mock_exec.return_value = _make_process_mock(
-            stdout="line one\nline two\n\n\n", returncode=0,
+            stdout="line one\nline two\n\n\n",
+            returncode=0,
         )
 
         result = await journal_logs("test.service")

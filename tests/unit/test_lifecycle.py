@@ -308,7 +308,10 @@ class TestWaitForHealthyRetry:
 
     @patch("gpumod.services.lifecycle.get_unit_state", return_value="activating")
     async def test_retries_and_succeeds_on_third_attempt(
-        self, mock_state: AsyncMock, lifecycle: LifecycleManager, mock_driver: AsyncMock,
+        self,
+        mock_state: AsyncMock,
+        lifecycle: LifecycleManager,
+        mock_driver: AsyncMock,
     ) -> None:
         """_wait_for_healthy should retry and succeed on the third health check."""
         mock_driver.health_check.side_effect = [False, False, True]
@@ -329,8 +332,11 @@ class TestWaitForHealthyTimeout:
     @patch("gpumod.services.lifecycle.journal_logs", return_value=[])
     @patch("gpumod.services.lifecycle.get_unit_state", return_value="activating")
     async def test_raises_lifecycle_error_on_timeout(
-        self, mock_state: AsyncMock, mock_journal: AsyncMock,
-        lifecycle: LifecycleManager, mock_driver: AsyncMock,
+        self,
+        mock_state: AsyncMock,
+        mock_journal: AsyncMock,
+        lifecycle: LifecycleManager,
+        mock_driver: AsyncMock,
     ) -> None:
         """_wait_for_healthy should raise LifecycleError when health never passes."""
         mock_driver.health_check.return_value = False
@@ -458,7 +464,8 @@ class TestWaitForHealthyEarlyExit:
 
     @patch("gpumod.services.lifecycle.get_unit_state", return_value="failed")
     async def test_exits_immediately_on_failed_state(
-        self, mock_state: AsyncMock,
+        self,
+        mock_state: AsyncMock,
     ) -> None:
         """If systemd reports 'failed', stop polling immediately."""
         registry = _build_mock_registry()
@@ -469,7 +476,10 @@ class TestWaitForHealthyEarlyExit:
 
         with pytest.raises(LifecycleError, match="process exited"):
             await lm._wait_for_healthy(
-                SVC_A, driver, timeout_s=60.0, poll_interval=0.01,
+                SVC_A,
+                driver,
+                timeout_s=60.0,
+                poll_interval=0.01,
             )
 
         # Should NOT have polled for the full timeout — only a few attempts
@@ -477,7 +487,8 @@ class TestWaitForHealthyEarlyExit:
 
     @patch("gpumod.services.lifecycle.get_unit_state", return_value="inactive")
     async def test_exits_immediately_on_inactive_state(
-        self, mock_state: AsyncMock,
+        self,
+        mock_state: AsyncMock,
     ) -> None:
         """If systemd reports 'inactive', stop polling immediately."""
         registry = _build_mock_registry()
@@ -488,12 +499,16 @@ class TestWaitForHealthyEarlyExit:
 
         with pytest.raises(LifecycleError, match="process exited"):
             await lm._wait_for_healthy(
-                SVC_A, driver, timeout_s=60.0, poll_interval=0.01,
+                SVC_A,
+                driver,
+                timeout_s=60.0,
+                poll_interval=0.01,
             )
 
     @patch("gpumod.services.lifecycle.get_unit_state", return_value="activating")
     async def test_keeps_polling_while_activating(
-        self, mock_state: AsyncMock,
+        self,
+        mock_state: AsyncMock,
     ) -> None:
         """If systemd reports 'activating', keep polling (process still starting)."""
         registry = _build_mock_registry()
@@ -506,7 +521,10 @@ class TestWaitForHealthyEarlyExit:
 
         # Should succeed on 3rd health check, not raise
         await lm._wait_for_healthy(
-            SVC_A, driver, timeout_s=10.0, poll_interval=0.01,
+            SVC_A,
+            driver,
+            timeout_s=10.0,
+            poll_interval=0.01,
         )
 
         assert driver.health_check.call_count == 3
@@ -523,7 +541,9 @@ class TestWaitForHealthyJournalInError:
     @patch("gpumod.services.lifecycle.journal_logs")
     @patch("gpumod.services.lifecycle.get_unit_state", return_value="failed")
     async def test_error_contains_journal_lines_on_process_death(
-        self, mock_state: AsyncMock, mock_journal: AsyncMock,
+        self,
+        mock_state: AsyncMock,
+        mock_journal: AsyncMock,
     ) -> None:
         """When process dies, LifecycleError.reason includes journal output."""
         mock_journal.return_value = [
@@ -539,7 +559,10 @@ class TestWaitForHealthyJournalInError:
 
         with pytest.raises(LifecycleError) as exc_info:
             await lm._wait_for_healthy(
-                SVC_A, driver, timeout_s=60.0, poll_interval=0.01,
+                SVC_A,
+                driver,
+                timeout_s=60.0,
+                poll_interval=0.01,
             )
 
         reason = exc_info.value.reason
@@ -549,7 +572,9 @@ class TestWaitForHealthyJournalInError:
     @patch("gpumod.services.lifecycle.journal_logs")
     @patch("gpumod.services.lifecycle.get_unit_state", return_value="activating")
     async def test_error_contains_journal_lines_on_timeout(
-        self, mock_state: AsyncMock, mock_journal: AsyncMock,
+        self,
+        mock_state: AsyncMock,
+        mock_journal: AsyncMock,
     ) -> None:
         """When health check times out, LifecycleError.reason includes journal output."""
         mock_journal.return_value = [
@@ -564,7 +589,10 @@ class TestWaitForHealthyJournalInError:
 
         with pytest.raises(LifecycleError) as exc_info:
             await lm._wait_for_healthy(
-                SVC_A, driver, timeout_s=0.05, poll_interval=0.01,
+                SVC_A,
+                driver,
+                timeout_s=0.05,
+                poll_interval=0.01,
             )
 
         assert "No available memory" in exc_info.value.reason
@@ -572,7 +600,9 @@ class TestWaitForHealthyJournalInError:
     @patch("gpumod.services.lifecycle.journal_logs")
     @patch("gpumod.services.lifecycle.get_unit_state", return_value="failed")
     async def test_error_graceful_when_journal_empty(
-        self, mock_state: AsyncMock, mock_journal: AsyncMock,
+        self,
+        mock_state: AsyncMock,
+        mock_journal: AsyncMock,
     ) -> None:
         """When journal returns no lines, error still works cleanly."""
         mock_journal.return_value = []
@@ -585,7 +615,10 @@ class TestWaitForHealthyJournalInError:
 
         with pytest.raises(LifecycleError) as exc_info:
             await lm._wait_for_healthy(
-                SVC_A, driver, timeout_s=60.0, poll_interval=0.01,
+                SVC_A,
+                driver,
+                timeout_s=60.0,
+                poll_interval=0.01,
             )
 
         # Should still have a valid reason, just without journal content
@@ -595,7 +628,9 @@ class TestWaitForHealthyJournalInError:
     @patch("gpumod.services.lifecycle.journal_logs")
     @patch("gpumod.services.lifecycle.get_unit_state", return_value="failed")
     async def test_journal_called_with_unit_name(
-        self, mock_state: AsyncMock, mock_journal: AsyncMock,
+        self,
+        mock_state: AsyncMock,
+        mock_journal: AsyncMock,
     ) -> None:
         """journal_logs() is called with the service's unit_name."""
         mock_journal.return_value = ["some log"]
@@ -608,7 +643,10 @@ class TestWaitForHealthyJournalInError:
 
         with pytest.raises(LifecycleError):
             await lm._wait_for_healthy(
-                SVC_A, driver, timeout_s=60.0, poll_interval=0.01,
+                SVC_A,
+                driver,
+                timeout_s=60.0,
+                poll_interval=0.01,
             )
 
         mock_journal.assert_called_once_with("svc-a.service")

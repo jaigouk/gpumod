@@ -382,11 +382,16 @@ class TestLlamaCppSleep:
         driver = LlamaCppDriver()
         svc = make_router_service()
 
-        with patch.object(
-            driver, "_get_loaded_models", return_value=[
-                {"id": "Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL", "status": {"value": "loaded"}}
-            ]
-        ), patch("gpumod.services.drivers.llamacpp.httpx.AsyncClient") as cls:
+        with (
+            patch.object(
+                driver,
+                "_get_loaded_models",
+                return_value=[
+                    {"id": "Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL", "status": {"value": "loaded"}}
+                ],
+            ),
+            patch("gpumod.services.drivers.llamacpp.httpx.AsyncClient") as cls,
+        ):
             mock_client = _mock_http_client()
             cls.return_value = mock_client
             await driver.sleep(svc)

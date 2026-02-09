@@ -213,9 +213,7 @@ async def sync_modes(db: Database, loader: ModeLoader) -> ModeSyncResult:
     )
 
 
-def _mode_differs(
-    existing: Mode, new: Mode, valid_services: list[str], total_vram: int
-) -> bool:
+def _mode_differs(existing: Mode, new: Mode, valid_services: list[str], total_vram: int) -> bool:
     """Return True if any mutable field differs between DB mode and YAML mode."""
     return (
         existing.name != new.name
