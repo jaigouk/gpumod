@@ -375,6 +375,48 @@ class Database:
         await conn.commit()
         logger.debug("Inserted mode %r", mode.id)
 
+    async def update_mode(self, mode: Mode) -> bool:
+        """Update an existing mode in the database.
+
+        Updates name, description, and total_vram_mb for the mode.
+        The ``id`` and ``created_at`` columns are not modified.
+
+        Returns
+        -------
+        bool
+            True if a row was updated, False if no mode with that ID exists.
+        """
+        conn = self._ensure_conn()
+        cursor = await conn.execute(
+            """
+            UPDATE modes SET
+                name = ?,
+                description = ?,
+                total_vram_mb = ?
+            WHERE id = ?
+            """,
+            (mode.name, mode.description, mode.total_vram_mb, mode.id),
+        )
+        await conn.commit()
+        updated = cursor.rowcount > 0
+        if updated:
+            logger.debug(
+                "Updated mode %r (name=%s, vram=%s)",
+                mode.id,
+                mode.name,
+                mode.total_vram_mb,
+            )
+        else:
+            logger.debug("No mode found with id=%r to update", mode.id)
+        return updated
+
+    async def delete_mode(self, mode_id: str) -> None:
+        """Delete a mode by ID."""
+        conn = self._ensure_conn()
+        await conn.execute("DELETE FROM modes WHERE id = ?", (mode_id,))
+        await conn.commit()
+        logger.debug("Deleted mode %r", mode_id)
+
     async def get_mode_services(self, mode_id: str) -> list[Service]:
         """Return services for a mode, ordered by start_order."""
         conn = self._ensure_conn()

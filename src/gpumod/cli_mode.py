@@ -259,3 +259,44 @@ def create_mode(
                     )
 
     run_async(_cmd())
+
+
+@mode_app.command("sync")
+def sync_modes_cmd(
+    db_path: str = typer.Option(
+        None,
+        "--db-path",
+        help="Path to the SQLite database file.",
+    ),
+) -> None:
+    """Sync YAML mode files into the database.
+
+    Compares each mode YAML file against the DB and inserts new
+    modes or updates changed ones. Unchanged modes are skipped.
+    Calculates total_vram_mb from service VRAM values.
+    """
+    from pathlib import Path
+
+    from gpumod.cli import cli_context, error_handler, run_async
+    from gpumod.templates.modes import sync_modes
+
+    async def _cmd() -> None:
+        resolved_path = Path(db_path) if db_path is not None else None
+        async with cli_context(db_path=resolved_path) as ctx:
+            result = await sync_modes(ctx.db, ctx.mode_loader)
+
+            _console.print(
+                f"[bold green]Mode sync:[/bold green] "
+                f"{result.inserted} inserted, "
+                f"{result.updated} updated, "
+                f"{result.unchanged} unchanged, "
+                f"{result.deleted} deleted."
+            )
+
+            if result.warnings:
+                _console.print("[yellow]Warnings:[/yellow]")
+                for warning in result.warnings:
+                    _console.print(f"  [yellow]![/yellow] {warning}")
+
+    with error_handler(console=_console):
+        run_async(_cmd())

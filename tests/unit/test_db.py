@@ -407,6 +407,112 @@ class TestModesCRUD:
 
 
 # ---------------------------------------------------------------------------
+# update_mode — AC1 of gpumod-652
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateMode:
+    """Tests for Database.update_mode() — AC1 of gpumod-652."""
+
+    async def test_update_mode_changes_fields(self, tmp_path: Path) -> None:
+        """update_mode() should update all mutable fields for an existing mode."""
+        async with Database(tmp_path / "test.db") as db:
+            original = _make_mode(
+                id="upd-mode-1",
+                name="Original Mode",
+                description="Original description",
+                total_vram_mb=5000,
+            )
+            await db.insert_mode(original)
+
+            updated = _make_mode(
+                id="upd-mode-1",
+                name="Updated Mode",
+                description="New description",
+                total_vram_mb=10000,
+            )
+            result = await db.update_mode(updated)
+            assert result is True
+
+            got = await db.get_mode("upd-mode-1")
+            assert got is not None
+            assert got.name == "Updated Mode"
+            assert got.description == "New description"
+            assert got.total_vram_mb == 10000
+
+    async def test_update_mode_returns_false_when_not_found(self, tmp_path: Path) -> None:
+        """update_mode() should return False when the mode ID doesn't exist."""
+        async with Database(tmp_path / "test.db") as db:
+            mode = _make_mode(id="nonexistent-mode")
+            result = await db.update_mode(mode)
+            assert result is False
+
+    async def test_update_mode_preserves_id(self, tmp_path: Path) -> None:
+        """update_mode() should not change the mode ID."""
+        async with Database(tmp_path / "test.db") as db:
+            original = _make_mode(id="preserve-id")
+            await db.insert_mode(original)
+
+            updated = _make_mode(id="preserve-id", name="Changed Name")
+            await db.update_mode(updated)
+
+            got = await db.get_mode("preserve-id")
+            assert got is not None
+            assert got.id == "preserve-id"
+
+    async def test_update_mode_does_not_affect_other_modes(self, tmp_path: Path) -> None:
+        """Updating one mode must not affect other modes in the DB."""
+        async with Database(tmp_path / "test.db") as db:
+            mode_a = _make_mode(id="mode-a", name="A", total_vram_mb=1000)
+            mode_b = _make_mode(id="mode-b", name="B", total_vram_mb=2000)
+            await db.insert_mode(mode_a)
+            await db.insert_mode(mode_b)
+
+            updated_a = _make_mode(id="mode-a", name="A-Updated", total_vram_mb=5000)
+            await db.update_mode(updated_a)
+
+            got_b = await db.get_mode("mode-b")
+            assert got_b is not None
+            assert got_b.name == "B"
+            assert got_b.total_vram_mb == 2000
+
+    async def test_update_mode_with_null_description(self, tmp_path: Path) -> None:
+        """update_mode() should handle None description correctly."""
+        async with Database(tmp_path / "test.db") as db:
+            original = _make_mode(id="null-desc", description="Has description")
+            await db.insert_mode(original)
+
+            updated = Mode(
+                id="null-desc",
+                name="Test",
+                description=None,
+                total_vram_mb=1000,
+            )
+            await db.update_mode(updated)
+
+            got = await db.get_mode("null-desc")
+            assert got is not None
+            assert got.description is None
+
+    async def test_update_mode_with_null_vram(self, tmp_path: Path) -> None:
+        """update_mode() should handle None total_vram_mb correctly."""
+        async with Database(tmp_path / "test.db") as db:
+            original = _make_mode(id="null-vram", total_vram_mb=5000)
+            await db.insert_mode(original)
+
+            updated = Mode(
+                id="null-vram",
+                name="Test",
+                total_vram_mb=None,
+            )
+            await db.update_mode(updated)
+
+            got = await db.get_mode("null-vram")
+            assert got is not None
+            assert got.total_vram_mb is None
+
+
+# ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
 
