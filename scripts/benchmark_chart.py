@@ -17,7 +17,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-
 # ---------------------------------------------------------------------------
 # Radar chart — quality scores across 5 categories
 # ---------------------------------------------------------------------------
@@ -57,9 +56,7 @@ def _category_avg(data: dict, category: str) -> float:
     return sum(scores) / len(scores) if scores else 0.0
 
 
-def generate_radar_chart(
-    datasets: list[dict], output_path: Path
-) -> None:
+def generate_radar_chart(datasets: list[dict], output_path: Path) -> None:
     """Radar chart comparing quality scores across categories."""
     n = len(CATEGORIES)
     angles = [i / n * 2 * math.pi for i in range(n)]
@@ -101,9 +98,7 @@ PERF_METRICS = [
 ]
 
 
-def generate_performance_chart(
-    datasets: list[dict], output_path: Path
-) -> None:
+def generate_performance_chart(datasets: list[dict], output_path: Path) -> None:
     """Grouped bar chart comparing performance metrics."""
     model_names = [d["metadata"]["short_name"] for d in datasets]
     n_models = len(model_names)
@@ -133,7 +128,7 @@ def generate_performance_chart(
         ax.set_ylabel(label)
 
         # Add value labels
-        for bar, val in zip(bars, values):
+        for bar, val in zip(bars, values, strict=True):
             ax.text(
                 bar.get_x() + bar.get_width() / 2,
                 bar.get_height(),
@@ -156,9 +151,7 @@ def generate_performance_chart(
 # ---------------------------------------------------------------------------
 
 
-def generate_lifecycle_chart(
-    lifecycle_data: dict, output_path: Path
-) -> None:
+def generate_lifecycle_chart(lifecycle_data: dict, output_path: Path) -> None:
     """Stacked bar chart of mode-switching times."""
     lifecycle = lifecycle_data.get("lifecycle", {})
     if not lifecycle:
@@ -196,7 +189,7 @@ def generate_lifecycle_chart(
             offset,
             verify,
             width,
-            bottom=[u + l for u, l in zip(unload, load)],
+            bottom=[u + ld for u, ld in zip(unload, load, strict=True)],
             label=f"{sname} verify",
             color=color,
             alpha=1.0,
@@ -205,9 +198,7 @@ def generate_lifecycle_chart(
     ax.set_xticks(x)
     ax.set_xticklabels(transitions, fontsize=10, rotation=15, ha="right")
     ax.set_ylabel("Time (ms)")
-    ax.set_title(
-        "Mode-Switching Lifecycle", fontsize=14, fontweight="bold"
-    )
+    ax.set_title("Mode-Switching Lifecycle", fontsize=14, fontweight="bold")
     ax.legend(fontsize=9, ncol=len(models), loc="upper left")
 
     fig.tight_layout()
@@ -222,9 +213,7 @@ def generate_lifecycle_chart(
 # ---------------------------------------------------------------------------
 
 
-def generate_hallucination_chart(
-    datasets: list[dict], output_path: Path
-) -> None:
+def generate_hallucination_chart(datasets: list[dict], output_path: Path) -> None:
     """Bar chart showing hallucination results per model."""
     model_names = [d["metadata"]["short_name"] for d in datasets]
 
@@ -279,9 +268,7 @@ def generate_hallucination_chart(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Generate benchmark comparison charts"
-    )
+    parser = argparse.ArgumentParser(description="Generate benchmark comparison charts")
     parser.add_argument("files", nargs="+", help="Benchmark result JSON files")
     parser.add_argument(
         "--output",

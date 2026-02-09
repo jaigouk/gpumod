@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
-import re
 import subprocess
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -350,7 +350,7 @@ PROMPTS: list[BenchmarkPrompt] = [
             '{"name": "get_weather", "parameters": {"location": "string", '
             '"unit": "celsius|fahrenheit"}}\n'
             "When the user asks about weather, respond with a JSON function "
-            "call: {\"function\": \"get_weather\", \"arguments\": {...}}"
+            'call: {"function": "get_weather", "arguments": {...}}'
         ),
         user_prompt="What's the weather like in Tokyo?",
         max_tokens=128,
@@ -393,9 +393,7 @@ PROMPTS: list[BenchmarkPrompt] = [
 # ---------------------------------------------------------------------------
 
 
-def check_hallucinations(
-    response: str, facts: list[VerifiableFact]
-) -> HallucinationResult:
+def check_hallucinations(response: str, facts: list[VerifiableFact]) -> HallucinationResult:
     """Check a response against ground-truth facts."""
     response_lower = response.lower()
     details: list[dict[str, str]] = []
@@ -405,9 +403,7 @@ def check_hallucinations(
         has_required = not fact.required or all(
             kw.lower() in response_lower for kw in fact.required
         )
-        has_forbidden = any(
-            fk.lower() in response_lower for fk in fact.forbidden
-        )
+        has_forbidden = any(fk.lower() in response_lower for fk in fact.forbidden)
 
         if has_forbidden:
             hallucinated += 1
@@ -439,7 +435,7 @@ def get_vram_mb() -> float:
     """Get current GPU VRAM usage in MB via nvidia-smi."""
     try:
         out = subprocess.check_output(
-            [
+            [  # noqa: S607
                 "nvidia-smi",
                 "--query-gpu=memory.used",
                 "--format=csv,noheader,nounits",
@@ -458,10 +454,8 @@ async def poll_vram_peak(stop_event: asyncio.Event) -> float:
     while not stop_event.is_set():
         current = await asyncio.to_thread(get_vram_mb)
         peak = max(peak, current)
-        try:
+        with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop_event.wait(), VRAM_POLL_INTERVAL_S)
-        except asyncio.TimeoutError:
-            pass
     return peak
 
 
@@ -493,8 +487,7 @@ async def router_load_model(client: httpx.AsyncClient, model_id: str) -> float:
     resp.raise_for_status()
     # Wait until the model actually reports as loaded (async loading)
     await wait_model_loaded(client, model_id)
-    elapsed_ms = (time.perf_counter() - t0) * 1000
-    return elapsed_ms
+    return (time.perf_counter() - t0) * 1000
 
 
 async def router_unload_model(client: httpx.AsyncClient, model_id: str) -> float:
@@ -622,14 +615,13 @@ async def run_prompt(
     predicted_ms = server_timings.get("predicted_ms", 0)
 
     gen_tok_s = (
-        (completion_tokens / (predicted_ms / 1000)) if predicted_ms > 0
-        else (completion_tokens / (total_ms / 1000)) if total_ms > 0
+        (completion_tokens / (predicted_ms / 1000))
+        if predicted_ms > 0
+        else (completion_tokens / (total_ms / 1000))
+        if total_ms > 0
         else 0.0
     )
-    prompt_tok_s = (
-        (prompt_tokens / (prompt_ms / 1000)) if prompt_ms > 0
-        else 0.0
-    )
+    prompt_tok_s = (prompt_tokens / (prompt_ms / 1000)) if prompt_ms > 0 else 0.0
 
     # Hallucination check for factual prompts
     hallucination_dict = None
@@ -672,16 +664,16 @@ async def run_prompt(
 
 async def run_model_benchmark(model_id: str, output_dir: Path) -> Path:
     """Run all prompts for a single model, save results JSON."""
-    today = datetime.now(tz=timezone.utc).strftime("%Y%m%d")
+    today = datetime.now(tz=UTC).strftime("%Y%m%d")
     sname = short_name(model_id)
     output_path = output_dir / f"{today}_{sname}.json"
 
     async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
         # Ensure clean state
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Benchmark: {model_id}")
         print(f"Temperature: {TEMPERATURE}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         print("Unloading all models ...")
         await unload_all(client)
@@ -716,7 +708,7 @@ async def run_model_benchmark(model_id: str, output_dir: Path) -> Path:
             "metadata": {
                 "model": model_id,
                 "short_name": sname,
-                "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                "timestamp": datetime.now(tz=UTC).isoformat(),
                 "temperature": TEMPERATURE,
                 "router_url": ROUTER_URL,
             },
@@ -725,7 +717,7 @@ async def run_model_benchmark(model_id: str, output_dir: Path) -> Path:
             "summary": summary,
         }
 
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
         output_path.write_text(json.dumps(output, indent=2, ensure_ascii=False))
         print(f"\nResults saved: {output_path}")
 
@@ -737,7 +729,6 @@ async def run_model_benchmark(model_id: str, output_dir: Path) -> Path:
 
 def _compute_summary(results: list[dict], load_ms: float) -> dict:
     """Compute aggregate summary from prompt results."""
-    categories: dict[str, list[float]] = {}
     ttfts = []
     gen_speeds = []
     total_hallucinated = 0
@@ -764,9 +755,7 @@ def _compute_summary(results: list[dict], load_ms: float) -> dict:
         "total_facts_checked": total_facts_checked,
         "total_facts_hallucinated": total_hallucinated,
         "hallucination_rate": (
-            round(total_hallucinated / total_facts_checked, 4)
-            if total_facts_checked > 0
-            else 0.0
+            round(total_hallucinated / total_facts_checked, 4) if total_facts_checked > 0 else 0.0
         ),
     }
 
@@ -784,17 +773,15 @@ LIFECYCLE_VERIFY_PROMPT = BenchmarkPrompt(
 )
 
 
-async def run_lifecycle_test(
-    model_ids: list[str], output_dir: Path
-) -> Path:
+async def run_lifecycle_test(model_ids: list[str], output_dir: Path) -> Path:
     """Run blank → model → RAG → model lifecycle for each model."""
-    today = datetime.now(tz=timezone.utc).strftime("%Y%m%d")
+    today = datetime.now(tz=UTC).strftime("%Y%m%d")
     output_path = output_dir / f"{today}_lifecycle.json"
 
     async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("Lifecycle Test: Mode Switching")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         all_steps: dict[str, list[dict]] = {}
 
@@ -814,20 +801,18 @@ async def run_lifecycle_test(
             verify = await run_prompt(client, model_id, LIFECYCLE_VERIFY_PROMPT)
             vram = get_vram_mb()
 
-            steps.append(LifecycleStep(
-                transition=f"blank → {model_id}",
-                unload_ms=0,
-                load_ms=round(load_ms, 2),
-                first_request_ttft_ms=verify.ttft_ms,
-                first_request_total_ms=verify.total_time_ms,
-                total_switch_ms=round(load_ms + verify.total_time_ms, 2),
-                vram_after_mb=vram,
-            ))
-            print(
-                f"    Load: {load_ms:.0f}ms, "
-                f"TTFT: {verify.ttft_ms:.0f}ms, "
-                f"VRAM: {vram:.0f}MB"
+            steps.append(
+                LifecycleStep(
+                    transition=f"blank → {model_id}",
+                    unload_ms=0,
+                    load_ms=round(load_ms, 2),
+                    first_request_ttft_ms=verify.ttft_ms,
+                    first_request_total_ms=verify.total_time_ms,
+                    total_switch_ms=round(load_ms + verify.total_time_ms, 2),
+                    vram_after_mb=vram,
+                )
             )
+            print(f"    Load: {load_ms:.0f}ms, TTFT: {verify.ttft_ms:.0f}ms, VRAM: {vram:.0f}MB")
 
             # Step 2: model → RAG (simulate with embedding model or
             #          just unload/load cycle if no embedding available)
@@ -836,19 +821,18 @@ async def run_lifecycle_test(
             await asyncio.sleep(1)
             vram_after_unload = get_vram_mb()
 
-            steps.append(LifecycleStep(
-                transition=f"{model_id} → RAG (unload)",
-                unload_ms=round(unload_ms, 2),
-                load_ms=0,
-                first_request_ttft_ms=0,
-                first_request_total_ms=0,
-                total_switch_ms=round(unload_ms, 2),
-                vram_after_mb=vram_after_unload,
-            ))
-            print(
-                f"    Unload: {unload_ms:.0f}ms, "
-                f"VRAM after: {vram_after_unload:.0f}MB"
+            steps.append(
+                LifecycleStep(
+                    transition=f"{model_id} → RAG (unload)",
+                    unload_ms=round(unload_ms, 2),
+                    load_ms=0,
+                    first_request_ttft_ms=0,
+                    first_request_total_ms=0,
+                    total_switch_ms=round(unload_ms, 2),
+                    vram_after_mb=vram_after_unload,
+                )
             )
+            print(f"    Unload: {unload_ms:.0f}ms, VRAM after: {vram_after_unload:.0f}MB")
 
             # Step 3: RAG → model (reload)
             print(f"  RAG → {model_id} (reload) ...")
@@ -858,19 +842,19 @@ async def run_lifecycle_test(
             verify2 = await run_prompt(client, model_id, LIFECYCLE_VERIFY_PROMPT)
             vram2 = get_vram_mb()
 
-            steps.append(LifecycleStep(
-                transition=f"RAG → {model_id}",
-                unload_ms=0,
-                load_ms=round(reload_ms, 2),
-                first_request_ttft_ms=verify2.ttft_ms,
-                first_request_total_ms=verify2.total_time_ms,
-                total_switch_ms=round(reload_ms + verify2.total_time_ms, 2),
-                vram_after_mb=vram2,
-            ))
+            steps.append(
+                LifecycleStep(
+                    transition=f"RAG → {model_id}",
+                    unload_ms=0,
+                    load_ms=round(reload_ms, 2),
+                    first_request_ttft_ms=verify2.ttft_ms,
+                    first_request_total_ms=verify2.total_time_ms,
+                    total_switch_ms=round(reload_ms + verify2.total_time_ms, 2),
+                    vram_after_mb=vram2,
+                )
+            )
             print(
-                f"    Load: {reload_ms:.0f}ms, "
-                f"TTFT: {verify2.ttft_ms:.0f}ms, "
-                f"VRAM: {vram2:.0f}MB"
+                f"    Load: {reload_ms:.0f}ms, TTFT: {verify2.ttft_ms:.0f}ms, VRAM: {vram2:.0f}MB"
             )
 
             # Clean up
@@ -881,13 +865,13 @@ async def run_lifecycle_test(
             "metadata": {
                 "type": "lifecycle",
                 "models": model_ids,
-                "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                "timestamp": datetime.now(tz=UTC).isoformat(),
                 "router_url": ROUTER_URL,
             },
             "lifecycle": all_steps,
         }
 
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
         output_path.write_text(json.dumps(output, indent=2, ensure_ascii=False))
         print(f"\nLifecycle results saved: {output_path}")
 
@@ -900,9 +884,7 @@ async def run_lifecycle_test(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Benchmark LLMs on llama.cpp router"
-    )
+    parser = argparse.ArgumentParser(description="Benchmark LLMs on llama.cpp router")
     parser.add_argument("--model", help="Model ID to benchmark")
     parser.add_argument(
         "--models",
