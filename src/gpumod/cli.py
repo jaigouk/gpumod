@@ -21,6 +21,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from gpumod.cli_discover import discover_app
 from gpumod.cli_mode import mode_app
 from gpumod.cli_model import model_app
 from gpumod.cli_plan import plan_app
@@ -280,7 +281,7 @@ def error_handler(
 ) -> Generator[None, None, None]:
     """Context manager that catches exceptions and prints Rich-formatted errors.
 
-    SystemExit and KeyboardInterrupt are allowed to propagate.
+    SystemExit, KeyboardInterrupt, and typer.Exit are allowed to propagate.
 
     Parameters
     ----------
@@ -291,7 +292,7 @@ def error_handler(
         console = Console(stderr=True)
     try:
         yield
-    except (SystemExit, KeyboardInterrupt):
+    except (SystemExit, KeyboardInterrupt, typer.Exit):
         raise
     except Exception as exc:
         console.print(f"[bold red]Error:[/bold red] {exc}")
@@ -320,6 +321,7 @@ app.add_typer(model_app, name="model")
 app.add_typer(preset_app, name="preset")
 app.add_typer(simulate_app, name="simulate")
 app.add_typer(plan_app, name="plan")
+app.add_typer(discover_app, name="discover")
 
 
 # ---------------------------------------------------------------------------
