@@ -5,8 +5,8 @@ description: System architecture for gpumod — service drivers, VRAM tracking, 
 
 # gpumod Architecture
 
-> **Version**: 0.1.0
-> **Last Updated**: 2026-02-06
+> **Version**: 0.1.1
+> **Last Updated**: 2026-02-09
 
 ## Overview
 
@@ -653,10 +653,11 @@ gpumod/
 ├── src/
 │   └── gpumod/
 │       ├── __init__.py
-│       ├── cli.py              # Click-based CLI
+│       ├── cli.py              # Typer-based CLI
 │       ├── db.py               # SQLite operations
 │       ├── models.py           # Pydantic models
 │       ├── tui.py              # Interactive Textual TUI
+│       ├── watcher.py          # Filesystem watcher for hot-reload
 │       ├── services/           # Service management
 │       │   ├── base.py         # ServiceDriver ABC
 │       │   ├── manager.py      # ServiceManager orchestrator

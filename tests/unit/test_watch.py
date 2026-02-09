@@ -70,7 +70,8 @@ class TestWatchCommandExists:
         """watch should have a --timeout option for testing."""
         result = runner.invoke(app, ["watch", "--help"])
         assert result.exit_code == 0
-        assert "--timeout" in result.output
+        # Rich/Typer output may contain ANSI codes that split --timeout
+        assert "timeout" in result.output
 
 
 # ---------------------------------------------------------------------------

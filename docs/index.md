@@ -47,7 +47,7 @@ gpumod status
 
 # Deploy a service (auto-generates systemd unit file)
 gpumod template generate vllm-chat
-sudo gpumod template install vllm-chat --yes
+gpumod template install vllm-chat --yes
 gpumod service start vllm-chat
 
 # Simulate VRAM usage before switching modes

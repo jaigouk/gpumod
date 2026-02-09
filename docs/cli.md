@@ -333,3 +333,26 @@ indicators, a command input for `/status`, `/switch <mode>`,
 `/simulate`, and `/quit`, and a footer with keyboard shortcuts.
 
 Press `q` to quit or type `/help` for available commands.
+
+## gpumod watch
+
+Watch preset and mode directories for YAML file changes and automatically
+sync to the database. Useful for rapid iteration during development.
+
+```bash
+# Start watching with default settings (500ms debounce)
+gpumod watch
+
+# Custom debounce window
+gpumod watch --debounce 200
+
+# Skip initial sync before starting
+gpumod watch --no-sync
+
+# Timeout after N seconds (for testing)
+gpumod watch --timeout 60
+```
+
+The watcher monitors `.yaml` and `.yml` files, ignoring editor temp files
+(`.swp`, `.tmp`, `~` backups). Changes are debounced to coalesce rapid saves
+from editors. Press `Ctrl+C` to stop.
