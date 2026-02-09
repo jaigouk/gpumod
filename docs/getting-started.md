@@ -82,35 +82,28 @@ by hand.
 gpumod template generate vllm-chat
 ```
 
-### 2. Install the unit file
+### 2. Enable user-level systemd lingering
 
-This writes the unit to `/etc/systemd/system/` (requires write access):
+gpumod uses **user-level systemd** (`systemctl --user`) so no `sudo` is
+needed for service management. To ensure your services start at boot and
+persist after logout, enable lingering:
 
 ```bash
-sudo gpumod template install vllm-chat --yes
+sudo loginctl enable-linger $USER
 ```
 
-### 3. Configure passwordless sudo (recommended)
+### 3. Install the unit file
 
-Service start/stop commands use `sudo systemctl` internally. To avoid
-repeated password prompts, create a sudoers rule:
+This writes the unit to `~/.config/systemd/user/`:
 
 ```bash
-sudo tee /etc/sudoers.d/gpumod << 'EOF'
-%gpumod ALL=(root) NOPASSWD: /usr/bin/systemctl start gpumod-*, \
-                              /usr/bin/systemctl stop gpumod-*, \
-                              /usr/bin/systemctl restart gpumod-*, \
-                              /usr/bin/systemctl enable gpumod-*, \
-                              /usr/bin/systemctl disable gpumod-*
-EOF
-sudo chmod 440 /etc/sudoers.d/gpumod
+gpumod template install vllm-chat --yes
 ```
 
-Then add your user to the `gpumod` group:
+After installing, reload the user daemon so systemd picks up the new unit:
 
 ```bash
-sudo groupadd -f gpumod
-sudo usermod -aG gpumod $USER
+systemctl --user daemon-reload
 ```
 
 ### 4. Start and manage services

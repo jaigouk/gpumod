@@ -6,6 +6,7 @@ llama.cpp HTTP API for health checks and model load/unload operations.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -16,6 +17,8 @@ from gpumod.services.base import ServiceDriver
 
 if TYPE_CHECKING:
     from gpumod.models import Service
+
+logger = logging.getLogger(__name__)
 
 
 class LlamaCppDriver(ServiceDriver):
@@ -81,8 +84,14 @@ class LlamaCppDriver(ServiceDriver):
     # ------------------------------------------------------------------
 
     async def sleep(self, service: Service, level: str = "l1") -> None:
-        """Unload the model to free VRAM (router-mode sleep)."""
-        model_name = self._resolve_model_name(service)
+        """Unload model(s) to free VRAM.
+
+        Discovers currently loaded models from the server and unloads them.
+        Falls back to ``_resolve_model_name()`` if the server query fails.
+        """
+        loaded = await self._get_loaded_models(service)
+        model_name = loaded[0]["id"] if loaded else self._resolve_model_name(service)
+
         async with httpx.AsyncClient(timeout=self._http_timeout) as client:
             await client.post(
                 f"http://localhost:{service.port}/models/unload",
@@ -90,12 +99,27 @@ class LlamaCppDriver(ServiceDriver):
             )
 
     async def wake(self, service: Service) -> None:
-        """Load the model back into VRAM (router-mode wake)."""
-        model_path = service.extra_config.get("model_path", "")
+        """Load a model into VRAM.
+
+        Resolution order for which model to load:
+        1. ``unit_vars.default_model`` — explicit model alias in the preset
+        2. Discover available models from the server and match by ``model_id``
+        3. Load the first available unloaded model
+        """
+        model = self._get_default_model(service)
+
+        if not model:
+            model = await self._discover_model_to_load(service)
+
+        if not model:
+            logger.warning("No model found to load for service %r", service.id)
+            return
+
+        logger.info("Loading model %r for service %r", model, service.id)
         async with httpx.AsyncClient(timeout=self._http_timeout) as client:
             await client.post(
                 f"http://localhost:{service.port}/models/load",
-                json={"model": model_path},
+                json={"model": model},
             )
 
     @property
@@ -107,18 +131,82 @@ class LlamaCppDriver(ServiceDriver):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _get_loaded_models(self, service: Service) -> list[dict[str, Any]]:
-        """Fetch list of loaded models from GET /models.
+    async def _get_all_models(self, service: Service) -> list[dict[str, Any]]:
+        """Fetch all models (loaded + unloaded) from GET /models.
 
+        Parses the OAI-compatible response format: ``{"data": [...], "object": "list"}``.
         Returns an empty list on any connection or parsing error.
         """
         try:
             async with httpx.AsyncClient(timeout=self._http_timeout) as client:
                 resp = await client.get(f"http://localhost:{service.port}/models")
-                data: list[dict[str, Any]] = resp.json()
-                return data
+                body = resp.json()
+                if isinstance(body, dict):
+                    result: list[dict[str, Any]] = body.get("data", [])
+                    return result
+                # Fallback for flat-list responses (older llama.cpp versions)
+                if isinstance(body, list):
+                    return body
+                return []
         except (httpx.ConnectError, httpx.TimeoutException, OSError, ValueError):
             return []
+
+    async def _get_loaded_models(self, service: Service) -> list[dict[str, Any]]:
+        """Fetch list of currently loaded models from GET /models.
+
+        Filters the full model list to only models with ``status.value == "loaded"``.
+        Returns an empty list on any connection or parsing error.
+        """
+        all_models = await self._get_all_models(service)
+        return [
+            m
+            for m in all_models
+            if m.get("status", {}).get("value") == "loaded"
+        ]
+
+    async def _discover_model_to_load(self, service: Service) -> str | None:
+        """Find a model to load from the server's available models.
+
+        Tries to match by ``service.model_id`` first, then falls back to
+        the first unloaded model.
+        """
+        all_models = await self._get_all_models(service)
+        unloaded = [
+            m for m in all_models
+            if m.get("status", {}).get("value") != "loaded"
+        ]
+
+        if not unloaded:
+            return None
+
+        # Try to match by model_id (check if model_id substring is in alias)
+        if service.model_id:
+            # Extract the model name part (after last /)
+            model_stem = service.model_id.rsplit("/", 1)[-1]
+            # Strip common suffixes like -GGUF
+            for suffix in ("-GGUF", "-gguf"):
+                if model_stem.endswith(suffix):
+                    model_stem = model_stem[: -len(suffix)]
+                    break
+
+            for m in unloaded:
+                alias: str = m.get("id", "")
+                if model_stem and model_stem in alias:
+                    return alias
+
+        # Fall back to first unloaded model
+        first_id: str = unloaded[0].get("id", "")
+        return first_id
+
+    @staticmethod
+    def _get_default_model(service: Service) -> str | None:
+        """Get the explicit default_model from unit_vars, if configured."""
+        unit_vars = service.extra_config.get("unit_vars", {})
+        if isinstance(unit_vars, dict):
+            default = unit_vars.get("default_model")
+            if default:
+                return str(default)
+        return None
 
     @staticmethod
     def _resolve_model_name(service: Service) -> str:

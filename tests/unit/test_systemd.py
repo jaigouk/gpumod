@@ -126,6 +126,27 @@ class TestSystemctl:
         await start("vllm-embedding.service")
         mock_exec.assert_called_once()
 
+    @pytest.mark.parametrize(
+        ("func", "expected_cmd"),
+        [
+            (start, "start"),
+            (stop, "stop"),
+            (restart, "restart"),
+        ],
+    )
+    @patch("gpumod.services.systemd.asyncio.create_subprocess_exec")
+    async def test_all_commands_use_user_scope_not_sudo(
+        self, mock_exec: MagicMock, func, expected_cmd: str,
+    ) -> None:
+        """start/stop/restart must use 'systemctl --user', never 'sudo'."""
+        mock_exec.return_value = _make_process_mock(returncode=0)
+        await func("test.service")
+        args = mock_exec.call_args[0]
+        assert args[0] == "systemctl", f"{func.__name__} must call systemctl"
+        assert args[1] == "--user", f"{func.__name__} must use --user flag"
+        assert args[2] == expected_cmd
+        assert "sudo" not in args, f"{func.__name__} must never use sudo"
+
     @patch("gpumod.services.systemd.asyncio.create_subprocess_exec")
     async def test_successful_stop(self, mock_exec: MagicMock) -> None:
         """stop() should complete without error on success."""
@@ -155,6 +176,15 @@ class TestSystemctl:
 
 class TestIsActive:
     """Tests for is_active()."""
+
+    @patch("gpumod.services.systemd.asyncio.create_subprocess_exec")
+    async def test_uses_user_scope_not_sudo(self, mock_exec: MagicMock) -> None:
+        """is_active() must use 'systemctl --user', never 'sudo'."""
+        mock_exec.return_value = _make_process_mock(stdout="active\n", returncode=0)
+        await is_active("test.service")
+        args = mock_exec.call_args[0]
+        assert args[:3] == ("systemctl", "--user", "is-active")
+        assert "sudo" not in args
 
     @patch("gpumod.services.systemd.asyncio.create_subprocess_exec")
     async def test_returns_true_for_active(self, mock_exec: MagicMock) -> None:
@@ -190,6 +220,15 @@ class TestIsActive:
 class TestGetUnitState:
     """Tests for get_unit_state()."""
 
+    @patch("gpumod.services.systemd.asyncio.create_subprocess_exec")
+    async def test_uses_user_scope_not_sudo(self, mock_exec: MagicMock) -> None:
+        """get_unit_state() must use 'systemctl --user', never 'sudo'."""
+        mock_exec.return_value = _make_process_mock(stdout="active\n", returncode=0)
+        await get_unit_state("test.service")
+        args = mock_exec.call_args[0]
+        assert args[:3] == ("systemctl", "--user", "is-active")
+        assert "sudo" not in args
+
     @pytest.mark.parametrize("state", ["active", "inactive", "failed"])
     @patch("gpumod.services.systemd.asyncio.create_subprocess_exec")
     async def test_parses_known_states(self, mock_exec: MagicMock, state: str) -> None:
@@ -221,3 +260,34 @@ class TestSystemdError:
         assert "unit not found" in str(err)
         assert err.command == "start"
         assert err.result is result
+
+
+# ---------------------------------------------------------------------------
+# Source-level guard: prevent sudo from ever returning
+# ---------------------------------------------------------------------------
+
+
+class TestNoSudoInSource:
+    """Defence-in-depth: scan systemd.py source to prevent sudo regression."""
+
+    def test_source_code_never_contains_sudo(self) -> None:
+        """The systemd module source must never reference 'sudo'."""
+        import inspect
+
+        import gpumod.services.systemd as mod
+
+        source = inspect.getsource(mod)
+        # Allow the word "sudo" only in comments/docstrings that explicitly
+        # say "no sudo" or "never sudo". Strip those before checking.
+        lines = source.splitlines()
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            # Skip comments/docstrings that explicitly say sudo is not used
+            if "no ``sudo``" in stripped or "No ``sudo``" in stripped:
+                continue
+            if "never" in stripped.lower() and "sudo" in stripped.lower():
+                continue
+            assert "sudo" not in stripped.lower() or stripped.startswith("#"), (
+                f"Line {i} references 'sudo' — all systemctl calls must use "
+                f"'systemctl --user', never 'sudo': {stripped!r}"
+            )

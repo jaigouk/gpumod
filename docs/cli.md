@@ -179,7 +179,7 @@ gpumod template install llama-3-1-8b
 gpumod template install llama-3-1-8b --yes
 ```
 
-The unit file is written to `/etc/systemd/system/gpumod-{service_id}.service`.
+The unit file is written to `~/.config/systemd/user/gpumod-{service_id}.service`.
 
 ## gpumod model
 

@@ -740,3 +740,169 @@ class TestDBValidation:
             await db.insert_service(service)
             result = await db.get_service("test-zero")
             assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# Mode services population (_populate_mode_services)
+# ---------------------------------------------------------------------------
+
+
+class TestPopulateModeServices:
+    """Tests for _populate_mode_services() — junction table → Mode.services."""
+
+    async def test_list_modes_populates_services(self, tmp_path: Path) -> None:
+        """list_modes() should return modes with populated services lists."""
+        async with Database(tmp_path / "test.db") as db:
+            svc_a = _make_service(id="svc-a", name="A")
+            svc_b = _make_service(id="svc-b", name="B")
+            for s in (svc_a, svc_b):
+                await db.insert_service(s)
+
+            mode = _make_mode(id="test-mode", services=["svc-a", "svc-b"])
+            await db.insert_mode(mode)
+            await db.set_mode_services("test-mode", ["svc-a", "svc-b"])
+
+            modes = await db.list_modes()
+            assert len(modes) == 1
+            assert modes[0].services == ["svc-a", "svc-b"]
+
+    async def test_get_mode_populates_services(self, tmp_path: Path) -> None:
+        """get_mode() should return a mode with populated services list."""
+        async with Database(tmp_path / "test.db") as db:
+            svc = _make_service(id="svc-x")
+            await db.insert_service(svc)
+
+            mode = _make_mode(id="pop-mode")
+            await db.insert_mode(mode)
+            await db.set_mode_services("pop-mode", ["svc-x"])
+
+            got = await db.get_mode("pop-mode")
+            assert got is not None
+            assert got.services == ["svc-x"]
+
+    async def test_mode_with_no_services_has_empty_list(self, tmp_path: Path) -> None:
+        """A mode with no junction rows should have services == []."""
+        async with Database(tmp_path / "test.db") as db:
+            mode = _make_mode(id="empty-mode")
+            await db.insert_mode(mode)
+
+            got = await db.get_mode("empty-mode")
+            assert got is not None
+            assert got.services == []
+
+    async def test_mode_services_respect_start_order(self, tmp_path: Path) -> None:
+        """Services should be ordered by start_order from the junction table."""
+        async with Database(tmp_path / "test.db") as db:
+            for sid in ("z-svc", "a-svc", "m-svc"):
+                await db.insert_service(_make_service(id=sid))
+
+            mode = _make_mode(id="ordered-mode")
+            await db.insert_mode(mode)
+            # z first (order 1), a second (order 2), m third (order 3)
+            await db.set_mode_services(
+                "ordered-mode",
+                ["z-svc", "a-svc", "m-svc"],
+                orders=[1, 2, 3],
+            )
+
+            got = await db.get_mode("ordered-mode")
+            assert got is not None
+            assert got.services == ["z-svc", "a-svc", "m-svc"]
+
+    async def test_list_modes_multiple_modes_each_with_services(self, tmp_path: Path) -> None:
+        """list_modes() must populate services for ALL modes, not just the first."""
+        async with Database(tmp_path / "test.db") as db:
+            for sid in ("embed", "chat", "code-llm"):
+                await db.insert_service(_make_service(id=sid))
+
+            for mid, svcs in [
+                ("mode-a", ["embed"]),
+                ("mode-b", ["embed", "chat"]),
+                ("mode-c", ["code-llm"]),
+            ]:
+                await db.insert_mode(_make_mode(id=mid))
+                await db.set_mode_services(mid, svcs)
+
+            modes = await db.list_modes()
+            by_id = {m.id: m for m in modes}
+
+            assert by_id["mode-a"].services == ["embed"]
+            assert by_id["mode-b"].services == ["embed", "chat"]
+            assert by_id["mode-c"].services == ["code-llm"]
+
+    async def test_services_survive_model_dump_json(self, tmp_path: Path) -> None:
+        """Mode.model_dump(mode='json') must include populated services."""
+        async with Database(tmp_path / "test.db") as db:
+            await db.insert_service(_make_service(id="svc-1"))
+            await db.insert_mode(_make_mode(id="test-mode"))
+            await db.set_mode_services("test-mode", ["svc-1"])
+
+            modes = await db.list_modes()
+            dumped = modes[0].model_dump(mode="json")
+            assert dumped["services"] == ["svc-1"], (
+                "model_dump must preserve populated services"
+            )
+
+    async def test_services_survive_sanitize_roundtrip(self, tmp_path: Path) -> None:
+        """Services must survive the full MCP serialization path."""
+        from gpumod.mcp_tools import _sanitize_dict_names
+
+        async with Database(tmp_path / "test.db") as db:
+            await db.insert_service(_make_service(id="svc-a"))
+            await db.insert_service(_make_service(id="svc-b", name="B"))
+            await db.insert_mode(_make_mode(id="test-mode"))
+            await db.set_mode_services("test-mode", ["svc-a", "svc-b"])
+
+            modes = await db.list_modes()
+            # Exact MCP tool code path
+            result = [
+                _sanitize_dict_names(m.model_dump(mode="json")) for m in modes
+            ]
+            assert result[0]["services"] == ["svc-a", "svc-b"]
+
+    async def test_get_mode_services_consistent_with_list_modes(
+        self, tmp_path: Path
+    ) -> None:
+        """get_mode_services() and list_modes() must return the same service IDs."""
+        async with Database(tmp_path / "test.db") as db:
+            for sid in ("svc-x", "svc-y"):
+                await db.insert_service(_make_service(id=sid))
+
+            await db.insert_mode(_make_mode(id="consistency-test"))
+            await db.set_mode_services("consistency-test", ["svc-x", "svc-y"])
+
+            # Via list_modes → _populate_mode_services
+            modes = await db.list_modes()
+            list_mode_services = [m for m in modes if m.id == "consistency-test"][0].services
+
+            # Via get_mode_services (JOIN query)
+            join_services = await db.get_mode_services("consistency-test")
+            join_service_ids = [s.id for s in join_services]
+
+            assert list_mode_services == join_service_ids
+
+    async def test_populate_mode_services_after_adding_services(
+        self, tmp_path: Path
+    ) -> None:
+        """Services added AFTER mode creation must still appear."""
+        async with Database(tmp_path / "test.db") as db:
+            await db.insert_service(_make_service(id="late-svc"))
+            await db.insert_mode(_make_mode(id="dynamic-mode"))
+
+            # Initially no services
+            mode = await db.get_mode("dynamic-mode")
+            assert mode is not None
+            assert mode.services == []
+
+            # Add service to mode
+            await db.set_mode_services("dynamic-mode", ["late-svc"])
+
+            # Must see the new service
+            mode = await db.get_mode("dynamic-mode")
+            assert mode is not None
+            assert mode.services == ["late-svc"]
+
+            # list_modes must also see it
+            modes = await db.list_modes()
+            found = [m for m in modes if m.id == "dynamic-mode"][0]
+            assert found.services == ["late-svc"]

@@ -7,12 +7,13 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from gpumod.models import ServiceState
+from gpumod.models import ServiceState, SleepMode
 
 if TYPE_CHECKING:
     from gpumod.models import Service
     from gpumod.services.base import ServiceDriver
     from gpumod.services.registry import ServiceRegistry
+    from gpumod.services.unit_installer import UnitFileInstaller
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +47,14 @@ class LifecycleManager:
         The ServiceRegistry used to look up services and their drivers.
     """
 
-    def __init__(self, registry: ServiceRegistry) -> None:
+    def __init__(
+        self,
+        registry: ServiceRegistry,
+        *,
+        unit_installer: UnitFileInstaller | None = None,
+    ) -> None:
         self._registry = registry
+        self._unit_installer = unit_installer
 
     # ------------------------------------------------------------------
     # Public API
@@ -63,6 +70,12 @@ class LifecycleManager:
         service = await self._registry.get(service_id)
         start_order = await self._resolve_start_order(service)
 
+        # Auto-install missing unit files before starting
+        if self._unit_installer is not None:
+            for svc in start_order:
+                await self._unit_installer.ensure_unit_file(svc)
+            await self._unit_installer.daemon_reload_if_needed()
+
         for svc in start_order:
             driver = self._registry.get_driver(svc.driver)
 
@@ -76,6 +89,11 @@ class LifecycleManager:
             await driver.start(svc)
             await self._wait_for_healthy(svc, driver)
             logger.info("Service %r started and healthy", svc.id)
+
+            # Router-mode services need an explicit model load after start
+            if driver.supports_sleep and svc.sleep_mode == SleepMode.ROUTER:
+                logger.info("Loading model for router-mode service %r", svc.id)
+                await driver.wake(svc)
 
     async def stop(self, service_id: str) -> None:
         """Stop a service and all its transitive dependents in reverse dependency order.

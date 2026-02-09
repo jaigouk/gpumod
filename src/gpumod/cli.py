@@ -32,6 +32,7 @@ from gpumod.registry import ModelRegistry
 from gpumod.services.lifecycle import LifecycleManager
 from gpumod.services.manager import ServiceManager
 from gpumod.services.registry import ServiceRegistry
+from gpumod.services.unit_installer import UnitFileInstaller
 from gpumod.services.sleep import SleepController
 from gpumod.services.vram import VRAMTracker
 from gpumod.simulation import SimulationEngine
@@ -118,7 +119,8 @@ async def create_context(db_path: Path | None = None) -> AppContext:
     await db.connect()
 
     registry = ServiceRegistry(db)
-    lifecycle = LifecycleManager(registry)
+    unit_installer = UnitFileInstaller(db=db, template_engine=TemplateEngine())
+    lifecycle = LifecycleManager(registry, unit_installer=unit_installer)
     vram = VRAMTracker()
     sleep = SleepController(registry)
     manager = ServiceManager(
