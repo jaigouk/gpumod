@@ -40,7 +40,7 @@ class SleepController:
     def __init__(self, registry: ServiceRegistry) -> None:
         self._registry = registry
 
-    async def sleep(self, service_id: str, level: str = "l1") -> None:
+    async def sleep(self, service_id: str, level: int = 1) -> None:
         """Put a service to sleep.
 
         The operation is **idempotent**: calling sleep on an already-sleeping
@@ -51,7 +51,7 @@ class SleepController:
         service_id:
             The ID of the service to sleep.
         level:
-            The sleep level (e.g. ``"l1"``, ``"l2"``).
+            The sleep level (1 or 2). See driver docs for level semantics.
 
         Raises
         ------
@@ -123,7 +123,7 @@ class SleepController:
 
         return sleepable
 
-    async def sleep_all(self, level: str = "l1") -> list[str]:
+    async def sleep_all(self, level: int = 1) -> list[str]:
         """Sleep all running sleepable services.
 
         Returns the list of service IDs that were put to sleep.

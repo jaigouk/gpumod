@@ -83,12 +83,16 @@ class LlamaCppDriver(ServiceDriver):
     # Sleep / Wake (router mode: unload / load model)
     # ------------------------------------------------------------------
 
-    async def sleep(self, service: Service, level: str = "l1") -> None:
+    async def sleep(self, service: Service, level: int = 1) -> None:
         """Unload model(s) to free VRAM.
 
         Discovers currently loaded models from the server and unloads them.
         Falls back to ``_resolve_model_name()`` if the server query fails.
+
+        Note: llama.cpp router mode doesn't use sleep levels. The level
+        parameter is accepted for interface compatibility but ignored.
         """
+        del level  # unused in llama.cpp router mode
         loaded = await self._get_loaded_models(service)
         model_name = loaded[0]["id"] if loaded else self._resolve_model_name(service)
 
