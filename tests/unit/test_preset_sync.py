@@ -169,14 +169,16 @@ class TestSyncPresets:
             await sync_presets(db, loader)
 
             # Change B, keep A, add C
-            _write_preset(preset_dir, "b.yaml", _minimal_preset(id="b", name="B-Updated", vram_mb=3000))
+            _write_preset(
+                preset_dir, "b.yaml", _minimal_preset(id="b", name="B-Updated", vram_mb=3000)
+            )
             _write_preset(preset_dir, "c.yaml", _minimal_preset(id="c", name="C", vram_mb=500))
 
             loader2 = PresetLoader(preset_dirs=[preset_dir])
             result = await sync_presets(db, loader2)
 
-            assert result.inserted == 1   # c
-            assert result.updated == 1    # b
+            assert result.inserted == 1  # c
+            assert result.updated == 1  # b
             assert result.unchanged == 1  # a
 
     async def test_updates_unit_vars(self, tmp_path: Path) -> None:

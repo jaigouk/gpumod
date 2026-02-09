@@ -169,7 +169,7 @@ async def journal_logs(unit: str, lines: int = 20) -> list[str]:
     unit:
         Systemd unit name (validated against :data:`UNIT_NAME_PATTERN`).
     lines:
-        Number of lines to retrieve (clamped to 1–200).
+        Number of lines to retrieve (clamped to 1-200).
 
     Returns
     -------

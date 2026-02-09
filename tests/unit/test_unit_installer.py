@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,6 +10,8 @@ import pytest
 from gpumod.models import Service
 from gpumod.services.unit_installer import UnitFileInstaller
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -130,8 +132,9 @@ class TestUnitFileInstaller:
         await installer.ensure_unit_file(service)
 
         call_kwargs = mock_engine.render_service_unit.call_args
-        assert call_kwargs[1].get("unit_vars") == {"gpu_mem_util": 0.35} or \
-            call_kwargs[0][2] == {"gpu_mem_util": 0.35}
+        assert call_kwargs[1].get("unit_vars") == {"gpu_mem_util": 0.35} or call_kwargs[0][2] == {
+            "gpu_mem_util": 0.35
+        }
 
     @pytest.mark.asyncio
     async def test_handles_template_render_error(self, tmp_path: Path) -> None:
@@ -184,7 +187,9 @@ class TestDaemonReload:
 
     @pytest.mark.asyncio
     @patch("asyncio.create_subprocess_exec")
-    async def test_skips_reload_when_not_needed(self, mock_exec: MagicMock, tmp_path: Path) -> None:
+    async def test_skips_reload_when_not_needed(
+        self, mock_exec: MagicMock, tmp_path: Path
+    ) -> None:
         """daemon_reload_if_needed should not call systemctl when no units were installed."""
         installer, _, _ = _make_installer(tmp_path)
         installer._daemon_reload_needed = False
@@ -210,9 +215,7 @@ class TestLifecycleIntegration:
 
         mock_driver = AsyncMock()
         mock_driver.supports_sleep = False
-        mock_driver.status = AsyncMock(
-            return_value=ServiceStatus(state=ServiceState.STOPPED)
-        )
+        mock_driver.status = AsyncMock(return_value=ServiceStatus(state=ServiceState.STOPPED))
         mock_driver.start = AsyncMock()
         mock_driver.health_check = AsyncMock(return_value=True)
         mock_registry.get_driver = MagicMock(return_value=mock_driver)
@@ -240,9 +243,7 @@ class TestLifecycleIntegration:
 
         mock_driver = AsyncMock()
         mock_driver.supports_sleep = False
-        mock_driver.status = AsyncMock(
-            return_value=ServiceStatus(state=ServiceState.STOPPED)
-        )
+        mock_driver.status = AsyncMock(return_value=ServiceStatus(state=ServiceState.STOPPED))
         mock_driver.start = AsyncMock()
         mock_driver.health_check = AsyncMock(return_value=True)
         mock_registry.get_driver = MagicMock(return_value=mock_driver)

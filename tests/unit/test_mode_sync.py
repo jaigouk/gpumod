@@ -103,6 +103,7 @@ class TestSyncModes:
         async with Database(tmp_path / "test.db") as db:
             # Insert services first (presets must be synced before modes)
             from gpumod.templates.presets import sync_presets
+
             await sync_presets(db, preset_loader)
 
             result = await sync_modes(db, mode_loader)
@@ -123,13 +124,15 @@ class TestSyncModes:
         preset_dir.mkdir()
 
         _write_preset(preset_dir, "svc-a.yaml", _minimal_preset(id="svc-a", vram_mb=1000))
-        _write_mode(mode_dir, "test.yaml", _minimal_mode(id="test-mode", name="Original", services=["svc-a"]))
+        mode = _minimal_mode(id="test-mode", name="Original", services=["svc-a"])
+        _write_mode(mode_dir, "test.yaml", mode)
 
         mode_loader = ModeLoader(mode_dirs=[mode_dir])
         preset_loader = PresetLoader(preset_dirs=[preset_dir])
 
         async with Database(tmp_path / "test.db") as db:
             from gpumod.templates.presets import sync_presets
+
             await sync_presets(db, preset_loader)
             await sync_modes(db, mode_loader)
 
@@ -138,7 +141,8 @@ class TestSyncModes:
             assert got.name == "Original"
 
             # Change the YAML
-            _write_mode(mode_dir, "test.yaml", _minimal_mode(id="test-mode", name="Updated", services=["svc-a"]))
+            updated = _minimal_mode(id="test-mode", name="Updated", services=["svc-a"])
+            _write_mode(mode_dir, "test.yaml", updated)
 
             mode_loader2 = ModeLoader(mode_dirs=[mode_dir])
             result = await sync_modes(db, mode_loader2)
@@ -159,13 +163,16 @@ class TestSyncModes:
         preset_dir.mkdir()
 
         _write_preset(preset_dir, "svc-a.yaml", _minimal_preset(id="svc-a", vram_mb=1000))
-        _write_mode(mode_dir, "test.yaml", _minimal_mode(id="test-mode", name="Test", services=["svc-a"]))
+        _write_mode(
+            mode_dir, "test.yaml", _minimal_mode(id="test-mode", name="Test", services=["svc-a"])
+        )
 
         mode_loader = ModeLoader(mode_dirs=[mode_dir])
         preset_loader = PresetLoader(preset_dirs=[preset_dir])
 
         async with Database(tmp_path / "test.db") as db:
             from gpumod.templates.presets import sync_presets
+
             await sync_presets(db, preset_loader)
 
             # First sync
@@ -193,6 +200,7 @@ class TestSyncModes:
 
         async with Database(tmp_path / "test.db") as db:
             from gpumod.templates.presets import sync_presets
+
             await sync_presets(db, preset_loader)
 
             r1 = await sync_modes(db, mode_loader)
@@ -246,13 +254,16 @@ class TestSyncModesJunctionTable:
         _write_preset(preset_dir, "c.yaml", _minimal_preset(id="svc-c", vram_mb=3000))
 
         # Mode initially has [svc-a, svc-b]
-        _write_mode(mode_dir, "test.yaml", _minimal_mode(id="test-mode", services=["svc-a", "svc-b"]))
+        _write_mode(
+            mode_dir, "test.yaml", _minimal_mode(id="test-mode", services=["svc-a", "svc-b"])
+        )
 
         mode_loader = ModeLoader(mode_dirs=[mode_dir])
         preset_loader = PresetLoader(preset_dirs=[preset_dir])
 
         async with Database(tmp_path / "test.db") as db:
             from gpumod.templates.presets import sync_presets
+
             await sync_presets(db, preset_loader)
             await sync_modes(db, mode_loader)
 
@@ -261,7 +272,9 @@ class TestSyncModesJunctionTable:
             assert mode.services == ["svc-a", "svc-b"]
 
             # Change to [svc-a, svc-c]
-            _write_mode(mode_dir, "test.yaml", _minimal_mode(id="test-mode", services=["svc-a", "svc-c"]))
+            _write_mode(
+                mode_dir, "test.yaml", _minimal_mode(id="test-mode", services=["svc-a", "svc-c"])
+            )
 
             mode_loader2 = ModeLoader(mode_dirs=[mode_dir])
             result = await sync_modes(db, mode_loader2)
@@ -284,13 +297,18 @@ class TestSyncModesJunctionTable:
         _write_preset(preset_dir, "c.yaml", _minimal_preset(id="svc-c", vram_mb=3000))
 
         # Mode initially has [a, b, c]
-        _write_mode(mode_dir, "test.yaml", _minimal_mode(id="test-mode", services=["svc-a", "svc-b", "svc-c"]))
+        _write_mode(
+            mode_dir,
+            "test.yaml",
+            _minimal_mode(id="test-mode", services=["svc-a", "svc-b", "svc-c"]),
+        )
 
         mode_loader = ModeLoader(mode_dirs=[mode_dir])
         preset_loader = PresetLoader(preset_dirs=[preset_dir])
 
         async with Database(tmp_path / "test.db") as db:
             from gpumod.templates.presets import sync_presets
+
             await sync_presets(db, preset_loader)
             await sync_modes(db, mode_loader)
 
@@ -299,7 +317,11 @@ class TestSyncModesJunctionTable:
             assert mode.services == ["svc-a", "svc-b", "svc-c"]
 
             # Change order to [c, a, b]
-            _write_mode(mode_dir, "test.yaml", _minimal_mode(id="test-mode", services=["svc-c", "svc-a", "svc-b"]))
+            _write_mode(
+                mode_dir,
+                "test.yaml",
+                _minimal_mode(id="test-mode", services=["svc-c", "svc-a", "svc-b"]),
+            )
 
             mode_loader2 = ModeLoader(mode_dirs=[mode_dir])
             result = await sync_modes(db, mode_loader2)
@@ -346,13 +368,16 @@ class TestSyncModesVRAM:
         _write_preset(preset_dir, "a.yaml", _minimal_preset(id="svc-a", vram_mb=1000))
         _write_preset(preset_dir, "b.yaml", _minimal_preset(id="svc-b", vram_mb=2500))
 
-        _write_mode(mode_dir, "test.yaml", _minimal_mode(id="test-mode", services=["svc-a", "svc-b"]))
+        _write_mode(
+            mode_dir, "test.yaml", _minimal_mode(id="test-mode", services=["svc-a", "svc-b"])
+        )
 
         mode_loader = ModeLoader(mode_dirs=[mode_dir])
         preset_loader = PresetLoader(preset_dirs=[preset_dir])
 
         async with Database(tmp_path / "test.db") as db:
             from gpumod.templates.presets import sync_presets
+
             await sync_presets(db, preset_loader)
             await sync_modes(db, mode_loader)
 
@@ -371,13 +396,16 @@ class TestSyncModesVRAM:
         _write_preset(preset_dir, "b.yaml", _minimal_preset(id="svc-b", vram_mb=2000))
         _write_preset(preset_dir, "c.yaml", _minimal_preset(id="svc-c", vram_mb=5000))
 
-        _write_mode(mode_dir, "test.yaml", _minimal_mode(id="test-mode", services=["svc-a", "svc-b"]))
+        _write_mode(
+            mode_dir, "test.yaml", _minimal_mode(id="test-mode", services=["svc-a", "svc-b"])
+        )
 
         mode_loader = ModeLoader(mode_dirs=[mode_dir])
         preset_loader = PresetLoader(preset_dirs=[preset_dir])
 
         async with Database(tmp_path / "test.db") as db:
             from gpumod.templates.presets import sync_presets
+
             await sync_presets(db, preset_loader)
             await sync_modes(db, mode_loader)
 
@@ -436,6 +464,7 @@ class TestSyncModesEdgeCases:
 
         async with Database(tmp_path / "test.db") as db:
             from gpumod.templates.presets import sync_presets
+
             await sync_presets(db, preset_loader)
             await sync_modes(db, mode_loader)
 
@@ -461,13 +490,16 @@ class TestSyncModesEdgeCases:
 
         _write_preset(preset_dir, "svc-a.yaml", _minimal_preset(id="svc-a", vram_mb=1000))
         # Mode references svc-a (exists) and svc-missing (doesn't exist)
-        _write_mode(mode_dir, "test.yaml", _minimal_mode(id="test-mode", services=["svc-a", "svc-missing"]))
+        _write_mode(
+            mode_dir, "test.yaml", _minimal_mode(id="test-mode", services=["svc-a", "svc-missing"])
+        )
 
         mode_loader = ModeLoader(mode_dirs=[mode_dir])
         preset_loader = PresetLoader(preset_dirs=[preset_dir])
 
         async with Database(tmp_path / "test.db") as db:
             from gpumod.templates.presets import sync_presets
+
             await sync_presets(db, preset_loader)
 
             # Should succeed with a warning, only adding svc-a to junction table
@@ -506,7 +538,9 @@ class TestSyncModesEdgeCases:
             assert result.deleted == 0
             assert await db.get_mode("manual-mode") is not None
 
-    async def test_deleted_yaml_while_mode_active_does_not_clear_current(self, tmp_path: Path) -> None:
+    async def test_deleted_yaml_while_mode_active_does_not_clear_current(
+        self, tmp_path: Path
+    ) -> None:
         """If current_mode points to a deleted mode, sync should NOT clear current_mode."""
         mode_dir = tmp_path / "modes"
         preset_dir = tmp_path / "presets"
@@ -515,7 +549,9 @@ class TestSyncModesEdgeCases:
 
         _write_preset(preset_dir, "svc.yaml", _minimal_preset(id="svc", vram_mb=1000))
         _write_preset(preset_dir, "svc2.yaml", _minimal_preset(id="svc2", vram_mb=500))
-        fp = _write_mode(mode_dir, "active.yaml", _minimal_mode(id="active-mode", services=["svc"]))
+        fp = _write_mode(
+            mode_dir, "active.yaml", _minimal_mode(id="active-mode", services=["svc"])
+        )
         # Keep at least one mode YAML so deletion logic triggers
         _write_mode(mode_dir, "other.yaml", _minimal_mode(id="other-mode", services=["svc2"]))
 
@@ -524,6 +560,7 @@ class TestSyncModesEdgeCases:
 
         async with Database(tmp_path / "test.db") as db:
             from gpumod.templates.presets import sync_presets
+
             await sync_presets(db, preset_loader)
             await sync_modes(db, mode_loader)
 

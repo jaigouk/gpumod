@@ -61,6 +61,9 @@ class ModeLoader:
     def load_directory(self, directory: Path) -> list[Mode]:
         """Load all YAML mode files from a directory.
 
+        Files that fail to parse (malformed YAML, validation errors) are
+        logged and skipped rather than failing the entire load.
+
         Raises:
             FileNotFoundError: If the directory does not exist.
         """
@@ -69,11 +72,13 @@ class ModeLoader:
             msg = f"Mode directory not found: {directory}"
             raise FileNotFoundError(msg)
 
-        modes = [
-            self.load_file(yaml_file)
-            for yaml_file in sorted(resolved.rglob("*"))
-            if yaml_file.is_file() and yaml_file.suffix in _YAML_EXTENSIONS
-        ]
+        modes: list[Mode] = []
+        for yaml_file in sorted(resolved.rglob("*")):
+            if yaml_file.is_file() and yaml_file.suffix in _YAML_EXTENSIONS:
+                try:
+                    modes.append(self.load_file(yaml_file))
+                except Exception as exc:
+                    logger.warning("Failed to load mode %s: %s", yaml_file.name, exc)
         return sorted(modes, key=lambda m: m.id)
 
     def discover_modes(self) -> list[Mode]:

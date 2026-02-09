@@ -28,13 +28,14 @@ from gpumod.mcp_tools import register_tools
 from gpumod.registry import ModelRegistry
 from gpumod.services.lifecycle import LifecycleManager
 from gpumod.services.manager import ServiceManager
-from gpumod.services.unit_installer import UnitFileInstaller
 from gpumod.services.registry import ServiceRegistry
 from gpumod.services.sleep import SleepController
+from gpumod.services.unit_installer import UnitFileInstaller
 from gpumod.services.vram import VRAMTracker
 from gpumod.simulation import SimulationEngine
 from gpumod.templates.engine import TemplateEngine
-from gpumod.templates.presets import PresetLoader
+from gpumod.templates.modes import ModeLoader, sync_modes
+from gpumod.templates.presets import PresetLoader, sync_presets
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -333,6 +334,38 @@ async def gpumod_lifespan(
         preset_dirs.append(builtin_presets_dir)
     preset_loader = PresetLoader(preset_dirs=preset_dirs)
 
+    # Discover built-in modes directory from centralized settings.
+    builtin_modes_dir = settings.modes_dir
+    mode_dirs: list[Path] = []
+    if builtin_modes_dir.is_dir():
+        mode_dirs.append(builtin_modes_dir)
+    mode_loader = ModeLoader(mode_dirs=mode_dirs)
+
+    # Auto-sync presets and modes from YAML to DB
+    try:
+        preset_result = await sync_presets(db, preset_loader)
+        logger.debug(
+            "Preset sync: %d inserted, %d updated, %d unchanged, %d deleted",
+            preset_result.inserted,
+            preset_result.updated,
+            preset_result.unchanged,
+            preset_result.deleted,
+        )
+    except Exception as exc:
+        logger.warning("Preset sync failed: %s", exc)
+
+    try:
+        mode_result = await sync_modes(db, mode_loader)
+        logger.debug(
+            "Mode sync: %d inserted, %d updated, %d unchanged, %d deleted",
+            mode_result.inserted,
+            mode_result.updated,
+            mode_result.unchanged,
+            mode_result.deleted,
+        )
+    except Exception as exc:
+        logger.warning("Mode sync failed: %s", exc)
+
     context: dict[str, Any] = {
         "db": db,
         "registry": registry,
@@ -344,6 +377,7 @@ async def gpumod_lifespan(
         "simulation": simulation,
         "template_engine": template_engine,
         "preset_loader": preset_loader,
+        "mode_loader": mode_loader,
     }
 
     logger.info("gpumod MCP server started (db=%s)", resolved_db_path)

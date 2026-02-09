@@ -121,7 +121,6 @@ class UnitFileInstaller:
         if not self._daemon_reload_needed:
             return
 
-        from gpumod.services import systemd
 
         proc = await asyncio.create_subprocess_exec(
             "systemctl", "--user", "daemon-reload",
