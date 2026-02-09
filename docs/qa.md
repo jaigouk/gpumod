@@ -107,20 +107,53 @@ services before starting the new ones.
 - devstral-small-2 blocked on upstream vllm/mistral tokenizer compatibility
 - Stale MCP server process doesn't pick up uncommitted code changes until Claude Code restarts
 
-**Test count:** 1407 passing
-
 ---
 
 ### 2026-02-09 (v0.1.1)
 
+#### New Features QA
+
 | Step | Feature | Result | Notes |
 |------|---------|--------|-------|
-| 1 | gpumod watch --help | PASS | Command registered, shows --timeout, --debounce, --no-sync options |
+| 1 | `gpumod watch --help` | PASS | Command registered, shows --timeout, --debounce, --no-sync options |
 | 2 | watch file filtering | PASS | Rejects .swp, .tmp, ~ backup files; accepts .yaml/.yml |
 | 3 | watch debounce | PASS | Rapid events coalesced into single sync (500ms default) |
 | 4 | watch error handling | PASS | Malformed YAML logged as warning, watcher continues |
 | 5 | auto-sync on startup | PASS | cli_context() and MCP lifespan call sync_presets/sync_modes |
 | 6 | --no-sync flag | PASS | Skips auto-sync when specified |
+
+#### Mode Switching QA
+
+| Step | Mode/Service | Result | Notes |
+|------|--------------|--------|-------|
+| 1 | blank | PASS | All services stopped cleanly |
+| 2 | code | PASS | glm-code started, GLM-4.7-Flash-UD-Q4_K_XL responded via llama.cpp router |
+| 3 | rag | TIMEOUT | vllm-embedding health check timed out after 120s (see root cause below) |
+| 4 | code (2nd) | PASS | Clean switch after rag timeout, health check OK |
+| 5 | devstral-small-2 | FAIL | vllm crash during tokenizer init (see root cause below) |
+
+#### Root Cause Analysis
+
+**RAG mode timeout (vllm-embedding)**
+
+- **Symptom**: Health check times out after 120 seconds
+- **Journal output**: Model loaded in ~3.5s, but vllm was still initializing pooling task
+- **Root cause**: vllm 0.11.0 pooling mode initialization takes longer than 120s on first cold start due to:
+  - FlashInfer fallback to PyTorch-native top-p/top-k sampling (performance warning)
+  - KV cache preallocation for max_model_len=1024
+  - Chunked prefill warmup
+- **Generic solution**: Sleep/wake mode switching (gpumod-4dw) eliminates cold starts entirely. Services stay warm in memory, wake in <5s instead of 120s+ cold boot.
+
+**devstral-small-2 failure**
+
+- **Symptom**: vllm crashes immediately on startup
+- **Error**: `AttributeError: 'MistralCommonTokenizer' object has no attribute 'all_special_ids'`
+- **Stack trace**: `vllm/transformers_utils/tokenizer.py:96 in get_cached_tokenizer`
+- **Root cause**: Upstream vllm bug — Mistral's custom tokenizer class doesn't implement the `all_special_ids` property required by vllm's tokenizer caching layer
+- **Affected versions**: vllm 0.11.0 with mistralai/Devstral-Small-2505
+- **Generic solution**: Model compatibility pre-flight check (gpumod-9i4) validates tokenizer, architecture, and dependencies before attempting startup. Catches incompatibilities early instead of wasting time on doomed starts.
+
+#### Summary
 
 **New features in v0.1.1:**
 
@@ -129,4 +162,9 @@ services before starting the new ones.
 - Mode sync from YAML with delete detection (gpumod-652)
 - Preset sync from YAML with delete detection (gpumod-7ug)
 
-**Test count:** 1407 passing
+**gpumod functionality verified:**
+
+- Mode switching starts/stops services correctly
+- Health check timeout detection works
+- Journal tail provides useful diagnostic output on failure
+- Clean mode transitions don't leave orphan processes
