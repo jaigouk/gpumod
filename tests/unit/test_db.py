@@ -199,6 +199,157 @@ class TestServicesCRUD:
 
 
 # ---------------------------------------------------------------------------
+# update_service
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateService:
+    """Tests for Database.update_service() — AC1 of gpumod-7ug."""
+
+    async def test_update_service_changes_fields(self, tmp_path: Path) -> None:
+        """update_service() should update all mutable fields for an existing service."""
+        async with Database(tmp_path / "test.db") as db:
+            original = _make_service(
+                id="upd-1",
+                name="Original",
+                port=8000,
+                vram_mb=2500,
+                sleep_mode=SleepMode.NONE,
+                extra_config={"context_size": "2048"},
+            )
+            await db.insert_service(original)
+
+            updated = _make_service(
+                id="upd-1",
+                name="Updated",
+                port=8100,
+                vram_mb=5000,
+                sleep_mode=SleepMode.L1,
+                extra_config={"context_size": "4096"},
+            )
+            result = await db.update_service(updated)
+            assert result is True
+
+            got = await db.get_service("upd-1")
+            assert got is not None
+            assert got.name == "Updated"
+            assert got.port == 8100
+            assert got.vram_mb == 5000
+            assert got.sleep_mode == SleepMode.L1
+            assert got.extra_config == {"context_size": "4096"}
+
+    async def test_update_service_returns_false_when_not_found(self, tmp_path: Path) -> None:
+        """update_service() should return False when the service ID doesn't exist."""
+        async with Database(tmp_path / "test.db") as db:
+            svc = _make_service(id="nonexistent")
+            result = await db.update_service(svc)
+            assert result is False
+
+    async def test_update_service_updates_all_columns(self, tmp_path: Path) -> None:
+        """update_service() should update every column except id and created_at."""
+        async with Database(tmp_path / "test.db") as db:
+            original = _make_service(
+                id="upd-all",
+                name="Old",
+                driver=DriverType.VLLM,
+                port=8000,
+                vram_mb=1000,
+                sleep_mode=SleepMode.NONE,
+                health_endpoint="/health",
+                model_id="org/model-a",
+                unit_name="old.service",
+                depends_on=[],
+                startup_timeout=60,
+                extra_config={},
+            )
+            await db.insert_service(original)
+
+            updated = _make_service(
+                id="upd-all",
+                name="New",
+                driver=DriverType.LLAMACPP,
+                port=9000,
+                vram_mb=8000,
+                sleep_mode=SleepMode.ROUTER,
+                health_endpoint="/v1/health",
+                model_id="org/model-b",
+                unit_name="new.service",
+                depends_on=["dep-a"],
+                startup_timeout=300,
+                extra_config={"context_size": "8192"},
+            )
+            await db.update_service(updated)
+
+            got = await db.get_service("upd-all")
+            assert got is not None
+            assert got.name == "New"
+            assert got.driver == DriverType.LLAMACPP
+            assert got.port == 9000
+            assert got.vram_mb == 8000
+            assert got.sleep_mode == SleepMode.ROUTER
+            assert got.health_endpoint == "/v1/health"
+            assert got.model_id == "org/model-b"
+            assert got.unit_name == "new.service"
+            assert got.depends_on == ["dep-a"]
+            assert got.startup_timeout == 300
+            assert got.extra_config == {"context_size": "8192"}
+
+    async def test_update_service_roundtrips_json_fields(self, tmp_path: Path) -> None:
+        """depends_on and extra_config should survive update as JSON."""
+        async with Database(tmp_path / "test.db") as db:
+            original = _make_service(id="upd-json")
+            await db.insert_service(original)
+
+            updated = _make_service(
+                id="upd-json",
+                depends_on=["svc-a", "svc-b"],
+                extra_config={"unit_vars": {"gpu_mem_util": 0.3}},
+            )
+            await db.update_service(updated)
+
+            got = await db.get_service("upd-json")
+            assert got is not None
+            assert got.depends_on == ["svc-a", "svc-b"]
+            assert got.extra_config == {"unit_vars": {"gpu_mem_util": 0.3}}
+
+    async def test_update_service_validates_vram(self, tmp_path: Path) -> None:
+        """update_service() must validate VRAM like insert_service() does."""
+        async with Database(tmp_path / "test.db") as db:
+            svc = _make_service(id="upd-vram")
+            await db.insert_service(svc)
+
+            bad = _make_service(id="upd-vram", vram_mb=2_000_000)
+            with pytest.raises(ValueError, match="exceeds maximum"):
+                await db.update_service(bad)
+
+    async def test_update_service_validates_extra_config(self, tmp_path: Path) -> None:
+        """update_service() must validate extra_config like insert_service() does."""
+        async with Database(tmp_path / "test.db") as db:
+            svc = _make_service(id="upd-cfg")
+            await db.insert_service(svc)
+
+            bad = _make_service(id="upd-cfg", extra_config={"evil_key": "bad"})
+            with pytest.raises(ValueError, match="Unknown extra_config keys"):
+                await db.update_service(bad)
+
+    async def test_update_does_not_affect_other_services(self, tmp_path: Path) -> None:
+        """Updating one service must not affect other services in the DB."""
+        async with Database(tmp_path / "test.db") as db:
+            svc_a = _make_service(id="upd-a", name="A", vram_mb=1000)
+            svc_b = _make_service(id="upd-b", name="B", vram_mb=2000)
+            await db.insert_service(svc_a)
+            await db.insert_service(svc_b)
+
+            updated_a = _make_service(id="upd-a", name="A-Updated", vram_mb=5000)
+            await db.update_service(updated_a)
+
+            got_b = await db.get_service("upd-b")
+            assert got_b is not None
+            assert got_b.name == "B"
+            assert got_b.vram_mb == 2000
+
+
+# ---------------------------------------------------------------------------
 # Modes CRUD
 # ---------------------------------------------------------------------------
 
@@ -705,6 +856,39 @@ class TestDBValidation:
             )
             with pytest.raises(ValueError, match="Invalid model_id"):
                 await db.insert_model(model)
+
+    async def test_update_service_rejects_unknown_extra_config_keys(self, tmp_path: Path) -> None:
+        """update_service() should reject unknown extra_config keys."""
+        async with Database(tmp_path / "test.db") as db:
+            svc = _make_service(id="upd-validate")
+            await db.insert_service(svc)
+
+            updated = Service(
+                id="upd-validate",
+                name="Updated",
+                driver=DriverType.VLLM,
+                vram_mb=1000,
+                sleep_mode=SleepMode.NONE,
+                extra_config={"unknown_key": "bad"},
+            )
+            with pytest.raises(ValueError, match="Unknown extra_config keys"):
+                await db.update_service(updated)
+
+    async def test_update_service_rejects_negative_vram(self, tmp_path: Path) -> None:
+        """update_service() should reject negative VRAM."""
+        async with Database(tmp_path / "test.db") as db:
+            svc = _make_service(id="upd-neg-vram")
+            await db.insert_service(svc)
+
+            updated = Service(
+                id="upd-neg-vram",
+                name="Updated",
+                driver=DriverType.VLLM,
+                vram_mb=-1,
+                sleep_mode=SleepMode.NONE,
+            )
+            with pytest.raises(ValueError, match="non-negative"):
+                await db.update_service(updated)
 
     async def test_get_model_accepts_valid_id(self, tmp_path: Path) -> None:
         """Valid model IDs should work."""

@@ -230,7 +230,7 @@ class TestGpuMemUtil:
     """vllm services should have gpu_mem_util in unit_vars."""
 
     EXPECTED_GPU_MEM_UTIL: dict[str, float] = {
-        "vllm-embedding": 0.22,
+        "vllm-embedding": 0.30,
         "vllm-embedding-code": 0.085,
         "vllm-hyde": 0.22,
         "vllm-reranker": 0.25,

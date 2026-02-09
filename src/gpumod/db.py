@@ -259,6 +259,63 @@ class Database:
             service.vram_mb,
         )
 
+    async def update_service(self, service: Service) -> bool:
+        """Update an existing service in the database.
+
+        All columns except ``id`` and ``created_at`` are overwritten.
+
+        Returns
+        -------
+        bool
+            True if a row was updated, False if no service with that ID exists.
+        """
+        validate_vram_mb(service.vram_mb)
+        validate_extra_config(service.extra_config)
+        conn = self._ensure_conn()
+        cursor = await conn.execute(
+            """
+            UPDATE services SET
+                name = ?,
+                driver = ?,
+                port = ?,
+                vram_mb = ?,
+                sleep_mode = ?,
+                health_endpoint = ?,
+                model_id = ?,
+                unit_name = ?,
+                depends_on = ?,
+                startup_timeout = ?,
+                extra_config = ?
+            WHERE id = ?
+            """,
+            (
+                service.name,
+                service.driver.value,
+                service.port,
+                service.vram_mb,
+                service.sleep_mode.value,
+                service.health_endpoint,
+                service.model_id,
+                service.unit_name,
+                json.dumps(service.depends_on),
+                service.startup_timeout,
+                json.dumps(service.extra_config),
+                service.id,
+            ),
+        )
+        await conn.commit()
+        updated = cursor.rowcount > 0
+        if updated:
+            logger.debug(
+                "Updated service %r (driver=%s, vram=%dMB)",
+                service.id,
+                service.driver.value,
+                service.vram_mb,
+            )
+        else:
+            logger.debug("No service found with id=%r to update", service.id)
+        return updated
+
     async def delete_service(self, service_id: str) -> None:
         """Delete a service by ID."""
         conn = self._ensure_conn()

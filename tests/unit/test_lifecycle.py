@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -306,8 +306,9 @@ class TestWaitForHealthyImmediate:
 class TestWaitForHealthyRetry:
     """Test _wait_for_healthy retries on initial failure, succeeds on 3rd try."""
 
+    @patch("gpumod.services.lifecycle.get_unit_state", return_value="activating")
     async def test_retries_and_succeeds_on_third_attempt(
-        self, lifecycle: LifecycleManager, mock_driver: AsyncMock
+        self, mock_state: AsyncMock, lifecycle: LifecycleManager, mock_driver: AsyncMock,
     ) -> None:
         """_wait_for_healthy should retry and succeed on the third health check."""
         mock_driver.health_check.side_effect = [False, False, True]
@@ -325,8 +326,11 @@ class TestWaitForHealthyRetry:
 class TestWaitForHealthyTimeout:
     """Test _wait_for_healthy raises LifecycleError on timeout."""
 
+    @patch("gpumod.services.lifecycle.journal_logs", return_value=[])
+    @patch("gpumod.services.lifecycle.get_unit_state", return_value="activating")
     async def test_raises_lifecycle_error_on_timeout(
-        self, lifecycle: LifecycleManager, mock_driver: AsyncMock
+        self, mock_state: AsyncMock, mock_journal: AsyncMock,
+        lifecycle: LifecycleManager, mock_driver: AsyncMock,
     ) -> None:
         """_wait_for_healthy should raise LifecycleError when health never passes."""
         mock_driver.health_check.return_value = False
@@ -442,3 +446,169 @@ class TestStartWakesRouterService:
 
         driver.start.assert_not_called()
         driver.wake.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Test: _wait_for_healthy — early exit on process death (AC2)
+# ---------------------------------------------------------------------------
+
+
+class TestWaitForHealthyEarlyExit:
+    """Test that _wait_for_healthy exits immediately when the process dies."""
+
+    @patch("gpumod.services.lifecycle.get_unit_state", return_value="failed")
+    async def test_exits_immediately_on_failed_state(
+        self, mock_state: AsyncMock,
+    ) -> None:
+        """If systemd reports 'failed', stop polling immediately."""
+        registry = _build_mock_registry()
+        driver = _build_mock_driver(healthy=False, state=ServiceState.STOPPED)
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+
+        with pytest.raises(LifecycleError, match="process exited"):
+            await lm._wait_for_healthy(
+                SVC_A, driver, timeout_s=60.0, poll_interval=0.01,
+            )
+
+        # Should NOT have polled for the full timeout — only a few attempts
+        assert driver.health_check.call_count < 10
+
+    @patch("gpumod.services.lifecycle.get_unit_state", return_value="inactive")
+    async def test_exits_immediately_on_inactive_state(
+        self, mock_state: AsyncMock,
+    ) -> None:
+        """If systemd reports 'inactive', stop polling immediately."""
+        registry = _build_mock_registry()
+        driver = _build_mock_driver(healthy=False, state=ServiceState.STOPPED)
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+
+        with pytest.raises(LifecycleError, match="process exited"):
+            await lm._wait_for_healthy(
+                SVC_A, driver, timeout_s=60.0, poll_interval=0.01,
+            )
+
+    @patch("gpumod.services.lifecycle.get_unit_state", return_value="activating")
+    async def test_keeps_polling_while_activating(
+        self, mock_state: AsyncMock,
+    ) -> None:
+        """If systemd reports 'activating', keep polling (process still starting)."""
+        registry = _build_mock_registry()
+        # Health check fails twice, then succeeds
+        driver = _build_mock_driver(healthy=False, state=ServiceState.STOPPED)
+        driver.health_check.side_effect = [False, False, True]
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+
+        # Should succeed on 3rd health check, not raise
+        await lm._wait_for_healthy(
+            SVC_A, driver, timeout_s=10.0, poll_interval=0.01,
+        )
+
+        assert driver.health_check.call_count == 3
+
+
+# ---------------------------------------------------------------------------
+# Test: _wait_for_healthy — journal tail included in error (AC3)
+# ---------------------------------------------------------------------------
+
+
+class TestWaitForHealthyJournalInError:
+    """Test that LifecycleError includes journal log tail on failure."""
+
+    @patch("gpumod.services.lifecycle.journal_logs")
+    @patch("gpumod.services.lifecycle.get_unit_state", return_value="failed")
+    async def test_error_contains_journal_lines_on_process_death(
+        self, mock_state: AsyncMock, mock_journal: AsyncMock,
+    ) -> None:
+        """When process dies, LifecycleError.reason includes journal output."""
+        mock_journal.return_value = [
+            "AttributeError: 'MistralTokenizer' has no attribute 'all_special_ids'",
+            "Main process exited, code=exited, status=1/FAILURE",
+        ]
+
+        registry = _build_mock_registry()
+        driver = _build_mock_driver(healthy=False, state=ServiceState.STOPPED)
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+
+        with pytest.raises(LifecycleError) as exc_info:
+            await lm._wait_for_healthy(
+                SVC_A, driver, timeout_s=60.0, poll_interval=0.01,
+            )
+
+        reason = exc_info.value.reason
+        assert "MistralTokenizer" in reason
+        assert "FAILURE" in reason
+
+    @patch("gpumod.services.lifecycle.journal_logs")
+    @patch("gpumod.services.lifecycle.get_unit_state", return_value="activating")
+    async def test_error_contains_journal_lines_on_timeout(
+        self, mock_state: AsyncMock, mock_journal: AsyncMock,
+    ) -> None:
+        """When health check times out, LifecycleError.reason includes journal output."""
+        mock_journal.return_value = [
+            "No available memory for the cache blocks",
+        ]
+
+        registry = _build_mock_registry()
+        driver = _build_mock_driver(healthy=False, state=ServiceState.STOPPED)
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+
+        with pytest.raises(LifecycleError) as exc_info:
+            await lm._wait_for_healthy(
+                SVC_A, driver, timeout_s=0.05, poll_interval=0.01,
+            )
+
+        assert "No available memory" in exc_info.value.reason
+
+    @patch("gpumod.services.lifecycle.journal_logs")
+    @patch("gpumod.services.lifecycle.get_unit_state", return_value="failed")
+    async def test_error_graceful_when_journal_empty(
+        self, mock_state: AsyncMock, mock_journal: AsyncMock,
+    ) -> None:
+        """When journal returns no lines, error still works cleanly."""
+        mock_journal.return_value = []
+
+        registry = _build_mock_registry()
+        driver = _build_mock_driver(healthy=False, state=ServiceState.STOPPED)
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+
+        with pytest.raises(LifecycleError) as exc_info:
+            await lm._wait_for_healthy(
+                SVC_A, driver, timeout_s=60.0, poll_interval=0.01,
+            )
+
+        # Should still have a valid reason, just without journal content
+        assert exc_info.value.reason
+        assert "process exited" in exc_info.value.reason
+
+    @patch("gpumod.services.lifecycle.journal_logs")
+    @patch("gpumod.services.lifecycle.get_unit_state", return_value="failed")
+    async def test_journal_called_with_unit_name(
+        self, mock_state: AsyncMock, mock_journal: AsyncMock,
+    ) -> None:
+        """journal_logs() is called with the service's unit_name."""
+        mock_journal.return_value = ["some log"]
+
+        registry = _build_mock_registry()
+        driver = _build_mock_driver(healthy=False, state=ServiceState.STOPPED)
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+
+        with pytest.raises(LifecycleError):
+            await lm._wait_for_healthy(
+                SVC_A, driver, timeout_s=60.0, poll_interval=0.01,
+            )
+
+        mock_journal.assert_called_once_with("svc-a.service")
