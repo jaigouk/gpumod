@@ -53,7 +53,7 @@ EXPECTED_SERVICES: dict[str, dict[str, object]] = {
         "sleep_mode": SleepMode.L1,
         "model_id": "Qwen/Qwen3-VL-2B-Instruct",
     },
-    "glm-code": {
+    "qwen3-coder": {
         "driver": DriverType.LLAMACPP,
         "port": 7070,
         "vram_mb": 20000,
@@ -92,7 +92,7 @@ class TestMigrationPresetsExist:
     EXPECTED_FILES = [
         "embedding/vllm-embedding.yaml",
         "embedding/vllm-embedding-code.yaml",
-        "llm/glm-code.yaml",
+        "llm/qwen3-coder.yaml",
         "llm/vllm-chat.yaml",
         "llm/vllm-hyde.yaml",
         "llm/vllm-reranker.yaml",

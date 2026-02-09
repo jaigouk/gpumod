@@ -70,7 +70,7 @@ class TestUnitNameValidation:
         "good_name",
         [
             "vllm-embedding.service",
-            "glm-code.service",
+            "qwen3-coder.service",
             "qwen3-asr@gpu0.service",
             "some_unit.service",
             "unit:scope.service",

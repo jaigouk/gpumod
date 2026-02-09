@@ -7,6 +7,12 @@ hallucination detection on factual prompts.
 Usage:
     uv run python scripts/benchmark.py --model nemotron-3-nano \
         --output docs/benchmarks/20260207_nemotron_devstral/
+
+    # With SelfCheckGPT consistency checking (runs each factual prompt 5x)
+    uv run python scripts/benchmark.py --model nemotron-3-nano \
+        --consistency-check --consistency-runs 5 \
+        --output docs/benchmarks/20260207_nemotron_devstral/
+
     uv run python scripts/benchmark.py --lifecycle \
         --models nemotron-3-nano,devstral-small-2 \
         --output docs/benchmarks/20260207_nemotron_devstral/
@@ -26,6 +32,8 @@ from pathlib import Path
 
 import httpx
 
+from gpumod.benchmark.consistency import compute_consistency
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -40,7 +48,8 @@ VRAM_POLL_INTERVAL_S = 0.5
 MODEL_SHORT_NAMES: dict[str, str] = {
     "nemotron-3-nano": "nemotron",
     "devstral-small-2": "devstral",
-    "glm-4-flash": "glm",
+    "qwen3-coder": "qwen3",
+    "qwen3-coder-next": "qwen3-next",
 }
 
 
@@ -102,6 +111,7 @@ class PromptResult:
     prompt_tokens_per_sec: float
     vram_peak_mb: float
     hallucination: dict | None = None
+    consistency: dict | None = None  # SelfCheckGPT multi-run consistency
     quality_score: float | None = None  # filled by evaluator
 
 
@@ -385,6 +395,201 @@ PROMPTS: list[BenchmarkPrompt] = [
         ),
         max_tokens=256,
     ),
+    # ── Hard Code Generation (LiveCodeBench/BigCodeBench style) ──────────
+    BenchmarkPrompt(
+        category="code_hard",
+        name="lru_cache",
+        system_prompt="You are a senior Python developer. Write production-quality code.",
+        user_prompt=(
+            "Implement an LRU (Least Recently Used) cache class with O(1) operations:\n"
+            "- `__init__(self, capacity: int)` - Initialize with max capacity\n"
+            "- `get(self, key: str) -> int | None` - Return value or None\n"
+            "- `put(self, key: str, value: int) -> None` - Insert/update\n"
+            "When capacity is exceeded, evict the least recently used item.\n"
+            "Include type hints, docstrings, and handle edge cases."
+        ),
+        max_tokens=1024,
+    ),
+    BenchmarkPrompt(
+        category="code_hard",
+        name="async_refactor",
+        system_prompt="You are a senior Python developer specializing in async code.",
+        user_prompt=(
+            "Refactor this callback-based code to use async/await:\n\n"
+            "```python\n"
+            "def fetch_data(url, callback):\n"
+            "    def on_response(response):\n"
+            "        def on_json(data):\n"
+            "            def on_process(result):\n"
+            "                callback(result)\n"
+            "            process_data(data, on_process)\n"
+            "        parse_json(response, on_json)\n"
+            "    http_get(url, on_response)\n"
+            "```\n"
+            "Assume http_get, parse_json, and process_data have async equivalents.\n"
+            "Show the complete refactored code with proper error handling."
+        ),
+        max_tokens=1024,
+    ),
+    BenchmarkPrompt(
+        category="code_hard",
+        name="thread_safe_queue",
+        system_prompt="You are a senior Python developer with concurrency expertise.",
+        user_prompt=(
+            "Implement a thread-safe bounded queue with timeout support:\n"
+            "- `__init__(self, maxsize: int)` - Initialize with max capacity\n"
+            "- `put(self, item: T, timeout: float | None = None) -> bool`\n"
+            "- `get(self, timeout: float | None = None) -> T | None`\n"
+            "- `qsize(self) -> int` - Current size\n"
+            "Use threading primitives (Lock, Condition). Handle timeouts properly.\n"
+            "Include type hints and docstrings."
+        ),
+        max_tokens=1024,
+    ),
+    BenchmarkPrompt(
+        category="code_hard",
+        name="sql_injection_detection",
+        system_prompt="You are a security engineer reviewing code.",
+        user_prompt=(
+            "Find ALL security vulnerabilities in this Flask code:\n\n"
+            "```python\n"
+            "from flask import Flask, request\n"
+            "import sqlite3\n"
+            "import os\n"
+            "\n"
+            "app = Flask(__name__)\n"
+            "\n"
+            "@app.route('/user/<user_id>')\n"
+            "def get_user(user_id):\n"
+            "    conn = sqlite3.connect('users.db')\n"
+            "    cursor = conn.execute(f\"SELECT * FROM users WHERE id = {user_id}\")\n"
+            "    return str(cursor.fetchone())\n"
+            "\n"
+            "@app.route('/run')\n"
+            "def run_command():\n"
+            "    cmd = request.args.get('cmd', 'ls')\n"
+            "    return os.popen(cmd).read()\n"
+            "\n"
+            "@app.route('/file')\n"
+            "def read_file():\n"
+            "    path = request.args.get('path')\n"
+            "    return open(path).read()\n"
+            "```\n"
+            "List each vulnerability, explain the risk, and provide the fixed code."
+        ),
+        max_tokens=1536,
+    ),
+    BenchmarkPrompt(
+        category="code_hard",
+        name="regex_parser",
+        system_prompt="You are a senior Python developer.",
+        user_prompt=(
+            "Write a function that parses a simplified regex pattern and matches it:\n"
+            "- `.` matches any single character\n"
+            "- `*` matches zero or more of the previous character\n"
+            "- `?` matches zero or one of the previous character\n"
+            "- `^` matches start, `$` matches end\n"
+            "- Literal characters match themselves\n\n"
+            "```python\n"
+            "def regex_match(pattern: str, text: str) -> bool:\n"
+            "    ...\n"
+            "```\n"
+            "Include type hints, docstring, and handle edge cases.\n"
+            "Do NOT use the `re` module - implement from scratch."
+        ),
+        max_tokens=1536,
+    ),
+    # ── German Language Understanding (MGSM-style) ───────────────────────
+    BenchmarkPrompt(
+        category="german",
+        name="german_history",
+        system_prompt="Du bist ein hilfreicher Assistent. Antworte auf Deutsch.",
+        user_prompt=(
+            "Erkläre die Geschichte der Berliner Mauer: "
+            "Wann wurde sie gebaut? Warum? Wann fiel sie? "
+            "Antworte in genau drei Sätzen."
+        ),
+        max_tokens=256,
+        ground_truth=[
+            VerifiableFact("Year built: 1961", required=["1961"], forbidden=[]),
+            VerifiableFact("Year fell: 1989", required=["1989"], forbidden=[]),
+        ],
+    ),
+    BenchmarkPrompt(
+        category="german",
+        name="german_math",
+        system_prompt="Du bist ein Mathematiklehrer. Löse Aufgaben Schritt für Schritt.",
+        user_prompt=(
+            "Anna hat 24 Äpfel. Sie gibt ein Drittel an ihren Bruder Max. "
+            "Dann kauft sie 12 weitere Äpfel. Wie viele Äpfel hat Anna jetzt? "
+            "Zeige deine Rechnung."
+        ),
+        max_tokens=512,
+    ),
+    BenchmarkPrompt(
+        category="german",
+        name="german_to_english",
+        system_prompt="You are a professional translator.",
+        user_prompt=(
+            "Translate this German technical text to English:\n\n"
+            "\"Die künstliche Intelligenz hat in den letzten Jahren enorme "
+            "Fortschritte gemacht. Besonders im Bereich der Sprachverarbeitung "
+            "zeigen große Sprachmodelle beeindruckende Fähigkeiten. Diese Modelle "
+            "können Texte verstehen, generieren und sogar Code schreiben. Die "
+            "Herausforderung besteht darin, diese Systeme sicher und verantwortungsvoll "
+            "einzusetzen.\"\n\n"
+            "Preserve the technical accuracy and formal tone."
+        ),
+        max_tokens=384,
+    ),
+    # ── Grammar Evaluation (CoLA-style) ──────────────────────────────────
+    BenchmarkPrompt(
+        category="grammar",
+        name="grammar_correction",
+        system_prompt="You are a grammar expert. Fix errors while preserving meaning.",
+        user_prompt=(
+            "Correct the grammatical errors in these sentences:\n\n"
+            "1. The team are working on there project since yesterday.\n"
+            "2. Neither the manager nor the employees was informed.\n"
+            "3. She don't know whom to ask for help.\n"
+            "4. The data shows that less people attended then expected.\n"
+            "5. Him and me went to the store for buying groceries.\n\n"
+            "For each sentence, show the corrected version and briefly explain the fix."
+        ),
+        max_tokens=1024,
+    ),
+    BenchmarkPrompt(
+        category="grammar",
+        name="grammaticality_judgment",
+        system_prompt="You are a linguist. Classify sentences as grammatical or not.",
+        user_prompt=(
+            "For each sentence, answer 'GRAMMATICAL' or 'UNGRAMMATICAL':\n\n"
+            "1. The cat sat on the mat.\n"
+            "2. Colorless green ideas sleep furiously.\n"
+            "3. The child seems sleeping.\n"
+            "4. Who did you see?\n"
+            "5. The more I think, the less I understand.\n"
+            "6. John tried leave early.\n"
+            "7. She recommended that he be promoted.\n"
+            "8. The book what I read was interesting.\n\n"
+            "Format: NUMBER. JUDGMENT - brief reason"
+        ),
+        max_tokens=768,
+    ),
+    BenchmarkPrompt(
+        category="grammar",
+        name="style_improvement",
+        system_prompt="You are an editor improving text clarity and correctness.",
+        user_prompt=(
+            "Rewrite this paragraph for clarity, fixing grammar and improving style:\n\n"
+            "\"Me and my colleague we was working on the report yesterday and we "
+            "realized that the data which we collected it was incomplete. We tried "
+            "contacting the department whom was responsible but they didn't answered. "
+            "The deadline is tomorrow so we will have to make due with what we got.\"\n\n"
+            "Show the improved version, then list the main issues you fixed."
+        ),
+        max_tokens=512,
+    ),
 ]
 
 
@@ -535,10 +740,37 @@ async def unload_all(client: httpx.AsyncClient) -> None:
 # ---------------------------------------------------------------------------
 
 
+async def simple_completion(
+    client: httpx.AsyncClient,
+    model_id: str,
+    prompt: BenchmarkPrompt,
+) -> str:
+    """Run a simple completion without metrics (for consistency checking)."""
+    resp = await client.post(
+        f"{ROUTER_URL}/v1/chat/completions",
+        json={
+            "model": model_id,
+            "messages": [
+                {"role": "system", "content": prompt.system_prompt},
+                {"role": "user", "content": prompt.user_prompt},
+            ],
+            "temperature": TEMPERATURE,
+            "max_tokens": prompt.max_tokens,
+            "stream": False,
+        },
+        timeout=TIMEOUT_S,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return data["choices"][0]["message"]["content"]
+
+
 async def run_prompt(
     client: httpx.AsyncClient,
     model_id: str,
     prompt: BenchmarkPrompt,
+    *,
+    consistency_runs: int = 0,
 ) -> PromptResult:
     """Run a single prompt with streaming, measure metrics."""
     print(f"  [{prompt.category}] {prompt.name} ... ", end="", flush=True)
@@ -636,6 +868,25 @@ async def run_prompt(
             "details": h.details,
         }
 
+    # SelfCheckGPT consistency check for factual prompts
+    consistency_dict = None
+    if consistency_runs > 1 and prompt.ground_truth:
+        print(f" consistency({consistency_runs}) ... ", end="", flush=True)
+        # Collect additional responses (we already have response_text as run 1)
+        extra_responses = []
+        for _ in range(consistency_runs - 1):
+            extra = await simple_completion(client, model_id, prompt)
+            extra_responses.append(extra)
+
+        all_responses = [response_text, *extra_responses]
+        cr = compute_consistency(all_responses, threshold=0.5)
+        consistency_dict = {
+            "runs": cr.runs,
+            "consistency_score": cr.consistency_score,
+            "inconsistent_facts_count": len(cr.inconsistent_facts),
+            "inconsistent_facts": cr.inconsistent_facts[:5],  # Limit to 5 for readability
+        }
+
     print(
         f"done ({total_ms:.0f}ms, TTFT {ttft_ms:.0f}ms, "
         f"{gen_tok_s:.1f} tok/s, VRAM {vram_peak:.0f}MB)"
@@ -654,6 +905,7 @@ async def run_prompt(
         prompt_tokens_per_sec=round(prompt_tok_s, 2),
         vram_peak_mb=round(vram_peak, 1),
         hallucination=hallucination_dict,
+        consistency=consistency_dict,
     )
 
 
@@ -662,8 +914,19 @@ async def run_prompt(
 # ---------------------------------------------------------------------------
 
 
-async def run_model_benchmark(model_id: str, output_dir: Path) -> Path:
-    """Run all prompts for a single model, save results JSON."""
+async def run_model_benchmark(
+    model_id: str,
+    output_dir: Path,
+    *,
+    consistency_runs: int = 0,
+) -> Path:
+    """Run all prompts for a single model, save results JSON.
+
+    Args:
+        model_id: The model ID to benchmark.
+        output_dir: Directory to save results.
+        consistency_runs: If > 1, run SelfCheckGPT consistency checks on factual prompts.
+    """
     today = datetime.now(tz=UTC).strftime("%Y%m%d")
     sname = short_name(model_id)
     output_path = output_dir / f"{today}_{sname}.json"
@@ -673,6 +936,8 @@ async def run_model_benchmark(model_id: str, output_dir: Path) -> Path:
         print(f"\n{'=' * 60}")
         print(f"Benchmark: {model_id}")
         print(f"Temperature: {TEMPERATURE}")
+        if consistency_runs > 1:
+            print(f"Consistency Runs: {consistency_runs}")
         print(f"{'=' * 60}")
 
         print("Unloading all models ...")
@@ -698,7 +963,9 @@ async def run_model_benchmark(model_id: str, output_dir: Path) -> Path:
         # Run all prompts
         results: list[dict] = []
         for prompt in PROMPTS:
-            result = await run_prompt(client, model_id, prompt)
+            result = await run_prompt(
+                client, model_id, prompt, consistency_runs=consistency_runs
+            )
             results.append(asdict(result))
 
         # Compute summary
@@ -733,6 +1000,7 @@ def _compute_summary(results: list[dict], load_ms: float) -> dict:
     gen_speeds = []
     total_hallucinated = 0
     total_facts_checked = 0
+    consistency_scores = []
 
     for r in results:
         cat = r["category"]
@@ -746,7 +1014,10 @@ def _compute_summary(results: list[dict], load_ms: float) -> dict:
             total_hallucinated += r["hallucination"]["facts_hallucinated"]
             total_facts_checked += r["hallucination"]["facts_checked"]
 
-    return {
+        if r.get("consistency"):
+            consistency_scores.append(r["consistency"]["consistency_score"])
+
+    summary = {
         "load_ms": round(load_ms, 2),
         "avg_ttft_ms": round(sum(ttfts) / len(ttfts), 2) if ttfts else 0,
         "avg_gen_tokens_per_sec": (
@@ -758,6 +1029,15 @@ def _compute_summary(results: list[dict], load_ms: float) -> dict:
             round(total_hallucinated / total_facts_checked, 4) if total_facts_checked > 0 else 0.0
         ),
     }
+
+    # Add consistency metrics if any consistency checks were run
+    if consistency_scores:
+        summary["avg_consistency_score"] = round(
+            sum(consistency_scores) / len(consistency_scores), 4
+        )
+        summary["consistency_prompts_checked"] = len(consistency_scores)
+
+    return summary
 
 
 # ---------------------------------------------------------------------------
@@ -900,9 +1180,21 @@ def main() -> None:
         default="docs/benchmarks/",
         help="Output directory for results",
     )
+    parser.add_argument(
+        "--consistency-check",
+        action="store_true",
+        help="Enable SelfCheckGPT consistency checking for factual prompts",
+    )
+    parser.add_argument(
+        "--consistency-runs",
+        type=int,
+        default=5,
+        help="Number of runs for consistency checking (default: 5)",
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output)
+    consistency_runs = args.consistency_runs if args.consistency_check else 0
 
     if args.lifecycle:
         if not args.models:
@@ -910,7 +1202,11 @@ def main() -> None:
         model_ids = [m.strip() for m in args.models.split(",")]
         asyncio.run(run_lifecycle_test(model_ids, output_dir))
     elif args.model:
-        asyncio.run(run_model_benchmark(args.model, output_dir))
+        asyncio.run(
+            run_model_benchmark(
+                args.model, output_dir, consistency_runs=consistency_runs
+            )
+        )
     else:
         parser.error("Specify --model or --lifecycle --models")
 

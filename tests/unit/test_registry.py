@@ -68,8 +68,8 @@ async def populated_db(tmp_path: Path) -> Database:
         vram_mb=2500,
     )
     llamacpp_svc = _make_service(
-        id="glm-code",
-        name="GLM Code",
+        id="qwen3-coder",
+        name="Qwen3 Coder",
         driver=DriverType.LLAMACPP,
         port=7070,
         vram_mb=19000,
@@ -109,7 +109,7 @@ class TestListAll:
         services = await registry.list_all()
         assert len(services) == 3
         ids = {s.id for s in services}
-        assert ids == {"vllm-embed", "glm-code", "qwen-asr"}
+        assert ids == {"vllm-embed", "qwen3-coder", "qwen-asr"}
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +142,7 @@ class TestListRunning:
 
         assert len(running) == 2
         ids = {s.id for s in running}
-        assert ids == {"vllm-embed", "glm-code"}
+        assert ids == {"vllm-embed", "qwen3-coder"}
 
     async def test_list_running_empty_when_all_stopped(self, registry: ServiceRegistry) -> None:
         """list_running() should return empty list when all services are stopped."""

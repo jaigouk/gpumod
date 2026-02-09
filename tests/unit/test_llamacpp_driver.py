@@ -18,12 +18,12 @@ from gpumod.services.drivers.llamacpp import LlamaCppDriver
 def make_llamacpp_service() -> Service:
     """Create a Service configured for llama.cpp testing (single-model mode)."""
     return Service(
-        id="glm-code",
-        name="GLM Code",
+        id="qwen3-coder",
+        name="Qwen3 Coder",
         driver=DriverType.LLAMACPP,
         vram_mb=19100,
         port=7070,
-        unit_name="glm-code.service",
+        unit_name="qwen3-coder.service",
         extra_config={
             "model_name": "devstral",
         },
@@ -138,7 +138,7 @@ class TestLlamaCppStart:
         with patch("gpumod.services.drivers.llamacpp.systemd") as mock_systemd:
             mock_systemd.start = AsyncMock()
             await driver.start(svc)
-            mock_systemd.start.assert_awaited_once_with("glm-code.service")
+            mock_systemd.start.assert_awaited_once_with("qwen3-coder.service")
 
     async def test_start_raises_value_error_if_no_unit_name(self) -> None:
         driver = LlamaCppDriver()
@@ -159,7 +159,7 @@ class TestLlamaCppStop:
         with patch("gpumod.services.drivers.llamacpp.systemd") as mock_systemd:
             mock_systemd.stop = AsyncMock()
             await driver.stop(svc)
-            mock_systemd.stop.assert_awaited_once_with("glm-code.service")
+            mock_systemd.stop.assert_awaited_once_with("qwen3-coder.service")
 
 
 # ---------------------------------------------------------------------------
