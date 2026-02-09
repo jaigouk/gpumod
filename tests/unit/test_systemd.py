@@ -10,10 +10,11 @@ from gpumod.services.systemd import (
     ALLOWED_COMMANDS,
     SystemctlResult,
     SystemdError,
-    _validate_command,
     _validate_unit_name,
+    _validate_command,
     get_unit_state,
     is_active,
+    journal_logs,
     restart,
     start,
     stop,
@@ -291,3 +292,130 @@ class TestNoSudoInSource:
                 f"Line {i} references 'sudo' — all systemctl calls must use "
                 f"'systemctl --user', never 'sudo': {stripped!r}"
             )
+
+
+# ---------------------------------------------------------------------------
+# journal_logs()
+# ---------------------------------------------------------------------------
+
+
+class TestJournalLogs:
+    """Tests for journal_logs() — fetch recent journal entries for a unit."""
+
+    @patch("gpumod.services.systemd.asyncio.create_subprocess_exec")
+    async def test_returns_log_lines(self, mock_exec: MagicMock) -> None:
+        """journal_logs() returns a list of log line strings."""
+        log_output = "line one\nline two\nline three\n"
+        mock_exec.return_value = _make_process_mock(stdout=log_output, returncode=0)
+
+        result = await journal_logs("vllm-chat.service")
+
+        assert result == ["line one", "line two", "line three"]
+
+    @patch("gpumod.services.systemd.asyncio.create_subprocess_exec")
+    async def test_calls_journalctl_with_user_flag(self, mock_exec: MagicMock) -> None:
+        """journal_logs() must call journalctl --user -u <unit>."""
+        mock_exec.return_value = _make_process_mock(stdout="", returncode=0)
+
+        await journal_logs("test.service")
+
+        args = mock_exec.call_args[0]
+        assert args[0] == "journalctl"
+        assert "--user" in args
+        assert "-u" in args
+        assert "test.service" in args
+
+    @patch("gpumod.services.systemd.asyncio.create_subprocess_exec")
+    async def test_default_lines_is_20(self, mock_exec: MagicMock) -> None:
+        """journal_logs() defaults to 20 lines."""
+        mock_exec.return_value = _make_process_mock(stdout="", returncode=0)
+
+        await journal_logs("test.service")
+
+        args = mock_exec.call_args[0]
+        n_idx = list(args).index("-n")
+        assert args[n_idx + 1] == "20"
+
+    @patch("gpumod.services.systemd.asyncio.create_subprocess_exec")
+    async def test_custom_lines_count(self, mock_exec: MagicMock) -> None:
+        """journal_logs() passes custom line count."""
+        mock_exec.return_value = _make_process_mock(stdout="", returncode=0)
+
+        await journal_logs("test.service", lines=50)
+
+        args = mock_exec.call_args[0]
+        n_idx = list(args).index("-n")
+        assert args[n_idx + 1] == "50"
+
+    @patch("gpumod.services.systemd.asyncio.create_subprocess_exec")
+    async def test_lines_clamped_to_min_1(self, mock_exec: MagicMock) -> None:
+        """journal_logs() clamps lines to minimum of 1."""
+        mock_exec.return_value = _make_process_mock(stdout="", returncode=0)
+
+        await journal_logs("test.service", lines=0)
+
+        args = mock_exec.call_args[0]
+        n_idx = list(args).index("-n")
+        assert args[n_idx + 1] == "1"
+
+    @patch("gpumod.services.systemd.asyncio.create_subprocess_exec")
+    async def test_lines_clamped_to_max_200(self, mock_exec: MagicMock) -> None:
+        """journal_logs() clamps lines to maximum of 200."""
+        mock_exec.return_value = _make_process_mock(stdout="", returncode=0)
+
+        await journal_logs("test.service", lines=999)
+
+        args = mock_exec.call_args[0]
+        n_idx = list(args).index("-n")
+        assert args[n_idx + 1] == "200"
+
+    @patch("gpumod.services.systemd.asyncio.create_subprocess_exec")
+    async def test_returns_empty_list_on_subprocess_error(
+        self, mock_exec: MagicMock,
+    ) -> None:
+        """journal_logs() returns [] on subprocess failure, never raises."""
+        mock_exec.side_effect = OSError("command not found")
+
+        result = await journal_logs("test.service")
+
+        assert result == []
+
+    @patch("gpumod.services.systemd.asyncio.create_subprocess_exec")
+    async def test_returns_empty_list_on_nonzero_exit(
+        self, mock_exec: MagicMock,
+    ) -> None:
+        """journal_logs() returns [] when journalctl exits non-zero."""
+        mock_exec.return_value = _make_process_mock(
+            stdout="", stderr="No journal files", returncode=1,
+        )
+
+        result = await journal_logs("test.service")
+
+        assert result == []
+
+    async def test_rejects_invalid_unit_name(self) -> None:
+        """journal_logs() returns [] for invalid unit names (no injection)."""
+        result = await journal_logs("foo;rm -rf /")
+
+        assert result == []
+
+    @patch("gpumod.services.systemd.asyncio.create_subprocess_exec")
+    async def test_strips_trailing_empty_lines(self, mock_exec: MagicMock) -> None:
+        """journal_logs() strips trailing empty lines from output."""
+        mock_exec.return_value = _make_process_mock(
+            stdout="line one\nline two\n\n\n", returncode=0,
+        )
+
+        result = await journal_logs("test.service")
+
+        assert result == ["line one", "line two"]
+
+    @patch("gpumod.services.systemd.asyncio.create_subprocess_exec")
+    async def test_includes_no_pager_flag(self, mock_exec: MagicMock) -> None:
+        """journal_logs() must pass --no-pager to prevent blocking."""
+        mock_exec.return_value = _make_process_mock(stdout="", returncode=0)
+
+        await journal_logs("test.service")
+
+        args = mock_exec.call_args[0]
+        assert "--no-pager" in args

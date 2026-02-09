@@ -8,12 +8,16 @@ import time
 from typing import TYPE_CHECKING
 
 from gpumod.models import ServiceState, SleepMode
+from gpumod.services.systemd import get_unit_state, journal_logs
 
 if TYPE_CHECKING:
     from gpumod.models import Service
     from gpumod.services.base import ServiceDriver
     from gpumod.services.registry import ServiceRegistry
     from gpumod.services.unit_installer import UnitFileInstaller
+
+# States that indicate the process has exited and won't recover.
+_DEAD_STATES: frozenset[str] = frozenset({"failed", "inactive", "dead"})
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +132,14 @@ class LifecycleManager:
     # Health waiting
     # ------------------------------------------------------------------
 
+    @staticmethod
+    async def _reason_with_journal(reason: str, unit_name: str) -> str:
+        """Append journal tail to a failure reason string."""
+        tail = await journal_logs(unit_name)
+        if tail:
+            reason += "\n--- journal tail ---\n" + "\n".join(tail)
+        return reason
+
     async def _wait_for_healthy(
         self,
         service: Service,
@@ -136,6 +148,10 @@ class LifecycleManager:
         poll_interval: float = 1.0,
     ) -> None:
         """Poll driver.health_check until it returns True or timeout is exceeded.
+
+        If the systemd unit dies during polling, exits immediately instead of
+        waiting for the full timeout.  On any failure, captures the last 20
+        journal lines and includes them in the :class:`LifecycleError`.
 
         Parameters
         ----------
@@ -151,14 +167,33 @@ class LifecycleManager:
         Raises
         ------
         LifecycleError
-            If the health check does not pass within the timeout.
+            If the health check does not pass within the timeout, or if the
+            process exits before becoming healthy.
         """
         start_time = time.monotonic()
+        unit_name = service.unit_name or f"{service.id}.service"
 
         while True:
             healthy = await driver.health_check(service)
             if healthy:
                 return
+
+            # Early exit: if the process is already dead, don't wait
+            state = await get_unit_state(unit_name)
+            if state in _DEAD_STATES:
+                logger.warning(
+                    "Service %r died (%s) before becoming healthy",
+                    service.id,
+                    state,
+                )
+                reason = await self._reason_with_journal(
+                    f"process exited ({state})", unit_name,
+                )
+                raise LifecycleError(
+                    service_id=service.id,
+                    operation="start",
+                    reason=reason,
+                )
 
             elapsed = time.monotonic() - start_time
             if elapsed + poll_interval > timeout_s:
@@ -167,10 +202,13 @@ class LifecycleManager:
                     service.id,
                     timeout_s,
                 )
+                reason = await self._reason_with_journal(
+                    f"health check timed out after {timeout_s}s", unit_name,
+                )
                 raise LifecycleError(
                     service_id=service.id,
                     operation="start",
-                    reason=f"health check timed out after {timeout_s}s",
+                    reason=reason,
                 )
 
             await asyncio.sleep(poll_interval)

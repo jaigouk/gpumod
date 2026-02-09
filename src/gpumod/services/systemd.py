@@ -161,6 +161,49 @@ async def get_unit_state(unit: str) -> str:
         return "unknown"
 
 
+async def journal_logs(unit: str, lines: int = 20) -> list[str]:
+    """Return recent journal entries for *unit*.  Never raises.
+
+    Parameters
+    ----------
+    unit:
+        Systemd unit name (validated against :data:`UNIT_NAME_PATTERN`).
+    lines:
+        Number of lines to retrieve (clamped to 1–200).
+
+    Returns
+    -------
+    list[str]
+        Journal lines, or ``[]`` on any error.
+    """
+    try:
+        _validate_unit_name(unit)
+    except ValueError:
+        return []
+
+    lines = max(1, min(lines, 200))
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "journalctl",
+            "--user",
+            "-u",
+            unit,
+            "-n",
+            str(lines),
+            "--no-pager",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout_bytes, _ = await proc.communicate()
+        if proc.returncode != 0:
+            return []
+        text = stdout_bytes.decode() if stdout_bytes else ""
+        return [line for line in text.splitlines() if line]
+    except Exception:
+        return []
+
+
 async def start(unit: str, *, timeout_s: float = 30.0) -> None:
     """Start a systemd unit."""
     await systemctl("start", unit, timeout_s=timeout_s)

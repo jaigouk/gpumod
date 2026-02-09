@@ -7,6 +7,7 @@ model objects. Uses ``yaml.safe_load()`` exclusively for security.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import yaml
@@ -15,6 +16,84 @@ from gpumod.models import PresetConfig, Service
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from gpumod.db import Database
+
+
+@dataclass
+class PresetSyncResult:
+    """Result of a preset sync operation."""
+
+    inserted: int
+    updated: int
+    unchanged: int
+    deleted: int
+
+
+async def sync_presets(db: Database, loader: PresetLoader) -> PresetSyncResult:
+    """Sync YAML presets into the database.
+
+    YAML files are the source of truth.  For each preset discovered by *loader*:
+    - If it doesn't exist in the DB, insert it.
+    - If it exists but fields differ, update it.
+    - If it exists and matches, skip it.
+
+    Services in the DB whose IDs match a known preset naming pattern
+    (i.e. they were previously synced from a YAML file) but no longer
+    have a corresponding YAML file are deleted.
+
+    Returns a :class:`PresetSyncResult` with counts.
+    """
+    presets = loader.discover_presets()
+    preset_ids = {p.id for p in presets}
+
+    inserted = 0
+    updated = 0
+    unchanged = 0
+    deleted = 0
+
+    for preset in presets:
+        svc = loader.to_service(preset)
+        existing = await db.get_service(svc.id)
+
+        if existing is None:
+            await db.insert_service(svc)
+            inserted += 1
+        elif _service_differs(existing, svc):
+            await db.update_service(svc)
+            updated += 1
+        else:
+            unchanged += 1
+
+    # Delete DB services that came from presets but whose YAML was removed.
+    # Only delete services whose unit_name matches the preset convention
+    # ("{id}.service") — manually created services are left alone.
+    all_services = await db.list_services()
+    for svc in all_services:
+        if svc.id not in preset_ids and svc.unit_name == f"{svc.id}.service":
+            await db.delete_service(svc.id)
+            deleted += 1
+
+    return PresetSyncResult(
+        inserted=inserted, updated=updated, unchanged=unchanged, deleted=deleted,
+    )
+
+
+def _service_differs(existing: Service, new: Service) -> bool:
+    """Return True if any mutable field differs between two services."""
+    return (
+        existing.name != new.name
+        or existing.driver != new.driver
+        or existing.port != new.port
+        or existing.vram_mb != new.vram_mb
+        or existing.sleep_mode != new.sleep_mode
+        or existing.health_endpoint != new.health_endpoint
+        or existing.model_id != new.model_id
+        or existing.unit_name != new.unit_name
+        or existing.depends_on != new.depends_on
+        or existing.startup_timeout != new.startup_timeout
+        or existing.extra_config != new.extra_config
+    )
 
 _YAML_EXTENSIONS = frozenset({".yaml", ".yml"})
 

@@ -23,6 +23,7 @@ from rich.table import Table
 from gpumod.cli_mode import mode_app
 from gpumod.cli_model import model_app
 from gpumod.cli_plan import plan_app
+from gpumod.cli_preset import preset_app
 from gpumod.cli_service import service_app
 from gpumod.cli_simulate import simulate_app
 from gpumod.cli_template import template_app
@@ -279,6 +280,7 @@ app.add_typer(service_app, name="service")
 app.add_typer(mode_app, name="mode")
 app.add_typer(template_app, name="template")
 app.add_typer(model_app, name="model")
+app.add_typer(preset_app, name="preset")
 app.add_typer(simulate_app, name="simulate")
 app.add_typer(plan_app, name="plan")
 
