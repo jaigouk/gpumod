@@ -318,7 +318,7 @@ class LifecycleManager:
         self,
         service: Service,
         driver: ServiceDriver,
-        timeout_s: float = 120.0,
+        timeout_s: float | None = None,
         poll_interval: float = 1.0,
     ) -> None:
         """Poll driver.health_check until it returns True or timeout is exceeded.
@@ -334,7 +334,8 @@ class LifecycleManager:
         driver:
             The driver to use for health checking.
         timeout_s:
-            Maximum seconds to wait for health.
+            Maximum seconds to wait for health. If None, uses the service's
+            startup_timeout field (default 120s).
         poll_interval:
             Seconds between health check polls.
 
@@ -344,6 +345,10 @@ class LifecycleManager:
             If the health check does not pass within the timeout, or if the
             process exits before becoming healthy.
         """
+        # Use service's startup_timeout if no explicit timeout provided
+        if timeout_s is None:
+            timeout_s = float(service.startup_timeout)
+
         start_time = time.monotonic()
         unit_name = service.unit_name or f"{service.id}.service"
 

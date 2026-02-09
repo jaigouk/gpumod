@@ -168,3 +168,31 @@ services before starting the new ones.
 - Health check timeout detection works
 - Journal tail provides useful diagnostic output on failure
 - Clean mode transitions don't leave orphan processes
+
+---
+
+### 2026-02-09 (session 2)
+
+#### Mode Switching QA
+
+| Step | Mode/Service | Result | Notes |
+|------|--------------|--------|-------|
+| 1 | blank | PASS | VRAM: 18 MiB |
+| 2 | code (GLM-4.7) | PASS | Load OK, chat 348ms, 151 tok/s, VRAM: 16.9 GB |
+| 3 | rag (vllm-embedding) | PASS* | Health check timeout (120s), but service works. 2048-dim embeddings in 118ms |
+| 4 | code (2nd) | PASS | Clean switch, 401ms latency, 114 tok/s, VRAM: 23 GB |
+| 5 | devstral-small-2 | FAIL | Known upstream vLLM bug: `MistralCommonTokenizer` missing `all_special_ids` |
+| 6 | blank (cleanup) | PASS | All services stopped, VRAM: 15 MiB (after killing orphan process) |
+
+#### Issues Found
+
+1. **vllm-embedding health timeout** - Known issue, vLLM pooling init takes >120s on cold start
+2. **devstral-small-2 crash** - Upstream vLLM tokenizer bug (preflight TokenizerCheck designed to catch this)
+3. **Orphan process** - vllm EngineCore from previous session wasn't cleaned up by mode switch
+
+#### Summary
+
+- Mode switching works correctly between blank/code/rag
+- GLM-4.7-Flash performs well: ~150 tok/s generation, 350-400ms latency
+- vLLM embedding works but health check timeout needs adjustment (>120s cold start)
+- devstral-small-2 blocked by upstream vLLM/Mistral tokenizer bug

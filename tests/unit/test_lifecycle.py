@@ -280,6 +280,78 @@ class TestRestart:
 
 
 # ---------------------------------------------------------------------------
+# Test: _wait_for_healthy uses service.startup_timeout
+# ---------------------------------------------------------------------------
+
+
+class TestWaitForHealthyUsesServiceTimeout:
+    """Test that _wait_for_healthy uses the service's startup_timeout field."""
+
+    @patch("gpumod.services.lifecycle.journal_logs", return_value=[])
+    @patch("gpumod.services.lifecycle.get_unit_state", return_value="activating")
+    async def test_uses_service_startup_timeout(
+        self,
+        mock_state: AsyncMock,
+        mock_journal: AsyncMock,
+    ) -> None:
+        """_wait_for_healthy should use service.startup_timeout instead of hardcoded default."""
+        # Create service with a 1-second timeout (much shorter than 120s default)
+        svc = Service(
+            id="short-timeout-svc",
+            name="Short Timeout Service",
+            driver=DriverType.VLLM,
+            port=8000,
+            vram_mb=2500,
+            startup_timeout=1,  # 1 second - much shorter than 120s default
+            model_id="org/model",
+            unit_name="short-timeout-svc.service",
+        )
+        registry = _build_mock_registry(services={"short-timeout-svc": svc})
+        driver = _build_mock_driver(healthy=False, state=ServiceState.STOPPED)
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+
+        # Should timeout after ~1s based on service's startup_timeout, not 120s default
+        # Using poll_interval=0.1s, we expect ~10 health checks max before timeout
+        with pytest.raises(LifecycleError, match="timed out"):
+            await lm._wait_for_healthy(svc, driver, poll_interval=0.1)
+
+        # Verify it didn't wait the full 120s default - should be ~10 calls for 1s timeout
+        assert driver.health_check.call_count <= 15
+
+    @patch("gpumod.services.lifecycle.get_unit_state", return_value="activating")
+    async def test_long_service_timeout_allows_more_retries(
+        self,
+        mock_state: AsyncMock,
+    ) -> None:
+        """Services with longer startup_timeout should wait longer."""
+        # Create service with a 300s timeout (like vLLM pooling models)
+        svc = Service(
+            id="vllm-embedding",
+            name="vLLM Embedding",
+            driver=DriverType.VLLM,
+            port=8001,
+            vram_mb=4000,
+            startup_timeout=300,  # 5 minutes - like vLLM pooling
+            model_id="BAAI/bge-m3",
+            unit_name="vllm-embedding.service",
+        )
+        registry = _build_mock_registry(services={"vllm-embedding": svc})
+        # Health check fails 5 times, then succeeds
+        driver = _build_mock_driver(healthy=False, state=ServiceState.STOPPED)
+        driver.health_check.side_effect = [False, False, False, False, False, True]
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+
+        # Should succeed after 6 health checks (doesn't timeout at 120s)
+        await lm._wait_for_healthy(svc, driver, poll_interval=0.01)
+
+        assert driver.health_check.call_count == 6
+
+
+# ---------------------------------------------------------------------------
 # Test: _wait_for_healthy — immediate success
 # ---------------------------------------------------------------------------
 
