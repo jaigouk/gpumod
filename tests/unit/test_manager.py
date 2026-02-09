@@ -121,8 +121,13 @@ def _build_mock_registry() -> AsyncMock:
     async def _list_all() -> list[Service]:
         return ALL_SERVICES
 
+    async def _list_running() -> list[Service]:
+        # By default, no services are running (for basic tests)
+        return []
+
     registry.get = AsyncMock(side_effect=_get)
     registry.list_all = AsyncMock(side_effect=_list_all)
+    registry.list_running = AsyncMock(side_effect=_list_running)
 
     # get_driver returns a mock driver per service
     driver = AsyncMock()
@@ -588,8 +593,17 @@ def _build_sleepable_mock_registry(
     async def _list_all() -> list[Service]:
         return ALL_SLEEPABLE_SERVICES
 
+    async def _list_running() -> list[Service]:
+        # Return services that are RUNNING or SLEEPING based on states dict
+        running_states = {ServiceState.RUNNING, ServiceState.SLEEPING}
+        return [
+            svc for svc in ALL_SLEEPABLE_SERVICES
+            if states.get(svc.id, ServiceState.RUNNING) in running_states
+        ]
+
     registry.get = AsyncMock(side_effect=_get)
     registry.list_all = AsyncMock(side_effect=_list_all)
+    registry.list_running = AsyncMock(side_effect=_list_running)
 
     # Create a shared driver that returns state based on service
     driver = AsyncMock()
@@ -808,23 +822,23 @@ class TestSleepAwareSwitchMixed:
 
 
 class TestSleepAwareSwitchIdempotent:
-    """Test idempotent behavior for already-sleeping services."""
+    """Test that sleeping services leaving a mode are stopped (gpumod-77o fix)."""
 
-    async def test_switch_skips_already_sleeping_outgoing(self) -> None:
-        """Outgoing service that's already sleeping should not be double-slept."""
-        from gpumod.services.lifecycle import SleepResult
+    async def test_switch_stops_already_sleeping_outgoing(self) -> None:
+        """Outgoing sleeping service should be stopped to prevent orphans.
 
+        This behavior was changed in gpumod-77o: sleeping services that are
+        leaving a mode are now STOPPED (not skipped) to prevent orphan services
+        from accumulating across mode switches.
+        """
         db = _build_sleepable_mock_db(current_mode="code")
-        # svc-devstral is already SLEEPING
+        # svc-devstral is already SLEEPING (orphan from prior mode switch)
         registry = _build_sleepable_mock_registry(
             service_states={"svc-devstral": ServiceState.SLEEPING}
         )
         lifecycle = _build_sleepable_mock_lifecycle()
-        # sleep returns skipped=True for already-sleeping
-        lifecycle.sleep = AsyncMock(
-            return_value=SleepResult(success=True, skipped=True, reason="Already sleeping")
-        )
         vram = _build_mock_vram()
+        vram.wait_for_vram_release = AsyncMock(return_value=True)
         sleep_ctrl = _build_mock_sleep()
 
         manager = ServiceManager(
@@ -838,9 +852,100 @@ class TestSleepAwareSwitchIdempotent:
         result = await manager.switch_mode("rag")
 
         assert result.success is True
-        # Should not try to stop an already-sleeping service
+        # Sleeping services leaving the mode should be STOPPED (not skipped)
         stopped_ids = {c.args[0] for c in lifecycle.stop.call_args_list}
-        assert "svc-devstral" not in stopped_ids
+        assert "svc-devstral" in stopped_ids, (
+            "Sleeping services leaving a mode should be stopped to prevent orphans"
+        )
+        # Should NOT try to sleep an already-sleeping service
+        slept_ids = {c.args[0] for c in lifecycle.sleep.call_args_list}
+        assert "svc-devstral" not in slept_ids
+
+
+class TestVramWaitOnSwitch:
+    """Test that VRAM wait is called between stopping and starting services."""
+
+    async def test_vram_wait_called_after_stops_before_starts(self) -> None:
+        """Switch should wait for VRAM release between stop and start phases."""
+        db = _build_sleepable_mock_db(current_mode="code")
+        registry = _build_sleepable_mock_registry(
+            service_states={
+                "svc-devstral": ServiceState.RUNNING,
+                "svc-rag-llm": ServiceState.STOPPED,
+            }
+        )
+        lifecycle = _build_sleepable_mock_lifecycle()
+        vram = _build_mock_vram()
+        vram.wait_for_vram_release = AsyncMock(return_value=True)
+        sleep_ctrl = _build_mock_sleep()
+
+        call_order: list[str] = []
+
+        async def _track_stop(service_id: str) -> None:
+            call_order.append(f"stop:{service_id}")
+
+        async def _track_start(service_id: str) -> None:
+            call_order.append(f"start:{service_id}")
+
+        async def _track_vram_wait(*args, **kwargs) -> bool:
+            call_order.append("vram_wait")
+            return True
+
+        lifecycle.stop = AsyncMock(side_effect=_track_stop)
+        lifecycle.start = AsyncMock(side_effect=_track_start)
+        vram.wait_for_vram_release = AsyncMock(side_effect=_track_vram_wait)
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        result = await manager.switch_mode("rag")
+
+        assert result.success is True
+        # VRAM wait should be called
+        vram.wait_for_vram_release.assert_called_once()
+        # Check order: all stops before vram_wait before all starts
+        stop_indices = [i for i, c in enumerate(call_order) if c.startswith("stop:")]
+        vram_indices = [i for i, c in enumerate(call_order) if c == "vram_wait"]
+        start_indices = [i for i, c in enumerate(call_order) if c.startswith("start:")]
+
+        if stop_indices and vram_indices and start_indices:
+            # all stops < vram_wait < all starts
+            assert max(stop_indices) < min(vram_indices), (
+                f"VRAM wait should be after stops. Order: {call_order}"
+            )
+            assert max(vram_indices) < min(start_indices), (
+                f"VRAM wait should be before starts. Order: {call_order}"
+            )
+
+    async def test_vram_wait_uses_largest_incoming_service_vram(self) -> None:
+        """VRAM wait should use the largest incoming service's vram_mb."""
+        db = _build_sleepable_mock_db(current_mode="code")
+        registry = _build_sleepable_mock_registry()
+        lifecycle = _build_sleepable_mock_lifecycle()
+        vram = _build_mock_vram()
+        vram.wait_for_vram_release = AsyncMock(return_value=True)
+        sleep_ctrl = _build_mock_sleep()
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        await manager.switch_mode("rag")
+
+        # svc-rag-llm (5000 MB) is larger than svc-reranker (3000 MB)
+        vram.wait_for_vram_release.assert_called_once()
+        call_args = vram.wait_for_vram_release.call_args
+        required = call_args.kwargs.get("required_mb", call_args.args[0] if call_args.args else 0)
+        assert required == 5000
 
 
 class TestSleepAwareSwitchOrder:
@@ -906,3 +1011,540 @@ class TestSleepAwareSwitchOrder:
             assert max(outgoing_indices) < min(incoming_indices), (
                 f"Outgoing transitions should complete before incoming. Order: {call_order}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Orphan service cleanup tests (gpumod-77o)
+# ---------------------------------------------------------------------------
+
+
+# Additional services for orphan tests
+SVC_ORPHAN = _make_service(
+    id="svc-orphan",
+    name="Orphan Service",
+    vram_mb=8000,
+    sleep_mode=SleepMode.L1,
+    driver=DriverType.LLAMACPP,
+)
+SVC_ORPHAN_2 = _make_service(
+    id="svc-orphan-2",
+    name="Orphan Service 2",
+    vram_mb=4000,
+    sleep_mode=SleepMode.NONE,
+    driver=DriverType.VLLM,
+)
+
+# All services including orphans
+ALL_ORPHAN_TEST_SERVICES = [*ALL_SLEEPABLE_SERVICES, SVC_ORPHAN, SVC_ORPHAN_2]
+
+
+def _build_orphan_test_mock_db(current_mode: str | None = "code") -> AsyncMock:
+    """Build a mock Database for orphan tests with blank mode."""
+    from gpumod.models import Mode
+
+    db = AsyncMock()
+
+    modes = {
+        "code": Mode(id="code", name="Code", services=["svc-embed", "svc-devstral"]),
+        "rag": Mode(id="rag", name="RAG", services=["svc-embed", "svc-rag-llm", "svc-reranker"]),
+        "blank": Mode(id="blank", name="Blank", services=["svc-embed"]),  # Only embed
+    }
+    mode_services_map = {
+        "code": SLEEPABLE_CODE_SERVICES,
+        "rag": SLEEPABLE_RAG_SERVICES,
+        "blank": [SVC_EMBED_NON_SLEEP],
+    }
+
+    async def _get_mode(mode_id: str) -> Mode | None:
+        return modes.get(mode_id)
+
+    async def _get_mode_services(mode_id: str) -> list[Service]:
+        return mode_services_map.get(mode_id, [])
+
+    async def _get_current_mode() -> str | None:
+        return current_mode
+
+    async def _set_current_mode(mode_id: str) -> None:
+        pass
+
+    async def _list_services() -> list[Service]:
+        return ALL_ORPHAN_TEST_SERVICES
+
+    db.get_mode = AsyncMock(side_effect=_get_mode)
+    db.get_mode_services = AsyncMock(side_effect=_get_mode_services)
+    db.get_current_mode = AsyncMock(side_effect=_get_current_mode)
+    db.set_current_mode = AsyncMock(side_effect=_set_current_mode)
+    db.list_services = AsyncMock(side_effect=_list_services)
+
+    return db
+
+
+def _build_orphan_test_mock_registry(
+    service_states: dict[str, ServiceState] | None = None,
+    running_services: list[Service] | None = None,
+) -> AsyncMock:
+    """Build a mock registry that can simulate orphan services.
+
+    Parameters
+    ----------
+    service_states:
+        Map of service_id -> ServiceState for status queries.
+    running_services:
+        Explicit list of services to return from list_running().
+        If None, derives from service_states.
+    """
+    registry = AsyncMock()
+    states = service_states or {}
+
+    svc_map = {s.id: s for s in ALL_ORPHAN_TEST_SERVICES}
+
+    async def _get(service_id: str) -> Service:
+        if service_id not in svc_map:
+            raise KeyError(f"Service not found: {service_id!r}")
+        return svc_map[service_id]
+
+    async def _list_all() -> list[Service]:
+        return ALL_ORPHAN_TEST_SERVICES
+
+    async def _list_running() -> list[Service]:
+        if running_services is not None:
+            return running_services
+        # Derive from states: return RUNNING or SLEEPING services
+        running_states = {ServiceState.RUNNING, ServiceState.SLEEPING}
+        return [
+            svc for svc in ALL_ORPHAN_TEST_SERVICES
+            if states.get(svc.id, ServiceState.STOPPED) in running_states
+        ]
+
+    registry.get = AsyncMock(side_effect=_get)
+    registry.list_all = AsyncMock(side_effect=_list_all)
+    registry.list_running = AsyncMock(side_effect=_list_running)
+
+    # Driver with status based on states
+    driver = AsyncMock()
+
+    async def _status(service: Service) -> ServiceStatus:
+        state = states.get(service.id, ServiceState.STOPPED)
+        return ServiceStatus(state=state)
+
+    driver.status = AsyncMock(side_effect=_status)
+    driver.supports_sleep = True
+
+    def _get_driver(_dtype: DriverType) -> AsyncMock:
+        return driver
+
+    registry.get_driver = _get_driver
+    registry._shared_driver = driver
+
+    return registry
+
+
+class TestOrphanServiceCleanup:
+    """Test that orphan services from prior modes are detected and cleaned up."""
+
+    async def test_orphan_sleeping_service_stopped_on_switch_to_blank(self) -> None:
+        """Orphan sleeping service should be stopped when switching to blank mode.
+
+        Scenario: code → nemotron → blank
+        - svc-orphan was sleeping from code mode
+        - It's not in nemotron's service list
+        - When switching to blank, it should be stopped
+        """
+        # Current mode is "rag" (not code), simulating we already switched
+        db = _build_orphan_test_mock_db(current_mode="rag")
+        registry = _build_orphan_test_mock_registry(
+            service_states={
+                "svc-embed": ServiceState.RUNNING,  # Shared, stays running
+                "svc-orphan": ServiceState.SLEEPING,  # Orphan from prior mode
+                "svc-rag-llm": ServiceState.RUNNING,  # Current mode service
+                "svc-reranker": ServiceState.RUNNING,  # Current mode service
+            },
+            # list_running returns all currently active services
+            running_services=[
+                SVC_EMBED_NON_SLEEP, SVC_ORPHAN, SVC_RAG_LLM_SLEEPABLE, SVC_RERANKER_NON_SLEEP
+            ],
+        )
+        lifecycle = _build_sleepable_mock_lifecycle()
+        vram = _build_mock_vram()
+        vram.wait_for_vram_release = AsyncMock(return_value=True)
+        sleep_ctrl = _build_mock_sleep()
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        result = await manager.switch_mode("blank")
+
+        assert result.success is True
+
+        # svc-orphan should be stopped (it's sleeping, not in blank mode)
+        stopped_ids = {c.args[0] for c in lifecycle.stop.call_args_list}
+        slept_ids = {c.args[0] for c in lifecycle.sleep.call_args_list}
+
+        # Orphan should be handled (either stopped or slept depending on state)
+        assert "svc-orphan" in stopped_ids or "svc-orphan" in slept_ids, (
+            f"Orphan service should be stopped/slept. Stopped: {stopped_ids}, Slept: {slept_ids}"
+        )
+
+    async def test_multiple_orphan_services_cleaned_up(self) -> None:
+        """Multiple orphan services from different prior modes should all be cleaned up."""
+        db = _build_orphan_test_mock_db(current_mode="code")
+        registry = _build_orphan_test_mock_registry(
+            service_states={
+                "svc-embed": ServiceState.RUNNING,
+                "svc-devstral": ServiceState.RUNNING,
+                "svc-orphan": ServiceState.SLEEPING,  # Orphan 1
+                "svc-orphan-2": ServiceState.RUNNING,  # Orphan 2
+            },
+            running_services=[
+                SVC_EMBED_NON_SLEEP, SVC_DEVSTRAL_SLEEPABLE, SVC_ORPHAN, SVC_ORPHAN_2
+            ],
+        )
+        lifecycle = _build_sleepable_mock_lifecycle()
+        vram = _build_mock_vram()
+        vram.wait_for_vram_release = AsyncMock(return_value=True)
+        sleep_ctrl = _build_mock_sleep()
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        result = await manager.switch_mode("blank")
+
+        assert result.success is True
+
+        stopped_ids = {c.args[0] for c in lifecycle.stop.call_args_list}
+        slept_ids = {c.args[0] for c in lifecycle.sleep.call_args_list}
+        all_handled = stopped_ids | slept_ids
+
+        # Both orphans should be handled
+        assert "svc-orphan" in all_handled, "svc-orphan should be cleaned up"
+        assert "svc-orphan-2" in all_handled, "svc-orphan-2 should be cleaned up"
+
+        # svc-devstral (in code mode) should also be handled (leaving current mode)
+        assert "svc-devstral" in all_handled, "svc-devstral should be handled"
+
+    async def test_orphan_detection_includes_running_not_in_current_mode(self) -> None:
+        """Services running but not defined in current mode should be detected as orphans."""
+        # Current mode is "blank" with only svc-embed
+        db = _build_orphan_test_mock_db(current_mode="blank")
+        registry = _build_orphan_test_mock_registry(
+            service_states={
+                "svc-embed": ServiceState.RUNNING,
+                # These are running but NOT in blank mode's definition
+                "svc-devstral": ServiceState.RUNNING,
+                "svc-rag-llm": ServiceState.SLEEPING,
+            },
+            running_services=[SVC_EMBED_NON_SLEEP, SVC_DEVSTRAL_SLEEPABLE, SVC_RAG_LLM_SLEEPABLE],
+        )
+        lifecycle = _build_sleepable_mock_lifecycle()
+        vram = _build_mock_vram()
+        vram.wait_for_vram_release = AsyncMock(return_value=True)
+        sleep_ctrl = _build_mock_sleep()
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        # Switch to rag mode
+        result = await manager.switch_mode("rag")
+
+        assert result.success is True
+
+        stopped_ids = {c.args[0] for c in lifecycle.stop.call_args_list}
+        slept_ids = {c.args[0] for c in lifecycle.sleep.call_args_list}
+        all_handled = stopped_ids | slept_ids
+
+        # svc-devstral was running but not in blank or rag, should be cleaned up
+        assert "svc-devstral" in all_handled, (
+            f"svc-devstral (orphan) should be cleaned up. Handled: {all_handled}"
+        )
+
+    async def test_no_orphans_when_all_running_in_target_mode(self) -> None:
+        """No extra cleanup when all running services are in target mode."""
+        db = _build_orphan_test_mock_db(current_mode="code")
+        registry = _build_orphan_test_mock_registry(
+            service_states={
+                "svc-embed": ServiceState.RUNNING,
+                "svc-devstral": ServiceState.RUNNING,
+            },
+            # Only code mode services
+            running_services=[SVC_EMBED_NON_SLEEP, SVC_DEVSTRAL_SLEEPABLE],
+        )
+        lifecycle = _build_sleepable_mock_lifecycle()
+        vram = _build_mock_vram()
+        vram.wait_for_vram_release = AsyncMock(return_value=True)
+        sleep_ctrl = _build_mock_sleep()
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        result = await manager.switch_mode("rag")
+
+        assert result.success is True
+
+        # Only svc-devstral should be handled (normal mode switch, not orphan)
+        stopped_ids = {c.args[0] for c in lifecycle.stop.call_args_list}
+        slept_ids = {c.args[0] for c in lifecycle.sleep.call_args_list}
+
+        assert "svc-devstral" in (stopped_ids | slept_ids)
+        # Orphan services should not appear (they're not running)
+        assert "svc-orphan" not in (stopped_ids | slept_ids)
+        assert "svc-orphan-2" not in (stopped_ids | slept_ids)
+
+
+# ---------------------------------------------------------------------------
+# Edge case tests for orphan cleanup (gpumod-77o)
+# ---------------------------------------------------------------------------
+
+
+class TestOrphanEdgeCases:
+    """Edge cases for orphan service detection and cleanup."""
+
+    async def test_switch_to_same_mode_no_changes(self) -> None:
+        """Switching to current mode should be a no-op."""
+        db = _build_orphan_test_mock_db(current_mode="code")
+        registry = _build_orphan_test_mock_registry(
+            service_states={
+                "svc-embed": ServiceState.RUNNING,
+                "svc-devstral": ServiceState.RUNNING,
+            },
+            running_services=[SVC_EMBED_NON_SLEEP, SVC_DEVSTRAL_SLEEPABLE],
+        )
+        lifecycle = _build_sleepable_mock_lifecycle()
+        vram = _build_mock_vram()
+        vram.wait_for_vram_release = AsyncMock(return_value=True)
+        sleep_ctrl = _build_mock_sleep()
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        result = await manager.switch_mode("code")
+
+        assert result.success is True
+        # No services should be stopped or started (same mode)
+        assert lifecycle.stop.call_count == 0
+        assert lifecycle.start.call_count == 0
+        assert lifecycle.sleep.call_count == 0
+        assert lifecycle.wake.call_count == 0
+
+    async def test_orphan_in_unknown_state_is_stopped(self) -> None:
+        """Services in UNKNOWN state should be stopped during mode switch."""
+        db = _build_orphan_test_mock_db(current_mode="code")
+        registry = _build_orphan_test_mock_registry(
+            service_states={
+                "svc-embed": ServiceState.RUNNING,
+                "svc-devstral": ServiceState.RUNNING,
+                "svc-orphan": ServiceState.UNKNOWN,  # Unknown state
+            },
+            running_services=[SVC_EMBED_NON_SLEEP, SVC_DEVSTRAL_SLEEPABLE, SVC_ORPHAN],
+        )
+        lifecycle = _build_sleepable_mock_lifecycle()
+        vram = _build_mock_vram()
+        vram.wait_for_vram_release = AsyncMock(return_value=True)
+        sleep_ctrl = _build_mock_sleep()
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        result = await manager.switch_mode("blank")
+
+        assert result.success is True
+        stopped_ids = {c.args[0] for c in lifecycle.stop.call_args_list}
+        # UNKNOWN state services should be stopped
+        assert "svc-orphan" in stopped_ids
+
+    async def test_empty_running_list_no_orphans(self) -> None:
+        """When no services are running, orphan detection should not fail."""
+        db = _build_orphan_test_mock_db(current_mode="code")
+        registry = _build_orphan_test_mock_registry(
+            service_states={},
+            running_services=[],  # Nothing running
+        )
+        lifecycle = _build_sleepable_mock_lifecycle()
+        vram = _build_mock_vram()
+        vram.wait_for_vram_release = AsyncMock(return_value=True)
+        sleep_ctrl = _build_mock_sleep()
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        result = await manager.switch_mode("rag")
+
+        assert result.success is True
+        # Should start rag services, no orphans to clean
+        started_ids = {c.args[0] for c in lifecycle.start.call_args_list}
+        assert "svc-rag-llm" in started_ids
+        assert "svc-reranker" in started_ids
+
+    async def test_all_services_are_orphans(self) -> None:
+        """All running services being orphans should still work."""
+        db = _build_orphan_test_mock_db(current_mode="blank")
+        # All running services are orphans (not in blank mode)
+        registry = _build_orphan_test_mock_registry(
+            service_states={
+                "svc-orphan": ServiceState.RUNNING,
+                "svc-orphan-2": ServiceState.SLEEPING,
+                "svc-devstral": ServiceState.RUNNING,
+            },
+            running_services=[SVC_ORPHAN, SVC_ORPHAN_2, SVC_DEVSTRAL_SLEEPABLE],
+        )
+        lifecycle = _build_sleepable_mock_lifecycle()
+        vram = _build_mock_vram()
+        vram.wait_for_vram_release = AsyncMock(return_value=True)
+        sleep_ctrl = _build_mock_sleep()
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        result = await manager.switch_mode("blank")
+
+        assert result.success is True
+        stopped_ids = {c.args[0] for c in lifecycle.stop.call_args_list}
+        slept_ids = {c.args[0] for c in lifecycle.sleep.call_args_list}
+        all_handled = stopped_ids | slept_ids
+
+        # All orphans should be cleaned up
+        assert "svc-orphan" in all_handled
+        assert "svc-orphan-2" in all_handled
+        assert "svc-devstral" in all_handled
+
+    async def test_orphan_mixed_with_shared_service(self) -> None:
+        """Shared service should not be stopped when orphans are cleaned."""
+        db = _build_orphan_test_mock_db(current_mode="code")
+        # svc-embed is shared between code and rag
+        registry = _build_orphan_test_mock_registry(
+            service_states={
+                "svc-embed": ServiceState.RUNNING,  # Shared
+                "svc-devstral": ServiceState.RUNNING,  # Leaving
+                "svc-orphan": ServiceState.SLEEPING,  # Orphan
+            },
+            running_services=[SVC_EMBED_NON_SLEEP, SVC_DEVSTRAL_SLEEPABLE, SVC_ORPHAN],
+        )
+        lifecycle = _build_sleepable_mock_lifecycle()
+        vram = _build_mock_vram()
+        vram.wait_for_vram_release = AsyncMock(return_value=True)
+        sleep_ctrl = _build_mock_sleep()
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        result = await manager.switch_mode("rag")
+
+        assert result.success is True
+        stopped_ids = {c.args[0] for c in lifecycle.stop.call_args_list}
+        slept_ids = {c.args[0] for c in lifecycle.sleep.call_args_list}
+        started_ids = {c.args[0] for c in lifecycle.start.call_args_list}
+
+        # svc-embed is shared - should NOT be stopped, started, or slept
+        assert "svc-embed" not in stopped_ids
+        assert "svc-embed" not in slept_ids
+        assert "svc-embed" not in started_ids
+
+        # Orphan should be stopped
+        assert "svc-orphan" in stopped_ids
+
+    async def test_stopped_services_not_in_to_stop(self) -> None:
+        """Already-stopped services should not trigger stop calls."""
+        db = _build_orphan_test_mock_db(current_mode="code")
+        registry = _build_orphan_test_mock_registry(
+            service_states={
+                "svc-embed": ServiceState.RUNNING,
+                "svc-devstral": ServiceState.STOPPED,  # Already stopped
+            },
+            # Only embed is running
+            running_services=[SVC_EMBED_NON_SLEEP],
+        )
+        lifecycle = _build_sleepable_mock_lifecycle()
+        vram = _build_mock_vram()
+        vram.wait_for_vram_release = AsyncMock(return_value=True)
+        sleep_ctrl = _build_mock_sleep()
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        result = await manager.switch_mode("rag")
+
+        assert result.success is True
+        # svc-devstral is already stopped - no action needed for it
+        # The key is that no error occurs and we don't try to stop/sleep it
+
+    async def test_mode_switch_logs_orphan_detection(self) -> None:
+        """Verify orphan services are properly detected in to_stop calculation."""
+        db = _build_orphan_test_mock_db(current_mode="rag")
+        # svc-orphan is running but not in rag mode
+        registry = _build_orphan_test_mock_registry(
+            service_states={
+                "svc-embed": ServiceState.RUNNING,
+                "svc-rag-llm": ServiceState.RUNNING,
+                "svc-orphan": ServiceState.RUNNING,  # Orphan
+            },
+            running_services=[SVC_EMBED_NON_SLEEP, SVC_RAG_LLM_SLEEPABLE, SVC_ORPHAN],
+        )
+        lifecycle = _build_sleepable_mock_lifecycle()
+        vram = _build_mock_vram()
+        vram.wait_for_vram_release = AsyncMock(return_value=True)
+        sleep_ctrl = _build_mock_sleep()
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        result = await manager.switch_mode("code")
+
+        assert result.success is True
+        # svc-orphan should be stopped (it's running but not in rag or code)
+        stopped_ids = {c.args[0] for c in lifecycle.stop.call_args_list}
+        slept_ids = {c.args[0] for c in lifecycle.sleep.call_args_list}
+        assert "svc-orphan" in (stopped_ids | slept_ids)

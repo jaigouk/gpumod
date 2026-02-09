@@ -8,8 +8,34 @@ Commands are restricted to an explicit allowlist.
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from dataclasses import dataclass
+
+
+def _get_systemd_env() -> dict[str, str]:
+    """Return environment dict with D-Bus session variables set.
+
+    When running in environments without D-Bus (cron, MCP servers, etc.),
+    we need to explicitly set XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS.
+    """
+    env = os.environ.copy()
+
+    # Set XDG_RUNTIME_DIR if not present
+    if "XDG_RUNTIME_DIR" not in env:
+        uid = os.getuid()
+        runtime_dir = f"/run/user/{uid}"
+        if os.path.isdir(runtime_dir):
+            env["XDG_RUNTIME_DIR"] = runtime_dir
+
+    # Set D-Bus address if not present
+    if "DBUS_SESSION_BUS_ADDRESS" not in env:
+        runtime_dir = env.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+        bus_path = f"{runtime_dir}/bus"
+        if os.path.exists(bus_path):
+            env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus_path}"
+
+    return env
 
 ALLOWED_COMMANDS: frozenset[str] = frozenset(
     {
@@ -103,6 +129,7 @@ async def systemctl(
         *argv,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=_get_systemd_env(),
     )
 
     stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -133,6 +160,7 @@ async def is_active(unit: str) -> bool:
             unit,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=_get_systemd_env(),
         )
         stdout_bytes, _ = await proc.communicate()
         return stdout_bytes.decode().strip() == "active"
@@ -154,6 +182,7 @@ async def get_unit_state(unit: str) -> str:
             unit,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=_get_systemd_env(),
         )
         stdout_bytes, _ = await proc.communicate()
         return stdout_bytes.decode().strip()
@@ -194,6 +223,7 @@ async def journal_logs(unit: str, lines: int = 20) -> list[str]:
             "--no-pager",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=_get_systemd_env(),
         )
         stdout_bytes, _ = await proc.communicate()
         if proc.returncode != 0:

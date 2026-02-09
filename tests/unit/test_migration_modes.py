@@ -26,7 +26,7 @@ RTX_4090_VRAM_MB = 24000
 EXPECTED_MODES: dict[str, dict[str, object]] = {
     "code": {
         "services": ["vllm-embedding-code", "glm-code"],
-        "description": "Coding mode with Devstral code LLM and embedding",
+        "description": "Coding mode with Qwen3-Coder and code embedding",
     },
     "rag": {
         "services": ["vllm-embedding-code", "vllm-embedding"],
