@@ -15,6 +15,7 @@ from gpumod.models import (
     ServiceInfo,
     ServiceState,
     ServiceStatus,
+    SleepMode,
     SystemStatus,
 )
 from gpumod.services.health import HealthMonitor
@@ -157,32 +158,97 @@ class ServiceManager:
                 ],
             )
 
-        # 5. Stop services not in target mode (free VRAM first)
-        for service_id in sorted(to_stop):
-            logger.info("Stopping service %r (not in target mode)", service_id)
-            await self._lifecycle.stop(service_id)
+        # 5. Handle outgoing services (free VRAM first)
+        slept_ids, stopped_ids = await self._handle_outgoing_services(to_stop)
 
-        # 6. Start services not in current mode
-        for service_id in sorted(to_start):
-            logger.info("Starting service %r (required by target mode)", service_id)
-            await self._lifecycle.start(service_id)
+        # 6. Handle incoming services
+        woken_ids, started_ids = await self._handle_incoming_services(to_start)
 
         # 7. Update current mode in DB
         await self._db.set_current_mode(target_mode_id)
 
         logger.info(
-            "Mode switch to %r complete: started=%s, stopped=%s",
+            "Mode switch to %r complete: started=%s, woken=%s, slept=%s, stopped=%s",
             target_mode_id,
-            sorted(to_start),
-            sorted(to_stop),
+            started_ids,
+            woken_ids,
+            slept_ids,
+            stopped_ids,
         )
 
         return ModeResult(
             success=True,
             mode_id=target_mode_id,
-            started=sorted(to_start),
-            stopped=sorted(to_stop),
+            started=started_ids + woken_ids,  # All services now running
+            stopped=stopped_ids + slept_ids,  # All services no longer running
         )
+
+    async def _handle_outgoing_services(
+        self, service_ids: set[str]
+    ) -> tuple[list[str], list[str]]:
+        """Handle services leaving the current mode.
+
+        Sleep-capable services are slept; non-sleep services are stopped.
+
+        Returns
+        -------
+        tuple[list[str], list[str]]
+            (slept_ids, stopped_ids)
+        """
+        slept_ids: list[str] = []
+        stopped_ids: list[str] = []
+
+        for service_id in sorted(service_ids):
+            service = await self._registry.get(service_id)
+            driver = self._registry.get_driver(service.driver)
+            status = await driver.status(service)
+
+            is_sleep_capable = driver.supports_sleep and service.sleep_mode != SleepMode.NONE
+
+            if is_sleep_capable and status.state == ServiceState.RUNNING:
+                logger.info("Sleeping service %r (not in target mode)", service_id)
+                await self._lifecycle.sleep(service_id)
+                slept_ids.append(service_id)
+            elif status.state == ServiceState.SLEEPING:
+                logger.info("Service %r already sleeping, skipping", service_id)
+                slept_ids.append(service_id)
+            else:
+                logger.info("Stopping service %r (not in target mode)", service_id)
+                await self._lifecycle.stop(service_id)
+                stopped_ids.append(service_id)
+
+        return slept_ids, stopped_ids
+
+    async def _handle_incoming_services(
+        self, service_ids: set[str]
+    ) -> tuple[list[str], list[str]]:
+        """Handle services entering the target mode.
+
+        Sleeping services are woken; stopped services are started.
+
+        Returns
+        -------
+        tuple[list[str], list[str]]
+            (woken_ids, started_ids)
+        """
+        woken_ids: list[str] = []
+        started_ids: list[str] = []
+
+        for service_id in sorted(service_ids):
+            service = await self._registry.get(service_id)
+            driver = self._registry.get_driver(service.driver)
+            status = await driver.status(service)
+
+            if status.state == ServiceState.SLEEPING:
+                logger.info("Waking service %r (required by target mode)", service_id)
+                await self._lifecycle.wake(service_id)
+                woken_ids.append(service_id)
+            else:
+                logger.info("Starting service %r (required by target mode)", service_id)
+                await self._lifecycle.start(service_id)
+                started_ids.append(service_id)
+
+        return woken_ids, started_ids
 
     # ------------------------------------------------------------------
     # Status

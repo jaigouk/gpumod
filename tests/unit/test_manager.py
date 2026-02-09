@@ -30,6 +30,7 @@ def _make_service(
     driver: DriverType = DriverType.VLLM,
     port: int = 8000,
     vram_mb: int = 2500,
+    sleep_mode: SleepMode = SleepMode.NONE,
 ) -> Service:
     return Service(
         id=id,
@@ -37,7 +38,7 @@ def _make_service(
         driver=driver,
         port=port,
         vram_mb=vram_mb,
-        sleep_mode=SleepMode.NONE,
+        sleep_mode=sleep_mode,
         health_endpoint="/health",
         model_id="org/model",
         unit_name=f"{id}.service",
@@ -480,3 +481,428 @@ class TestStopServiceDelegation:
         await manager.stop_service("svc-embed")
 
         mock_lifecycle.stop.assert_called_once_with("svc-embed")
+
+
+# ---------------------------------------------------------------------------
+# Sleep-capable services for sleep-aware mode switch tests
+# ---------------------------------------------------------------------------
+
+# Sleep-capable versions of services (vLLM with L1 sleep mode)
+SVC_DEVSTRAL_SLEEPABLE = _make_service(
+    id="svc-devstral",
+    name="Devstral",
+    vram_mb=19000,
+    sleep_mode=SleepMode.L1,
+)
+SVC_RAG_LLM_SLEEPABLE = _make_service(
+    id="svc-rag-llm",
+    name="RAG LLM",
+    vram_mb=5000,
+    sleep_mode=SleepMode.L1,
+)
+
+# Non-sleepable services (embedding, reranker typically don't need sleep)
+SVC_EMBED_NON_SLEEP = _make_service(
+    id="svc-embed",
+    name="Embedding",
+    vram_mb=2500,
+    sleep_mode=SleepMode.NONE,
+)
+SVC_RERANKER_NON_SLEEP = _make_service(
+    id="svc-reranker",
+    name="Reranker",
+    vram_mb=3000,
+    sleep_mode=SleepMode.NONE,
+)
+
+# Mixed services for mode tests
+SLEEPABLE_CODE_SERVICES = [SVC_EMBED_NON_SLEEP, SVC_DEVSTRAL_SLEEPABLE]
+SLEEPABLE_RAG_SERVICES = [SVC_EMBED_NON_SLEEP, SVC_RAG_LLM_SLEEPABLE, SVC_RERANKER_NON_SLEEP]
+ALL_SLEEPABLE_SERVICES = [
+    SVC_EMBED_NON_SLEEP,
+    SVC_DEVSTRAL_SLEEPABLE,
+    SVC_RAG_LLM_SLEEPABLE,
+    SVC_RERANKER_NON_SLEEP,
+]
+
+
+def _build_sleepable_mock_db(current_mode: str | None = "code") -> AsyncMock:
+    """Build a mock Database with sleep-capable services."""
+    from gpumod.models import Mode
+
+    db = AsyncMock()
+
+    modes = {
+        "code": Mode(id="code", name="Code", services=["svc-embed", "svc-devstral"]),
+        "rag": Mode(id="rag", name="RAG", services=["svc-embed", "svc-rag-llm", "svc-reranker"]),
+    }
+    mode_services = {
+        "code": SLEEPABLE_CODE_SERVICES,
+        "rag": SLEEPABLE_RAG_SERVICES,
+    }
+
+    async def _get_mode(mode_id: str) -> Mode | None:
+        return modes.get(mode_id)
+
+    async def _get_mode_services(mode_id: str) -> list[Service]:
+        return mode_services.get(mode_id, [])
+
+    async def _get_current_mode() -> str | None:
+        return current_mode
+
+    async def _set_current_mode(mode_id: str) -> None:
+        pass
+
+    async def _list_services() -> list[Service]:
+        return ALL_SLEEPABLE_SERVICES
+
+    db.get_mode = AsyncMock(side_effect=_get_mode)
+    db.get_mode_services = AsyncMock(side_effect=_get_mode_services)
+    db.get_current_mode = AsyncMock(side_effect=_get_current_mode)
+    db.set_current_mode = AsyncMock(side_effect=_set_current_mode)
+    db.list_services = AsyncMock(side_effect=_list_services)
+
+    return db
+
+
+def _build_sleepable_mock_registry(
+    service_states: dict[str, ServiceState] | None = None,
+) -> AsyncMock:
+    """Build a mock ServiceRegistry with sleep-capable drivers.
+
+    Parameters
+    ----------
+    service_states:
+        Map of service_id -> ServiceState. Defaults to RUNNING for all.
+    """
+    registry = AsyncMock()
+    states = service_states or {}
+
+    svc_map = {s.id: s for s in ALL_SLEEPABLE_SERVICES}
+
+    async def _get(service_id: str) -> Service:
+        if service_id not in svc_map:
+            raise KeyError(f"Service not found: {service_id!r}")
+        return svc_map[service_id]
+
+    async def _list_all() -> list[Service]:
+        return ALL_SLEEPABLE_SERVICES
+
+    registry.get = AsyncMock(side_effect=_get)
+    registry.list_all = AsyncMock(side_effect=_list_all)
+
+    # Create a shared driver that returns state based on service
+    driver = AsyncMock()
+
+    async def _status(service: Service) -> ServiceStatus:
+        state = states.get(service.id, ServiceState.RUNNING)
+        return ServiceStatus(state=state)
+
+    driver.status = AsyncMock(side_effect=_status)
+    driver.supports_sleep = True  # vLLM supports sleep
+
+    def _get_driver(_dtype: DriverType) -> AsyncMock:
+        return driver
+
+    registry.get_driver = _get_driver
+    registry._shared_driver = driver
+
+    return registry
+
+
+def _build_sleepable_mock_lifecycle() -> AsyncMock:
+    """Build a mock LifecycleManager with sleep/wake support."""
+    from gpumod.services.lifecycle import SleepResult, WakeResult
+
+    lifecycle = AsyncMock()
+    lifecycle.start = AsyncMock()
+    lifecycle.stop = AsyncMock()
+    lifecycle.sleep = AsyncMock(return_value=SleepResult(success=True, latency_ms=50.0))
+    lifecycle.wake = AsyncMock(return_value=WakeResult(success=True, latency_ms=100.0))
+    return lifecycle
+
+
+# ---------------------------------------------------------------------------
+# Sleep-aware mode switch tests
+# ---------------------------------------------------------------------------
+
+
+class TestSleepAwareSwitchSleepsOutgoing:
+    """Test that sleep-capable outgoing services are slept, not stopped."""
+
+    async def test_switch_sleeps_sleep_capable_outgoing_service(self) -> None:
+        """Switching code->rag should sleep svc-devstral (sleep_mode=L1), not stop it."""
+        db = _build_sleepable_mock_db(current_mode="code")
+        registry = _build_sleepable_mock_registry()
+        lifecycle = _build_sleepable_mock_lifecycle()
+        vram = _build_mock_vram()
+        sleep_ctrl = _build_mock_sleep()
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        result = await manager.switch_mode("rag")
+
+        assert result.success is True
+        # svc-devstral is sleep-capable, should be slept
+        lifecycle.sleep.assert_any_call("svc-devstral")
+        # svc-devstral should NOT be stopped
+        stopped_ids = {c.args[0] for c in lifecycle.stop.call_args_list}
+        assert "svc-devstral" not in stopped_ids
+
+
+class TestSleepAwareSwitchStopsNonSleepable:
+    """Test that non-sleep services still use stop."""
+
+    async def test_switch_stops_non_sleep_outgoing_service(self) -> None:
+        """Switching rag->code should stop svc-reranker (sleep_mode=none)."""
+        db = _build_sleepable_mock_db(current_mode="rag")
+        registry = _build_sleepable_mock_registry()
+        lifecycle = _build_sleepable_mock_lifecycle()
+        vram = _build_mock_vram()
+        sleep_ctrl = _build_mock_sleep()
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        result = await manager.switch_mode("code")
+
+        assert result.success is True
+        # svc-reranker is NOT sleep-capable, should be stopped
+        lifecycle.stop.assert_any_call("svc-reranker")
+        # svc-reranker should NOT be slept
+        slept_ids = {c.args[0] for c in lifecycle.sleep.call_args_list}
+        assert "svc-reranker" not in slept_ids
+
+
+class TestSleepAwareSwitchWakesSleeping:
+    """Test that sleeping services entering mode are woken."""
+
+    async def test_switch_wakes_sleeping_service(self) -> None:
+        """Switching rag->code should wake svc-devstral if it's sleeping."""
+        from gpumod.services.lifecycle import WakeResult
+
+        db = _build_sleepable_mock_db(current_mode="rag")
+        # svc-devstral is SLEEPING (from previous mode switch)
+        registry = _build_sleepable_mock_registry(
+            service_states={"svc-devstral": ServiceState.SLEEPING}
+        )
+        lifecycle = _build_sleepable_mock_lifecycle()
+        lifecycle.wake = AsyncMock(return_value=WakeResult(success=True, latency_ms=100.0))
+        vram = _build_mock_vram()
+        sleep_ctrl = _build_mock_sleep()
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        result = await manager.switch_mode("code")
+
+        assert result.success is True
+        # svc-devstral is sleeping, should be woken
+        lifecycle.wake.assert_any_call("svc-devstral")
+        # svc-devstral should NOT be started (wake is sufficient)
+        started_ids = {c.args[0] for c in lifecycle.start.call_args_list}
+        assert "svc-devstral" not in started_ids
+
+
+class TestSleepAwareSwitchStartsStopped:
+    """Test that stopped services entering mode are started."""
+
+    async def test_switch_starts_stopped_service(self) -> None:
+        """Switching code->rag should start svc-rag-llm if it's stopped."""
+        db = _build_sleepable_mock_db(current_mode="code")
+        # svc-rag-llm is STOPPED (never started)
+        registry = _build_sleepable_mock_registry(
+            service_states={"svc-rag-llm": ServiceState.STOPPED}
+        )
+        lifecycle = _build_sleepable_mock_lifecycle()
+        vram = _build_mock_vram()
+        sleep_ctrl = _build_mock_sleep()
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        result = await manager.switch_mode("rag")
+
+        assert result.success is True
+        # svc-rag-llm is stopped, should be started (not woken)
+        lifecycle.start.assert_any_call("svc-rag-llm")
+        # svc-rag-llm should NOT be woken (it's stopped, not sleeping)
+        woken_ids = {c.args[0] for c in lifecycle.wake.call_args_list}
+        assert "svc-rag-llm" not in woken_ids
+
+
+class TestSleepAwareSwitchMixed:
+    """Test mixed transitions with both sleep-capable and non-sleep services."""
+
+    async def test_switch_handles_mixed_transitions(self) -> None:
+        """Switching code->rag should sleep devstral, start rag-llm, start reranker."""
+        db = _build_sleepable_mock_db(current_mode="code")
+        # All services start as RUNNING or STOPPED
+        registry = _build_sleepable_mock_registry(
+            service_states={
+                "svc-embed": ServiceState.RUNNING,  # Shared, no transition
+                "svc-devstral": ServiceState.RUNNING,  # Leaving, sleep-capable
+                "svc-rag-llm": ServiceState.STOPPED,  # Entering, stopped
+                "svc-reranker": ServiceState.STOPPED,  # Entering, stopped
+            }
+        )
+        lifecycle = _build_sleepable_mock_lifecycle()
+        vram = _build_mock_vram()
+        sleep_ctrl = _build_mock_sleep()
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        result = await manager.switch_mode("rag")
+
+        assert result.success is True
+
+        # Collect all calls
+        slept_ids = {c.args[0] for c in lifecycle.sleep.call_args_list}
+        stopped_ids = {c.args[0] for c in lifecycle.stop.call_args_list}
+        started_ids = {c.args[0] for c in lifecycle.start.call_args_list}
+        woken_ids = {c.args[0] for c in lifecycle.wake.call_args_list}
+
+        # svc-devstral: leaving + sleep-capable → slept
+        assert "svc-devstral" in slept_ids
+        assert "svc-devstral" not in stopped_ids
+
+        # svc-embed: shared → no transition
+        assert "svc-embed" not in slept_ids
+        assert "svc-embed" not in stopped_ids
+        assert "svc-embed" not in started_ids
+        assert "svc-embed" not in woken_ids
+
+        # svc-rag-llm: entering + stopped → started
+        assert "svc-rag-llm" in started_ids
+        assert "svc-rag-llm" not in woken_ids
+
+        # svc-reranker: entering + stopped → started
+        assert "svc-reranker" in started_ids
+
+
+class TestSleepAwareSwitchIdempotent:
+    """Test idempotent behavior for already-sleeping services."""
+
+    async def test_switch_skips_already_sleeping_outgoing(self) -> None:
+        """Outgoing service that's already sleeping should not be double-slept."""
+        from gpumod.services.lifecycle import SleepResult
+
+        db = _build_sleepable_mock_db(current_mode="code")
+        # svc-devstral is already SLEEPING
+        registry = _build_sleepable_mock_registry(
+            service_states={"svc-devstral": ServiceState.SLEEPING}
+        )
+        lifecycle = _build_sleepable_mock_lifecycle()
+        # sleep returns skipped=True for already-sleeping
+        lifecycle.sleep = AsyncMock(
+            return_value=SleepResult(success=True, skipped=True, reason="Already sleeping")
+        )
+        vram = _build_mock_vram()
+        sleep_ctrl = _build_mock_sleep()
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        result = await manager.switch_mode("rag")
+
+        assert result.success is True
+        # Should not try to stop an already-sleeping service
+        stopped_ids = {c.args[0] for c in lifecycle.stop.call_args_list}
+        assert "svc-devstral" not in stopped_ids
+
+
+class TestSleepAwareSwitchOrder:
+    """Test that sleep/stop happens before wake/start (free VRAM first)."""
+
+    async def test_sleep_and_stop_before_wake_and_start(self) -> None:
+        """Outgoing transitions should complete before incoming transitions."""
+        db = _build_sleepable_mock_db(current_mode="code")
+        registry = _build_sleepable_mock_registry(
+            service_states={
+                "svc-devstral": ServiceState.RUNNING,  # Leaving
+                "svc-rag-llm": ServiceState.STOPPED,  # Entering
+            }
+        )
+        lifecycle = _build_sleepable_mock_lifecycle()
+        vram = _build_mock_vram()
+        sleep_ctrl = _build_mock_sleep()
+
+        call_order: list[str] = []
+
+        async def _track_sleep(service_id: str) -> None:
+            from gpumod.services.lifecycle import SleepResult
+
+            call_order.append(f"sleep:{service_id}")
+            return SleepResult(success=True)
+
+        async def _track_stop(service_id: str) -> None:
+            call_order.append(f"stop:{service_id}")
+
+        async def _track_wake(service_id: str) -> None:
+            from gpumod.services.lifecycle import WakeResult
+
+            call_order.append(f"wake:{service_id}")
+            return WakeResult(success=True)
+
+        async def _track_start(service_id: str) -> None:
+            call_order.append(f"start:{service_id}")
+
+        lifecycle.sleep = AsyncMock(side_effect=_track_sleep)
+        lifecycle.stop = AsyncMock(side_effect=_track_stop)
+        lifecycle.wake = AsyncMock(side_effect=_track_wake)
+        lifecycle.start = AsyncMock(side_effect=_track_start)
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        await manager.switch_mode("rag")
+
+        # Find indices of outgoing (sleep/stop) vs incoming (wake/start)
+        outgoing_indices = [
+            i for i, c in enumerate(call_order) if c.startswith(("sleep:", "stop:"))
+        ]
+        incoming_indices = [
+            i for i, c in enumerate(call_order) if c.startswith(("wake:", "start:"))
+        ]
+
+        if outgoing_indices and incoming_indices:
+            assert max(outgoing_indices) < min(incoming_indices), (
+                f"Outgoing transitions should complete before incoming. Order: {call_order}"
+            )
