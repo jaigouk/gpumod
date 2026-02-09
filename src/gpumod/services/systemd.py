@@ -37,6 +37,7 @@ def _get_systemd_env() -> dict[str, str]:
 
     return env
 
+
 ALLOWED_COMMANDS: frozenset[str] = frozenset(
     {
         "start",

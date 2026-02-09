@@ -597,7 +597,8 @@ def _build_sleepable_mock_registry(
         # Return services that are RUNNING or SLEEPING based on states dict
         running_states = {ServiceState.RUNNING, ServiceState.SLEEPING}
         return [
-            svc for svc in ALL_SLEEPABLE_SERVICES
+            svc
+            for svc in ALL_SLEEPABLE_SERVICES
             if states.get(svc.id, ServiceState.RUNNING) in running_states
         ]
 
@@ -1112,7 +1113,8 @@ def _build_orphan_test_mock_registry(
         # Derive from states: return RUNNING or SLEEPING services
         running_states = {ServiceState.RUNNING, ServiceState.SLEEPING}
         return [
-            svc for svc in ALL_ORPHAN_TEST_SERVICES
+            svc
+            for svc in ALL_ORPHAN_TEST_SERVICES
             if states.get(svc.id, ServiceState.STOPPED) in running_states
         ]
 
@@ -1161,7 +1163,10 @@ class TestOrphanServiceCleanup:
             },
             # list_running returns all currently active services
             running_services=[
-                SVC_EMBED_NON_SLEEP, SVC_ORPHAN, SVC_RAG_LLM_SLEEPABLE, SVC_RERANKER_NON_SLEEP
+                SVC_EMBED_NON_SLEEP,
+                SVC_ORPHAN,
+                SVC_RAG_LLM_SLEEPABLE,
+                SVC_RERANKER_NON_SLEEP,
             ],
         )
         lifecycle = _build_sleepable_mock_lifecycle()
@@ -1201,7 +1206,10 @@ class TestOrphanServiceCleanup:
                 "svc-orphan-2": ServiceState.RUNNING,  # Orphan 2
             },
             running_services=[
-                SVC_EMBED_NON_SLEEP, SVC_DEVSTRAL_SLEEPABLE, SVC_ORPHAN, SVC_ORPHAN_2
+                SVC_EMBED_NON_SLEEP,
+                SVC_DEVSTRAL_SLEEPABLE,
+                SVC_ORPHAN,
+                SVC_ORPHAN_2,
             ],
         )
         lifecycle = _build_sleepable_mock_lifecycle()
