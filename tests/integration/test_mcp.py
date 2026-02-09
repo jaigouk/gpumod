@@ -9,6 +9,7 @@ GPU info verify the graceful error path instead.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastmcp import Client
@@ -23,6 +24,8 @@ from gpumod.models import (
     Service,
     SleepMode,
 )
+from gpumod.templates.modes import ModeSyncResult
+from gpumod.templates.presets import PresetSyncResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -116,6 +119,19 @@ async def mcp_client(tmp_path: Path) -> Client:
     # Create the MCP server pointing to the pre-populated DB
     server = create_mcp_server(db_path=db_path)
     return Client(server)
+
+
+@pytest.fixture(autouse=True)
+def _disable_mcp_auto_sync():
+    """Disable auto-sync in MCP lifespan to preserve test fixtures."""
+    mock_preset_result = PresetSyncResult(inserted=0, updated=0, unchanged=0, deleted=0)
+    mock_mode_result = ModeSyncResult(inserted=0, updated=0, unchanged=0, deleted=0)
+
+    with (
+        patch("gpumod.mcp_server.sync_presets", new=AsyncMock(return_value=mock_preset_result)),
+        patch("gpumod.mcp_server.sync_modes", new=AsyncMock(return_value=mock_mode_result)),
+    ):
+        yield
 
 
 # ---------------------------------------------------------------------------

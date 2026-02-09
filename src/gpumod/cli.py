@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import sqlite3
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
@@ -33,14 +34,16 @@ from gpumod.registry import ModelRegistry
 from gpumod.services.lifecycle import LifecycleManager
 from gpumod.services.manager import ServiceManager
 from gpumod.services.registry import ServiceRegistry
-from gpumod.services.unit_installer import UnitFileInstaller
 from gpumod.services.sleep import SleepController
+from gpumod.services.unit_installer import UnitFileInstaller
 from gpumod.services.vram import VRAMTracker
 from gpumod.simulation import SimulationEngine
 from gpumod.templates.engine import TemplateEngine
-from gpumod.templates.modes import ModeLoader
-from gpumod.templates.presets import PresetLoader
+from gpumod.templates.modes import ModeLoader, sync_modes
+from gpumod.templates.presets import PresetLoader, sync_presets
 from gpumod.visualization import StatusPanel
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Coroutine, Generator
@@ -171,16 +174,25 @@ async def create_context(db_path: Path | None = None) -> AppContext:
 @asynccontextmanager
 async def cli_context(
     db_path: Path | None = None,
+    *,
+    no_sync: bool = False,
 ) -> AsyncGenerator[AppContext, None]:
     """Async context manager that creates an AppContext and closes the DB.
 
     Replaces the repeated pattern of calling create_context() in a
     try/finally with an explicit ctx.db.close() call.
 
+    By default, syncs presets and modes from YAML files to the database
+    before yielding. This ensures the DB always reflects the current
+    state of YAML definitions.
+
     Parameters
     ----------
     db_path:
         Optional path forwarded to :func:`create_context`.
+    no_sync:
+        If True, skip auto-sync of presets and modes. Useful for
+        read-only commands or when sync is not needed.
 
     Yields
     ------
@@ -189,6 +201,31 @@ async def cli_context(
     """
     ctx = await create_context(db_path=db_path)
     try:
+        if not no_sync:
+            try:
+                preset_result = await sync_presets(ctx.db, ctx.preset_loader)
+                logger.debug(
+                    "Preset sync: %d inserted, %d updated, %d unchanged, %d deleted",
+                    preset_result.inserted,
+                    preset_result.updated,
+                    preset_result.unchanged,
+                    preset_result.deleted,
+                )
+            except Exception as exc:
+                logger.warning("Preset sync failed: %s", exc)
+
+            try:
+                mode_result = await sync_modes(ctx.db, ctx.mode_loader)
+                logger.debug(
+                    "Mode sync: %d inserted, %d updated, %d unchanged, %d deleted",
+                    mode_result.inserted,
+                    mode_result.updated,
+                    mode_result.unchanged,
+                    mode_result.deleted,
+                )
+            except Exception as exc:
+                logger.warning("Mode sync failed: %s", exc)
+
         yield ctx
     finally:
         await ctx.db.close()
@@ -310,12 +347,13 @@ _STATE_COLORS: dict[str, str] = {
 def status(
     as_json: bool = typer.Option(False, "--json", help="Output as JSON."),
     visual: bool = typer.Option(False, "--visual", help="Show VRAM bar visualization."),
+    no_sync: bool = typer.Option(False, "--no-sync", help="Skip auto-sync of presets and modes."),
 ) -> None:
     """Show system status (GPU, VRAM, services)."""
     console = Console()
 
     async def _cmd() -> None:
-        async with cli_context() as ctx:
+        async with cli_context(no_sync=no_sync) as ctx:
             system_status = await ctx.manager.get_status()
 
             if as_json:

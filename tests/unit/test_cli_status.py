@@ -22,8 +22,28 @@ from gpumod.models import (
     SystemStatus,
     VRAMUsage,
 )
+from gpumod.templates.modes import ModeSyncResult
+from gpumod.templates.presets import PresetSyncResult
 
 runner = typer.testing.CliRunner()
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _disable_cli_auto_sync():
+    """Disable auto-sync in cli_context to preserve test fixtures."""
+    mock_preset_result = PresetSyncResult(inserted=0, updated=0, unchanged=0, deleted=0)
+    mock_mode_result = ModeSyncResult(inserted=0, updated=0, unchanged=0, deleted=0)
+
+    with (
+        patch("gpumod.cli.sync_presets", new=AsyncMock(return_value=mock_preset_result)),
+        patch("gpumod.cli.sync_modes", new=AsyncMock(return_value=mock_mode_result)),
+    ):
+        yield
 
 
 # ---------------------------------------------------------------------------

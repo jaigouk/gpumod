@@ -6,6 +6,7 @@ model objects. Uses ``yaml.safe_load()`` exclusively for security.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -13,6 +14,8 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from gpumod.models import PresetConfig, Service
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -159,6 +162,9 @@ class PresetLoader:
     def load_directory(self, directory: Path) -> list[PresetConfig]:
         """Load all YAML preset files from a directory (recursive).
 
+        Files that fail to parse (malformed YAML, validation errors) are
+        logged and skipped rather than failing the entire load.
+
         Args:
             directory: Directory to scan for ``.yaml`` / ``.yml`` files.
 
@@ -173,11 +179,13 @@ class PresetLoader:
             msg = f"Preset directory not found: {directory}"
             raise FileNotFoundError(msg)
 
-        presets = [
-            self.load_file(yaml_file)
-            for yaml_file in sorted(resolved.rglob("*"))
-            if yaml_file.is_file() and yaml_file.suffix in _YAML_EXTENSIONS
-        ]
+        presets: list[PresetConfig] = []
+        for yaml_file in sorted(resolved.rglob("*")):
+            if yaml_file.is_file() and yaml_file.suffix in _YAML_EXTENSIONS:
+                try:
+                    presets.append(self.load_file(yaml_file))
+                except Exception as exc:
+                    logger.warning("Failed to load preset %s: %s", yaml_file.name, exc)
         return sorted(presets, key=lambda p: p.id)
 
     def to_service(self, preset: PresetConfig) -> Service:
