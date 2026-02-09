@@ -145,16 +145,17 @@ class TestRenderVllmUnit:
         engine = TemplateEngine()
         result = engine.render_service_unit(vllm_service, default_settings)
         assert "[Install]" in result
-        assert "WantedBy=multi-user.target" in result
+        assert "WantedBy=default.target" in result
 
-    def test_user_from_settings(
+    def test_no_user_directive_in_user_units(
         self, vllm_service: Service, default_settings: dict[str, str]
     ) -> None:
+        """User-level systemd units must not contain User= directive."""
         from gpumod.templates.engine import TemplateEngine
 
         engine = TemplateEngine()
         result = engine.render_service_unit(vllm_service, default_settings)
-        assert "User=gpumod" in result
+        assert "User=" not in result
 
     def test_cuda_visible_devices(
         self, vllm_service: Service, default_settings: dict[str, str]
@@ -198,6 +199,138 @@ class TestRenderVllmUnit:
         engine = TemplateEngine()
         result = engine.render_service_unit(vllm_service, default_settings)
         assert "HF_HOME=/data/.cache/huggingface" in result
+
+    def test_dtype_rendered(
+        self, vllm_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        unit_vars: dict[str, Any] = {"dtype": "float16"}
+        result = engine.render_service_unit(vllm_service, default_settings, unit_vars=unit_vars)
+        assert "--dtype float16" in result
+
+    def test_enforce_eager(
+        self, vllm_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        unit_vars: dict[str, Any] = {"enforce_eager": True}
+        result = engine.render_service_unit(vllm_service, default_settings, unit_vars=unit_vars)
+        assert "--enforce-eager" in result
+
+    def test_enforce_eager_false_omitted(
+        self, vllm_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        result = engine.render_service_unit(vllm_service, default_settings)
+        assert "--enforce-eager" not in result
+
+    def test_runner_pooling_maps_to_embed(
+        self, vllm_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        """runner='pooling' should map to --task embed for vllm."""
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        unit_vars: dict[str, Any] = {"runner": "pooling"}
+        result = engine.render_service_unit(vllm_service, default_settings, unit_vars=unit_vars)
+        assert "--task embed" in result
+        assert "--task pooling" not in result
+
+    def test_runner_generate(
+        self, vllm_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        unit_vars: dict[str, Any] = {"runner": "generate"}
+        result = engine.render_service_unit(vllm_service, default_settings, unit_vars=unit_vars)
+        assert "--task generate" in result
+
+    def test_hf_overrides(
+        self, vllm_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        overrides = '{"architectures": ["CustomArch"]}'
+        unit_vars: dict[str, Any] = {"hf_overrides": overrides}
+        result = engine.render_service_unit(vllm_service, default_settings, unit_vars=unit_vars)
+        assert f"--hf-overrides '{overrides}'" in result
+
+    def test_sleep_mode_flags(
+        self, vllm_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        unit_vars: dict[str, Any] = {"enable_sleep_mode": True, "sleep_level": 2}
+        result = engine.render_service_unit(vllm_service, default_settings, unit_vars=unit_vars)
+        assert "--enable-sleep-mode" in result
+        assert "--sleep-level 2" in result
+
+    def test_trust_remote_code(
+        self, vllm_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        unit_vars: dict[str, Any] = {"trust_remote_code": True}
+        result = engine.render_service_unit(vllm_service, default_settings, unit_vars=unit_vars)
+        assert "--trust-remote-code" in result
+
+    def test_max_num_seqs(
+        self, vllm_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        unit_vars: dict[str, Any] = {"max_num_seqs": 8}
+        result = engine.render_service_unit(vllm_service, default_settings, unit_vars=unit_vars)
+        assert "--max-num-seqs 8" in result
+
+    def test_extra_args(
+        self, vllm_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        unit_vars: dict[str, Any] = {"extra_args": "--quantization awq"}
+        result = engine.render_service_unit(vllm_service, default_settings, unit_vars=unit_vars)
+        assert "--quantization awq" in result
+
+    def test_full_reranker_preset(
+        self, vllm_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        """Full reranker-like preset renders all flags correctly."""
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        unit_vars: dict[str, Any] = {
+            "gpu_mem_util": 0.25,
+            "max_model_len": 512,
+            "max_num_seqs": 8,
+            "dtype": "float16",
+            "enforce_eager": True,
+            "runner": "pooling",
+            "hf_overrides": '{"architectures": ["Qwen3VLForSequenceClassification"]}',
+            "enable_sleep_mode": True,
+            "sleep_level": 2,
+        }
+        result = engine.render_service_unit(vllm_service, default_settings, unit_vars=unit_vars)
+        assert "--gpu-memory-utilization 0.25" in result
+        assert "--max-model-len 512" in result
+        assert "--max-num-seqs 8" in result
+        assert "--dtype float16" in result
+        assert "--enforce-eager" in result
+        assert "--task embed" in result  # pooling -> embed
+        assert "--hf-overrides" in result
+        assert "--enable-sleep-mode" in result
+        assert "--sleep-level 2" in result
 
 
 # ── render_service_unit for llamacpp ────────────────────────────────────
@@ -268,6 +401,77 @@ class TestRenderLlamacppUnit:
             llamacpp_service, default_settings, unit_vars=unit_vars
         )
         assert "--flash-attn" not in result
+
+    def test_router_mode_models_dir(
+        self, llamacpp_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        """Router mode uses --models-dir instead of --model."""
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        unit_vars: dict[str, Any] = {
+            "models_dir": "/home/user/bin",
+            "no_models_autoload": True,
+            "models_max": 1,
+            "jinja": True,
+        }
+        result = engine.render_service_unit(
+            llamacpp_service, default_settings, unit_vars=unit_vars
+        )
+        assert "--models-dir /home/user/bin" in result
+        assert "--no-models-autoload" in result
+        assert "--models-max 1" in result
+        assert "--jinja" in result
+        assert "--model " not in result  # no --model in router mode
+
+    def test_router_mode_without_models_max(
+        self, llamacpp_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        """Router mode without models_max omits --models-max flag."""
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        unit_vars: dict[str, Any] = {
+            "models_dir": "/home/user/bin",
+            "no_models_autoload": True,
+        }
+        result = engine.render_service_unit(
+            llamacpp_service, default_settings, unit_vars=unit_vars
+        )
+        assert "--models-dir /home/user/bin" in result
+        assert "--no-models-autoload" in result
+        assert "--models-max" not in result
+
+    def test_router_mode_omits_ctx_size(
+        self, llamacpp_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        """Router mode omits --ctx-size unless explicitly set."""
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        unit_vars: dict[str, Any] = {
+            "models_dir": "/home/user/bin",
+        }
+        result = engine.render_service_unit(
+            llamacpp_service, default_settings, unit_vars=unit_vars
+        )
+        assert "--ctx-size" not in result
+
+    def test_router_mode_explicit_ctx_size(
+        self, llamacpp_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        """Router mode includes --ctx-size when explicitly set."""
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        unit_vars: dict[str, Any] = {
+            "models_dir": "/home/user/bin",
+            "context_size": 8192,
+        }
+        result = engine.render_service_unit(
+            llamacpp_service, default_settings, unit_vars=unit_vars
+        )
+        assert "--ctx-size 8192" in result
 
 
 # ── render_service_unit for fastapi ─────────────────────────────────────

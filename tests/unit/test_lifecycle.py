@@ -369,3 +369,76 @@ class TestLifecycleError:
         assert err.service_id == "svc-b"
         assert err.operation == "stop"
         assert err.reason == "process did not exit"
+
+
+# ---------------------------------------------------------------------------
+# Test: start calls wake() for router-mode services
+# ---------------------------------------------------------------------------
+
+
+class TestStartWakesRouterService:
+    """Test that start() calls driver.wake() for router-mode services."""
+
+    async def test_start_calls_wake_for_router_sleep_mode(self) -> None:
+        """Router services should have wake() called after health check."""
+        router_svc = Service(
+            id="router-svc",
+            name="Router Service",
+            driver=DriverType.LLAMACPP,
+            port=7070,
+            vram_mb=20000,
+            sleep_mode=SleepMode.ROUTER,
+            model_id="org/model",
+            unit_name="router-svc.service",
+            extra_config={},
+        )
+        registry = _build_mock_registry(services={"router-svc": router_svc})
+        driver = _build_mock_driver(healthy=True, state=ServiceState.STOPPED)
+        driver.supports_sleep = True
+        driver.wake = AsyncMock()
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+        await lm.start("router-svc")
+
+        driver.start.assert_called_once_with(router_svc)
+        driver.wake.assert_awaited_once_with(router_svc)
+
+    async def test_start_does_not_call_wake_for_non_router(self) -> None:
+        """Non-router services should NOT have wake() called."""
+        registry = _build_mock_registry()
+        driver = _build_mock_driver(healthy=True, state=ServiceState.STOPPED)
+        driver.supports_sleep = False
+        driver.wake = AsyncMock()
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+        await lm.start("svc-a")
+
+        driver.start.assert_called_once_with(SVC_A)
+        driver.wake.assert_not_awaited()
+
+    async def test_start_does_not_wake_already_running_router(self) -> None:
+        """Already-running router services should be skipped entirely."""
+        router_svc = Service(
+            id="router-svc",
+            name="Router Service",
+            driver=DriverType.LLAMACPP,
+            port=7070,
+            vram_mb=20000,
+            sleep_mode=SleepMode.ROUTER,
+            model_id="org/model",
+            unit_name="router-svc.service",
+            extra_config={},
+        )
+        registry = _build_mock_registry(services={"router-svc": router_svc})
+        driver = _build_mock_driver(state=ServiceState.RUNNING)
+        driver.supports_sleep = True
+        driver.wake = AsyncMock()
+        registry.get_driver = lambda dtype: driver
+
+        lm = LifecycleManager(registry)
+        await lm.start("router-svc")
+
+        driver.start.assert_not_called()
+        driver.wake.assert_not_awaited()

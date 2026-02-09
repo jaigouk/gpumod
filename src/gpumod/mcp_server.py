@@ -28,6 +28,7 @@ from gpumod.mcp_tools import register_tools
 from gpumod.registry import ModelRegistry
 from gpumod.services.lifecycle import LifecycleManager
 from gpumod.services.manager import ServiceManager
+from gpumod.services.unit_installer import UnitFileInstaller
 from gpumod.services.registry import ServiceRegistry
 from gpumod.services.sleep import SleepController
 from gpumod.services.vram import VRAMTracker
@@ -310,7 +311,8 @@ async def gpumod_lifespan(
     await db.connect()
 
     registry = ServiceRegistry(db)
-    lifecycle = LifecycleManager(registry)
+    unit_installer = UnitFileInstaller(db=db, template_engine=TemplateEngine())
+    lifecycle = LifecycleManager(registry, unit_installer=unit_installer)
     vram = VRAMTracker()
     sleep = SleepController(registry)
     manager = ServiceManager(

@@ -17,8 +17,8 @@ template_app = typer.Typer(name="template", help="Manage service templates.")
 
 _console = Console()
 
-# Default systemd unit install directory.
-_SYSTEMD_UNIT_DIR = Path("/etc/systemd/system")
+# Default systemd unit install directory (user-level units).
+_SYSTEMD_UNIT_DIR = Path.home() / ".config" / "systemd" / "user"
 
 # Pattern for safe unit names: alphanumeric, hyphens, underscores only.
 _SAFE_UNIT_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
@@ -64,6 +64,9 @@ def _get_unit_name(service: Any) -> str:
         ValueError: If the derived unit name contains unsafe characters.
     """
     unit_name: str = service.unit_name or f"gpumod-{service.id}"
+    # Strip .service suffix if present — it gets appended by the caller.
+    if unit_name.endswith(".service"):
+        unit_name = unit_name.removesuffix(".service")
     if not _SAFE_UNIT_NAME_RE.match(unit_name):
         msg = f"Unsafe unit name: {unit_name!r}"
         raise ValueError(msg)
@@ -71,12 +74,35 @@ def _get_unit_name(service: Any) -> str:
 
 
 async def _build_settings(ctx: Any) -> dict[str, str]:
-    """Build a settings dict from DB settings for template rendering."""
+    """Build a settings dict from DB settings for template rendering.
+
+    Automatically resolves binary paths (vllm, llama-server, uvicorn)
+    via ``shutil.which`` so that user-level systemd units get absolute
+    paths even when the shell PATH isn't inherited.
+    """
+    import shutil
+
     settings: dict[str, str] = {}
     for key in ("user", "cuda_devices", "working_dir"):
         val: str | None = await ctx.db.get_setting(key)
         if val is not None:
             settings[key] = val
+
+    # Auto-detect binary paths when not explicitly configured.
+    _binary_keys = {
+        "vllm_bin": "vllm",
+        "llamacpp_bin": "llama-server",
+        "uvicorn_bin": "uvicorn",
+    }
+    for setting_key, binary_name in _binary_keys.items():
+        val = await ctx.db.get_setting(setting_key)
+        if val is None:
+            resolved = shutil.which(binary_name)
+            if resolved:
+                settings[setting_key] = resolved
+        else:
+            settings[setting_key] = val
+
     return settings
 
 

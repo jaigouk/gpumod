@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 import typer.testing
 
 from gpumod.cli import app
+from gpumod.cli_template import _build_settings
 from gpumod.models import DriverType, Service
 
 runner = typer.testing.CliRunner()
@@ -305,6 +307,42 @@ class TestTemplateInstall:
         assert result.exit_code == 0  # error_handler catches it
         assert "error" in result.output.lower() or "not found" in result.output.lower()
 
+    def test_template_install_strips_service_suffix_from_unit_name(self) -> None:
+        """When unit_name includes .service suffix, strip it to avoid duplication."""
+        import tempfile
+        from pathlib import Path
+
+        svc = _make_service(id="svc-1", unit_name="devstral-small-2.service")
+        mock_ctx = _make_mock_context()
+        mock_ctx.db.get_service = AsyncMock(return_value=svc)
+        rendered = "[Unit]\nDescription=Devstral\n"
+        mock_ctx.template_engine.render_service_unit = MagicMock(return_value=rendered)
+
+        with tempfile.TemporaryDirectory() as td:
+            install_dir = Path(td)
+            with (
+                patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)),
+                patch(
+                    "gpumod.cli_template._SYSTEMD_UNIT_DIR",
+                    install_dir,
+                ),
+            ):
+                result = runner.invoke(app, ["template", "install", "svc-1", "--yes"])
+
+            assert result.exit_code == 0
+            # Should be devstral-small-2.service, NOT devstral-small-2.service.service
+            unit_file = install_dir / "devstral-small-2.service"
+            assert unit_file.exists()
+            assert not (install_dir / "devstral-small-2.service.service").exists()
+
+    def test_template_install_user_level_unit_dir(self) -> None:
+        """Unit files should be installed to ~/.config/systemd/user/ by default."""
+        from pathlib import Path
+
+        from gpumod.cli_template import _SYSTEMD_UNIT_DIR
+
+        assert Path.home() / ".config" / "systemd" / "user" == _SYSTEMD_UNIT_DIR
+
     def test_template_install_default_unit_name(self) -> None:
         """When service has no unit_name, use gpumod-{service_id} as default."""
         import tempfile
@@ -330,3 +368,64 @@ class TestTemplateInstall:
             assert result.exit_code == 0
             unit_file = install_dir / "gpumod-svc-1.service"
             assert unit_file.exists()
+
+
+# ---------------------------------------------------------------------------
+# _build_settings tests
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSettings:
+    """Tests for _build_settings binary auto-detection."""
+
+    @pytest.fixture
+    def mock_ctx(self) -> MagicMock:
+        ctx = MagicMock()
+        ctx.db = MagicMock()
+        ctx.db.get_setting = AsyncMock(return_value=None)
+        return ctx
+
+    async def test_auto_detects_vllm_binary(self, mock_ctx: MagicMock) -> None:
+        """When vllm_bin is not configured, resolve it via shutil.which."""
+        with patch("shutil.which", return_value="/usr/local/bin/vllm"):
+            settings = await _build_settings(mock_ctx)
+        assert settings["vllm_bin"] == "/usr/local/bin/vllm"
+
+    async def test_auto_detects_llamacpp_binary(self, mock_ctx: MagicMock) -> None:
+        """When llamacpp_bin is not configured, resolve it via shutil.which."""
+        with patch(
+            "shutil.which",
+            side_effect=lambda name: "/usr/bin/llama-server" if name == "llama-server" else None,
+        ):
+            settings = await _build_settings(mock_ctx)
+        assert settings["llamacpp_bin"] == "/usr/bin/llama-server"
+
+    async def test_auto_detects_uvicorn_binary(self, mock_ctx: MagicMock) -> None:
+        """When uvicorn_bin is not configured, resolve it via shutil.which."""
+        with patch(
+            "shutil.which",
+            side_effect=lambda name: "/opt/venv/bin/uvicorn" if name == "uvicorn" else None,
+        ):
+            settings = await _build_settings(mock_ctx)
+        assert settings["uvicorn_bin"] == "/opt/venv/bin/uvicorn"
+
+    async def test_explicit_setting_overrides_auto_detection(self, mock_ctx: MagicMock) -> None:
+        """Explicit DB settings take precedence over shutil.which."""
+
+        async def _get_setting(key: str) -> str | None:
+            if key == "vllm_bin":
+                return "/custom/path/vllm"
+            return None
+
+        mock_ctx.db.get_setting = AsyncMock(side_effect=_get_setting)
+        with patch("shutil.which", return_value="/wrong/path/vllm"):
+            settings = await _build_settings(mock_ctx)
+        assert settings["vllm_bin"] == "/custom/path/vllm"
+
+    async def test_missing_binary_omitted_from_settings(self, mock_ctx: MagicMock) -> None:
+        """When a binary is not found, it should not appear in settings."""
+        with patch("shutil.which", return_value=None):
+            settings = await _build_settings(mock_ctx)
+        assert "vllm_bin" not in settings
+        assert "llamacpp_bin" not in settings
+        assert "uvicorn_bin" not in settings

@@ -368,7 +368,7 @@ Restart=on-failure
 RestartSec=30
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 ```
 
 **Service Presets (YAML):**

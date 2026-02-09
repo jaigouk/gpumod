@@ -270,12 +270,25 @@ class Database:
     # Modes CRUD
     # ------------------------------------------------------------------
 
+    async def _populate_mode_services(self, mode: Mode) -> Mode:
+        """Populate the services list on a Mode from the junction table."""
+        conn = self._ensure_conn()
+        cursor = await conn.execute(
+            "SELECT service_id FROM mode_services WHERE mode_id = ? ORDER BY start_order",
+            (mode.id,),
+        )
+        rows = await cursor.fetchall()
+        mode.services = [r["service_id"] for r in rows]
+        return mode
+
     async def list_modes(self) -> list[Mode]:
-        """Return all modes ordered by ID."""
+        """Return all modes ordered by ID, with services populated."""
         conn = self._ensure_conn()
         cursor = await conn.execute("SELECT * FROM modes ORDER BY id")
         rows = await cursor.fetchall()
         result = [self._row_to_mode(r) for r in rows]
+        for mode in result:
+            await self._populate_mode_services(mode)
         logger.debug("Listed %d modes", len(result))
         return result
 
@@ -287,8 +300,10 @@ class Database:
         if row is None:
             logger.debug("Mode %r not found", mode_id)
             return None
+        mode = self._row_to_mode(row)
+        await self._populate_mode_services(mode)
         logger.debug("Retrieved mode %r", mode_id)
-        return self._row_to_mode(row)
+        return mode
 
     async def insert_mode(self, mode: Mode) -> None:
         """Insert a mode into the database."""

@@ -57,18 +57,21 @@ gpumod service list
 gpumod auto-generates systemd unit files from presets — no manual unit files needed.
 
 ```bash
+# Enable user-level systemd lingering (one-time setup)
+sudo loginctl enable-linger $USER
+
 # Preview the generated unit file
 gpumod template generate vllm-chat
 
-# Install it to /etc/systemd/system/
-sudo gpumod template install vllm-chat --yes
+# Install it to ~/.config/systemd/user/
+gpumod template install vllm-chat --yes
 
-# Start the service (uses sudo systemctl internally)
+# Start the service (uses systemctl --user, no sudo needed)
 gpumod service start vllm-chat
 ```
 
-For passwordless operation, configure a sudoers rule — see the
-[Getting Started](https://jaigouk.com/gpumod/getting-started/) guide.
+See the [Getting Started](https://jaigouk.com/gpumod/getting-started/) guide
+for full setup instructions.
 
 ## Mode Switching
 
