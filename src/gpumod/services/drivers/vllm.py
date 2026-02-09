@@ -151,9 +151,7 @@ class VLLMDriver(ServiceDriver):
         """
         try:
             async with httpx.AsyncClient(timeout=self._http_timeout) as client:
-                resp = await client.get(
-                    f"http://localhost:{service.port}/is_sleeping"
-                )
+                resp = await client.get(f"http://localhost:{service.port}/is_sleeping")
                 if resp.status_code != 200:
                     return False
                 data: dict[str, bool] = resp.json()

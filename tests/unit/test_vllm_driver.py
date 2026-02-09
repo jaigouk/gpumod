@@ -197,9 +197,7 @@ class TestVLLMSleep:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.post = AsyncMock(
-                side_effect=httpx.ConnectError("Connection refused")
-            )
+            mock_client.post = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
             mock_client_cls.return_value = mock_client
 
             with pytest.raises(httpx.ConnectError):
@@ -291,9 +289,7 @@ class TestVLLMWake:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.post = AsyncMock(
-                side_effect=httpx.ConnectError("Connection refused")
-            )
+            mock_client.post = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
             mock_client_cls.return_value = mock_client
 
             with pytest.raises(httpx.ConnectError):
@@ -356,9 +352,7 @@ class TestVLLMIsSleeping:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.get = AsyncMock(
-                side_effect=httpx.ConnectError("Connection refused")
-            )
+            mock_client.get = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
             mock_client_cls.return_value = mock_client
 
             # Should not raise, just return False

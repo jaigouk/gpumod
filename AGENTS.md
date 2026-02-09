@@ -241,10 +241,10 @@ Ensure code quality for {PHASE/COMPONENT}. ALL gates must pass.
 
 ### Run All Gates (single command)
 ```bash
-ruff check src tests && uv run mypy src && uv run pytest tests/ -q
+ruff check src tests && ruff format --check src tests && uv run mypy src && uv run pytest tests/ -q
 ```
 
-This runs all three checks sequentially. If any fails, execution stops immediately.
+This runs all four checks sequentially. If any fails, execution stops immediately.
 
 ### Individual Gates
 
