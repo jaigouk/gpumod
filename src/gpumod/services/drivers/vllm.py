@@ -156,8 +156,8 @@ class VLLMDriver(ServiceDriver):
                 )
                 if resp.status_code != 200:
                     return False
-                data = resp.json()
-                return data.get("is_sleeping", False)
+                data: dict[str, bool] = resp.json()
+                return bool(data.get("is_sleeping", False))
         except (httpx.ConnectError, httpx.TimeoutException, OSError):
             return False
 

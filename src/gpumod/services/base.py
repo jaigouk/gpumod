@@ -39,8 +39,16 @@ class ServiceDriver(ABC):
         """Check if the service is healthy."""
         ...
 
-    async def sleep(self, service: Service, level: str = "l1") -> None:
-        """Put the service to sleep. Override in drivers that support sleep."""
+    async def sleep(self, service: Service, level: int = 1) -> None:
+        """Put the service to sleep. Override in drivers that support sleep.
+
+        Parameters
+        ----------
+        service:
+            The service to put to sleep.
+        level:
+            Sleep level (1 or 2). Level semantics are driver-specific.
+        """
         raise NotImplementedError(f"{self.__class__.__name__} does not support sleep")
 
     async def wake(self, service: Service) -> None:
