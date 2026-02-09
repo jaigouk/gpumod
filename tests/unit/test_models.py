@@ -189,12 +189,12 @@ class TestModeModel:
             id="code",
             name="Code Mode",
             description="Agentic coding",
-            services=["embedding-code", "glm-code"],
+            services=["embedding-code", "qwen3-coder"],
             total_vram_mb=22000,
         )
         assert mode.id == "code"
         assert mode.name == "Code Mode"
-        assert mode.services == ["embedding-code", "glm-code"]
+        assert mode.services == ["embedding-code", "qwen3-coder"]
         assert mode.total_vram_mb == 22000
 
     def test_defaults(self) -> None:
@@ -235,13 +235,13 @@ class TestModeResultModel:
         result = ModeResult(
             success=True,
             mode_id="code",
-            started=["embedding-code", "glm-code"],
+            started=["embedding-code", "qwen3-coder"],
             stopped=[],
             message="Switched to code mode",
         )
         assert result.success is True
         assert result.mode_id == "code"
-        assert result.started == ["embedding-code", "glm-code"]
+        assert result.started == ["embedding-code", "qwen3-coder"]
         assert result.stopped == []
         assert result.message == "Switched to code mode"
 
