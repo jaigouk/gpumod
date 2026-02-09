@@ -169,9 +169,7 @@ def compute_consistency(
         fact_counts[fact] = sum(1 for facts in facts_per_response if fact in facts)
 
     # Identify inconsistent facts (below threshold)
-    inconsistent = [
-        fact for fact, count in fact_counts.items() if count / runs < threshold
-    ]
+    inconsistent = [fact for fact, count in fact_counts.items() if count / runs < threshold]
 
     # Compute overall consistency score
     # Score = average appearance rate of all facts

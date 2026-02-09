@@ -14,14 +14,12 @@ from gpumod.benchmark.mode_switch import (
 )
 
 __all__ = [
-    # Consistency checking
     "ConsistencyChecker",
     "ConsistencyResult",
-    "compute_consistency",
-    "extract_facts",
-    # Mode switching
     "ModeSwitchBenchmark",
     "ModeSwitchResult",
     "TransitionStats",
+    "compute_consistency",
+    "extract_facts",
     "generate_comparison_table",
 ]
