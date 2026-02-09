@@ -173,8 +173,49 @@ await client.post(f"http://localhost:{service.port}/wake_up")
 3. **Stale state** — Sleeping services may lose connection state, need health re-check after wake
 4. **Dev mode security** — `/sleep` and `/wake_up` endpoints should not be publicly exposed
 
+## Spike Verification (2026-02-09)
+
+### API Endpoints Confirmed via Context7
+
+| Endpoint | Method | Purpose | Format |
+|----------|--------|---------|--------|
+| `/sleep?level=1` | POST | L1 sleep (offload to CPU) | Query param, not JSON body |
+| `/sleep?level=2` | POST | L2 sleep (discard all) | Query param, not JSON body |
+| `/wake_up` | POST | Wake from sleep | Not `/wake` |
+| `/wake_up?tags=weights` | POST | Selective wake (L2) | Query param |
+| `/is_sleeping` | GET | Check sleep state | Returns `{"is_sleeping": bool}` |
+| `/collective_rpc` | POST | RPC for reload_weights | JSON body `{"method":"reload_weights"}` |
+
+### VLLMDriver Bug Confirmation
+
+The existing spike correctly identified the bugs. Context7 docs confirm:
+
+```python
+# WRONG (current driver):
+await client.post(f"http://localhost:{port}/sleep", json={"level": level})
+await client.post(f"http://localhost:{port}/wake")
+
+# CORRECT (verified from Context7):
+await client.post(f"http://localhost:{port}/sleep?level={level}")
+await client.post(f"http://localhost:{port}/wake_up")
+```
+
+### Live Testing Blocked
+
+Live API testing was blocked by:
+1. **systemctl --user unavailable** — No D-Bus session in Claude Code environment
+2. **VRAM OOM for VL models** — Qwen3-VL-2B needs encoder cache, exhausts 35% util
+3. **External process conflicts** — Other vllm instances starting on same ports
+
+### Next Steps
+
+1. **gpumod-b8q**: Fix VLLMDriver endpoints based on confirmed API format
+2. **Manual verification**: Test on machine with systemd user session
+3. **Integration tests**: Mock-based tests for driver methods
+
 ## References
 
 - [vLLM Sleep Mode docs](https://docs.vllm.ai/en/latest/features/sleep_mode)
 - vLLM source: `vllm/v1/worker/gpu_worker.py` (sleep implementation)
 - gpumod drivers: `src/gpumod/services/drivers/vllm.py`, `llamacpp.py`
+- Context7 query: `/websites/vllm_ai_en` (2026-02-09)
