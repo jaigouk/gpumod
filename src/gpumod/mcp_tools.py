@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastmcp import Context  # noqa: TC002 -- runtime import needed for FastMCP DI
 
+from gpumod.discovery.hf_searcher import HuggingFaceSearcher
 from gpumod.simulation import SimulationError
 from gpumod.validation import (
     sanitize_name,
@@ -302,6 +303,9 @@ async def stop_service(service_id: str, ctx: Context) -> dict[str, Any]:
 # Valid task types for search filtering
 _VALID_TASKS = frozenset({"code", "chat", "embed", "reasoning"})
 
+# Valid driver types for search filtering
+_VALID_DRIVERS = frozenset({"llamacpp", "vllm", "any"})
+
 # Limits for validation
 _MAX_SEARCH_LIMIT = 100
 _MIN_CONTEXT_SIZE = 512
@@ -320,25 +324,28 @@ def _validate_repo_id(repo_id: str) -> str | None:
     return None
 
 
-async def search_hf_models(
+async def search_hf_models(  # noqa: PLR0911
     ctx: Context,
     author: str | None = None,
     search: str | None = None,
     task: str | None = None,
+    driver: str | None = None,
     limit: int = 20,
     no_cache: bool = False,
 ) -> dict[str, Any]:
-    """Search HuggingFace for GGUF models by author, keyword, or task.
+    """Search HuggingFace for models by author, keyword, task, or driver.
 
     Args:
         author: HuggingFace organization (default: searches all).
         search: Keyword to search in model names.
         task: Filter by task type (code, chat, embed, reasoning).
+        driver: Filter by driver type (llamacpp for GGUF, vllm for Safetensors, any).
         limit: Maximum results to return (1-100, default 20).
         no_cache: Bypass cache for fresh results.
 
     Returns:
-        Dict with 'models' list containing repo_id, name, description, tags.
+        Dict with 'models' list containing repo_id, name, description, tags,
+        and optionally model_format and driver_hint when driver param used.
     """
     from gpumod.discovery.unsloth_lister import HuggingFaceAPIError, UnslothModelLister
 
@@ -352,7 +359,38 @@ async def search_hf_models(
     if task is not None and task not in _VALID_TASKS:
         return _validation_error(f"task must be one of: {', '.join(sorted(_VALID_TASKS))}")
 
+    # Validate driver
+    if driver is not None and driver not in _VALID_DRIVERS:
+        return _validation_error(f"driver must be one of: {', '.join(sorted(_VALID_DRIVERS))}")
+
     try:
+        # Use HuggingFaceSearcher when driver param is specified (new unified search)
+        if driver is not None:
+            searcher = HuggingFaceSearcher(cache_ttl_seconds=3600)
+            results = await searcher.search(
+                query=search or "",
+                author=author,
+                driver=driver,
+                limit=limit,
+                force_refresh=no_cache,
+            )
+
+            # Convert SearchResult to serializable dicts
+            result_models = [
+                {
+                    "repo_id": r.repo_id,
+                    "name": r.name,
+                    "description": r.description,
+                    "tags": list(r.tags),
+                    "model_format": r.model_format,
+                    "driver_hint": r.driver_hint,
+                }
+                for r in results
+            ]
+
+            return {"models": result_models, "count": len(result_models)}
+
+        # Legacy path: use UnslothModelLister for backward compatibility
         lister = UnslothModelLister(author=author, cache_ttl_seconds=3600)
         models = await lister.list_models(
             task=task,

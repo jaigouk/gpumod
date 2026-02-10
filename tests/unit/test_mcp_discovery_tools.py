@@ -246,6 +246,143 @@ class TestSearchHFModels:
             assert call_kwargs.get("force_refresh") is True
 
 
+class TestSearchHFModelsDriverFilter:
+    """Tests for driver parameter in search_hf_models MCP tool."""
+
+    async def test_search_with_driver_llamacpp(self) -> None:
+        """driver='llamacpp' filters to GGUF models only."""
+        from gpumod.discovery.protocols import SearchResult
+        from gpumod.mcp_tools import search_hf_models
+
+        gguf_result = SearchResult(
+            repo_id="user/model-GGUF",
+            name="Model GGUF",
+            description="GGUF model",
+            last_modified=datetime.now(tz=UTC),
+            tags=("gguf",),
+            model_format="gguf",
+            driver_hint="llamacpp",
+        )
+
+        with patch("gpumod.mcp_tools.HuggingFaceSearcher") as searcher_cls:
+            mock_searcher = AsyncMock()
+            mock_searcher.search.return_value = [gguf_result]
+            searcher_cls.return_value = mock_searcher
+
+            result = await search_hf_models(
+                search="model", driver="llamacpp", ctx=_make_mock_ctx()
+            )
+
+            mock_searcher.search.assert_awaited_once()
+            call_kwargs = mock_searcher.search.call_args.kwargs
+            assert call_kwargs.get("driver") == "llamacpp"
+            assert "models" in result
+            assert all(m.get("driver_hint") == "llamacpp" for m in result["models"])
+
+    async def test_search_with_driver_vllm(self) -> None:
+        """driver='vllm' filters to Safetensors models only."""
+        from gpumod.discovery.protocols import SearchResult
+        from gpumod.mcp_tools import search_hf_models
+
+        vllm_result = SearchResult(
+            repo_id="user/model",
+            name="Model",
+            description="Safetensors model",
+            last_modified=datetime.now(tz=UTC),
+            tags=("safetensors", "transformers"),
+            model_format="safetensors",
+            driver_hint="vllm",
+        )
+
+        with patch("gpumod.mcp_tools.HuggingFaceSearcher") as searcher_cls:
+            mock_searcher = AsyncMock()
+            mock_searcher.search.return_value = [vllm_result]
+            searcher_cls.return_value = mock_searcher
+
+            result = await search_hf_models(
+                search="model", driver="vllm", ctx=_make_mock_ctx()
+            )
+
+            call_kwargs = mock_searcher.search.call_args.kwargs
+            assert call_kwargs.get("driver") == "vllm"
+            assert all(m.get("driver_hint") == "vllm" for m in result["models"])
+
+    async def test_search_validates_driver_value(self) -> None:
+        """driver must be a valid driver type."""
+        from gpumod.mcp_tools import search_hf_models
+
+        result = await search_hf_models(driver="invalid_driver", ctx=_make_mock_ctx())
+        assert "error" in result
+        assert result["code"] == "VALIDATION_ERROR"
+
+    async def test_search_returns_model_format_field(self) -> None:
+        """Results include model_format field when driver param used."""
+        from gpumod.discovery.protocols import SearchResult
+        from gpumod.mcp_tools import search_hf_models
+
+        result_model = SearchResult(
+            repo_id="user/model-GGUF",
+            name="Model",
+            description=None,
+            last_modified=datetime.now(tz=UTC),
+            tags=("gguf",),
+            model_format="gguf",
+            driver_hint="llamacpp",
+        )
+
+        with patch("gpumod.mcp_tools.HuggingFaceSearcher") as searcher_cls:
+            mock_searcher = AsyncMock()
+            mock_searcher.search.return_value = [result_model]
+            searcher_cls.return_value = mock_searcher
+
+            result = await search_hf_models(
+                search="model", driver="llamacpp", ctx=_make_mock_ctx()
+            )
+
+            model = result["models"][0]
+            assert "model_format" in model
+            assert model["model_format"] == "gguf"
+
+    async def test_search_driver_any_returns_all_formats(self) -> None:
+        """driver='any' returns both GGUF and Safetensors models."""
+        from gpumod.discovery.protocols import SearchResult
+        from gpumod.mcp_tools import search_hf_models
+
+        models = [
+            SearchResult(
+                repo_id="user/model-GGUF",
+                name="GGUF Model",
+                description=None,
+                last_modified=datetime.now(tz=UTC),
+                tags=("gguf",),
+                model_format="gguf",
+                driver_hint="llamacpp",
+            ),
+            SearchResult(
+                repo_id="user/model",
+                name="Safetensors Model",
+                description=None,
+                last_modified=datetime.now(tz=UTC),
+                tags=("safetensors",),
+                model_format="safetensors",
+                driver_hint="vllm",
+            ),
+        ]
+
+        with patch("gpumod.mcp_tools.HuggingFaceSearcher") as searcher_cls:
+            mock_searcher = AsyncMock()
+            mock_searcher.search.return_value = models
+            searcher_cls.return_value = mock_searcher
+
+            result = await search_hf_models(
+                search="model", driver="any", ctx=_make_mock_ctx()
+            )
+
+            call_kwargs = mock_searcher.search.call_args.kwargs
+            assert call_kwargs.get("driver") == "any"
+            assert len(result["models"]) == 2
+
+
 # ---------------------------------------------------------------------------
 # TestListGGUFFiles - get GGUF file metadata from a repo
 # ---------------------------------------------------------------------------
