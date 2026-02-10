@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,6 +17,14 @@ from gpumod.discovery.system_info import SystemInfo
 from gpumod.discovery.unsloth_lister import UnslothModel
 
 runner = typer.testing.CliRunner()
+
+# ANSI escape code pattern for stripping Rich formatting
+_ANSI_PATTERN = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes from text (Rich formatting)."""
+    return _ANSI_PATTERN.sub("", text)
 
 
 # ---------------------------------------------------------------------------
@@ -96,65 +105,73 @@ class TestDiscoverHelp:
     def test_discover_help(self) -> None:
         """discover --help shows usage information."""
         result = runner.invoke(app, ["discover", "--help"])
+        output = strip_ansi(result.output)
         assert result.exit_code == 0
-        assert "discover" in result.output.lower()
-        assert "--task" in result.output
-        assert "--vram" in result.output
-        assert "--context" in result.output
+        assert "discover" in output.lower()
+        assert "--task" in output
+        assert "--vram" in output
+        assert "--context" in output
 
     def test_discover_help_shows_search_option(self) -> None:
         """--help shows --search option with description."""
         result = runner.invoke(app, ["discover", "--help"])
+        output = strip_ansi(result.output)
         assert result.exit_code == 0
-        assert "--search" in result.output
-        assert "-s" in result.output
+        assert "--search" in output
+        assert "-s" in output
         # Check description mentions model name search
-        assert "search" in result.output.lower()
+        assert "search" in output.lower()
 
     def test_discover_help_shows_author_option(self) -> None:
         """--help shows --author option with default value."""
         result = runner.invoke(app, ["discover", "--help"])
+        output = strip_ansi(result.output)
         assert result.exit_code == 0
-        assert "--author" in result.output
-        assert "-a" in result.output
+        assert "--author" in output
+        assert "-a" in output
         # Check default is unsloth
-        assert "unsloth" in result.output.lower()
+        assert "unsloth" in output.lower()
 
     def test_discover_help_shows_verbose_option(self) -> None:
         """--help shows --verbose option for debug output."""
         result = runner.invoke(app, ["discover", "--help"])
+        output = strip_ansi(result.output)
         assert result.exit_code == 0
-        assert "--verbose" in result.output
-        assert "-v" in result.output
+        assert "--verbose" in output
+        assert "-v" in output
 
     def test_discover_help_shows_dry_run_option(self) -> None:
         """--help shows --dry-run option."""
         result = runner.invoke(app, ["discover", "--help"])
+        output = strip_ansi(result.output)
         assert result.exit_code == 0
-        assert "--dry-run" in result.output
+        assert "--dry-run" in output
 
     def test_discover_help_shows_json_option(self) -> None:
         """--help shows --json option for non-interactive output."""
         result = runner.invoke(app, ["discover", "--help"])
+        output = strip_ansi(result.output)
         assert result.exit_code == 0
-        assert "--json" in result.output
+        assert "--json" in output
 
     def test_discover_help_shows_no_cache_option(self) -> None:
         """--help shows --no-cache option."""
         result = runner.invoke(app, ["discover", "--help"])
+        output = strip_ansi(result.output)
         assert result.exit_code == 0
-        assert "--no-cache" in result.output
+        assert "--no-cache" in output
 
     def test_discover_help_shows_examples(self) -> None:
         """--help shows usage examples."""
         result = runner.invoke(app, ["discover", "--help"])
+        output = strip_ansi(result.output)
         assert result.exit_code == 0
-        assert "Examples:" in result.output
+        assert "Examples:" in output
         # Verify key example patterns are shown
-        assert "gpumod discover" in result.output
-        assert "--search deepseek" in result.output
-        assert "--author bartowski" in result.output
-        assert "--task code" in result.output
+        assert "gpumod discover" in output
+        assert "--search deepseek" in output
+        assert "--author bartowski" in output
+        assert "--task code" in output
 
 
 # ---------------------------------------------------------------------------
