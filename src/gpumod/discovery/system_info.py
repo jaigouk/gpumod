@@ -190,7 +190,6 @@ class SystemInfoCollector:
         try:
             from gpumod.config import get_settings
             from gpumod.db import Database
-            from gpumod.models import ServiceState
             from gpumod.services.registry import ServiceRegistry
 
             settings = get_settings()
@@ -201,13 +200,8 @@ class SystemInfoCollector:
             await db.connect()
             try:
                 registry = ServiceRegistry(db)
-                services = await registry.list_services()
-                running = []
-                for svc in services:
-                    state = await registry.get_service_state(svc.id)
-                    if state in (ServiceState.RUNNING, ServiceState.STARTING):
-                        running.append(svc.id)
-                return running
+                running_services = await registry.list_running()
+                return [svc.id for svc in running_services]
             finally:
                 await db.close()
         except Exception as exc:
