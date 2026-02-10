@@ -86,7 +86,9 @@ class GGUFMetadataFetcher:
     def __init__(self) -> None:
         """Initialize the fetcher."""
 
-    async def list_gguf_files(self, repo_id: str) -> list[GGUFFile]:  # noqa: C901
+    async def list_gguf_files(  # noqa: C901, PLR0912, PLR0915
+        self, repo_id: str
+    ) -> list[GGUFFile]:
         """List all GGUF files in a HuggingFace repo with metadata.
 
         Args:
@@ -98,24 +100,41 @@ class GGUFMetadataFetcher:
         Raises:
             RepoNotFoundError: If the repo doesn't exist.
         """
+        import time
+
         from huggingface_hub import HfApi
         from huggingface_hub.utils import RepositoryNotFoundError
 
         api = HfApi()
 
-        # Get file list
+        # Get repo info with file sizes in single request (faster than per-file)
+        start = time.monotonic()
         try:
-            files = await asyncio.to_thread(api.list_repo_files, repo_id)
+            repo_info = await asyncio.to_thread(api.repo_info, repo_id, files_metadata=True)
+            files_with_sizes = {f.rfilename: f.size for f in (repo_info.siblings or []) if f.size}
+            files = list(files_with_sizes.keys())
+            elapsed = time.monotonic() - start
+            logger.debug("Got %d files from repo_info in %.2fs", len(files), elapsed)
         except RepositoryNotFoundError as exc:
             raise RepoNotFoundError(f"Repo not found: {repo_id}") from exc
         except Exception as exc:
-            # Handle other errors that indicate repo not found
-            if "not found" in str(exc).lower():
-                raise RepoNotFoundError(f"Repo not found: {repo_id}") from exc
-            raise
+            # Fallback to list_repo_files if repo_info fails
+            logger.debug("repo_info failed, falling back to list_repo_files: %s", exc)
+            files_with_sizes = {}
+            try:
+                files = await asyncio.to_thread(api.list_repo_files, repo_id)
+            except RepositoryNotFoundError as exc2:
+                raise RepoNotFoundError(f"Repo not found: {repo_id}") from exc2
+            except Exception as exc2:
+                if "not found" in str(exc2).lower():
+                    raise RepoNotFoundError(f"Repo not found: {repo_id}") from exc2
+                raise
 
-        # Filter to GGUF files
-        gguf_files = [f for f in files if f.lower().endswith(".gguf")]
+        # Filter to GGUF files, excluding non-model files
+        # imatrix files are calibration data, not actual models
+        gguf_files = [
+            f for f in files if f.lower().endswith(".gguf") and "imatrix" not in f.lower()
+        ]
 
         if not gguf_files:
             return []
@@ -138,9 +157,15 @@ class GGUFMetadataFetcher:
         # Fetch metadata for each file
         results: list[GGUFFile] = []
 
+        # Helper to get file size (use cached if available)
+        async def get_size(filename: str) -> int:
+            if filename in files_with_sizes:
+                return files_with_sizes[filename]
+            return await self._get_file_size(api, repo_id, filename)
+
         # Process single files
         for filename in single_files:
-            size = await self._get_file_size(api, repo_id, filename)
+            size = await get_size(filename)
             quant = self._parse_quant_type(filename)
             vram = self._estimate_vram(size)
 
@@ -159,7 +184,7 @@ class GGUFMetadataFetcher:
         for parts in split_groups.values():
             total_size = 0
             for part in parts:
-                size = await self._get_file_size(api, repo_id, part)
+                size = await get_size(part)
                 total_size += size
 
             # Use first part's filename for display

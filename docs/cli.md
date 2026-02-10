@@ -334,6 +334,65 @@ indicators, a command input for `/status`, `/switch <mode>`,
 
 Press `q` to quit or type `/help` for available commands.
 
+## gpumod discover
+
+Discover GGUF models from HuggingFace and generate ready-to-use presets.
+
+```bash
+# List unsloth models (default)
+gpumod discover
+
+# Search by name
+gpumod discover --search deepseek
+
+# Search in a specific organization
+gpumod discover -s kimi -a moonshotai
+
+# Combine author and search
+gpumod discover --author bartowski --search llama
+
+# Filter by task type
+gpumod discover --task code
+```
+
+### Options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--search` | `-s` | Search models by name (e.g., "deepseek", "kimi") |
+| `--author` | `-a` | HuggingFace organization (default: unsloth) |
+| `--task` | | Filter by task: code, chat, embed, reasoning |
+| `--vram` | | VRAM budget in MB (default: detected available) |
+| `--context` | | Context size (default: 8192) |
+| `--dry-run` | | Preview without writing files |
+| `--json` | | Output JSON, no interaction |
+| `--no-cache` | | Bypass HuggingFace cache |
+| `--verbose` | `-v` | Debug output |
+
+### Workflow
+
+1. **System detection** -- Detects GPU, VRAM, and running services
+2. **Model search** -- Fetches GGUF models matching your criteria
+3. **VRAM filtering** -- Shows only models that fit your VRAM budget
+4. **Interactive selection** -- Pick a model and quantization
+5. **Preset generation** -- Creates a ready-to-use YAML preset
+
+### Examples
+
+```bash
+# Find coding models from unsloth that fit 24GB VRAM
+gpumod discover --task code --vram 24576
+
+# Search for DeepSeek models from any author, output as JSON
+gpumod discover --search deepseek --author "" --json
+
+# Preview a preset without writing it
+gpumod discover --search qwen --dry-run
+```
+
+After generating a preset, follow the printed instructions to download
+the model and register the service.
+
 ## gpumod watch
 
 Watch preset and mode directories for YAML file changes and automatically

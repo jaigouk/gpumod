@@ -174,8 +174,7 @@ class SystemInfoCollector:
             db = Database(settings.db_path)
             await db.connect()
             try:
-                mode = await db.get_setting("current_mode")
-                return mode
+                return await db.get_setting("current_mode")
             finally:
                 await db.close()
         except Exception as exc:

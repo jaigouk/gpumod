@@ -10,6 +10,7 @@ import pytest
 import typer.testing
 
 from gpumod.cli import app
+from gpumod.cli_discover import _format_vram
 from gpumod.discovery.gguf_metadata import GGUFFile
 from gpumod.discovery.system_info import SystemInfo
 from gpumod.discovery.unsloth_lister import UnslothModel
@@ -100,6 +101,60 @@ class TestDiscoverHelp:
         assert "--task" in result.output
         assert "--vram" in result.output
         assert "--context" in result.output
+
+    def test_discover_help_shows_search_option(self) -> None:
+        """--help shows --search option with description."""
+        result = runner.invoke(app, ["discover", "--help"])
+        assert result.exit_code == 0
+        assert "--search" in result.output
+        assert "-s" in result.output
+        # Check description mentions model name search
+        assert "search" in result.output.lower()
+
+    def test_discover_help_shows_author_option(self) -> None:
+        """--help shows --author option with default value."""
+        result = runner.invoke(app, ["discover", "--help"])
+        assert result.exit_code == 0
+        assert "--author" in result.output
+        assert "-a" in result.output
+        # Check default is unsloth
+        assert "unsloth" in result.output.lower()
+
+    def test_discover_help_shows_verbose_option(self) -> None:
+        """--help shows --verbose option for debug output."""
+        result = runner.invoke(app, ["discover", "--help"])
+        assert result.exit_code == 0
+        assert "--verbose" in result.output
+        assert "-v" in result.output
+
+    def test_discover_help_shows_dry_run_option(self) -> None:
+        """--help shows --dry-run option."""
+        result = runner.invoke(app, ["discover", "--help"])
+        assert result.exit_code == 0
+        assert "--dry-run" in result.output
+
+    def test_discover_help_shows_json_option(self) -> None:
+        """--help shows --json option for non-interactive output."""
+        result = runner.invoke(app, ["discover", "--help"])
+        assert result.exit_code == 0
+        assert "--json" in result.output
+
+    def test_discover_help_shows_no_cache_option(self) -> None:
+        """--help shows --no-cache option."""
+        result = runner.invoke(app, ["discover", "--help"])
+        assert result.exit_code == 0
+        assert "--no-cache" in result.output
+
+    def test_discover_help_shows_examples(self) -> None:
+        """--help shows usage examples."""
+        result = runner.invoke(app, ["discover", "--help"])
+        assert result.exit_code == 0
+        assert "Examples:" in result.output
+        # Verify key example patterns are shown
+        assert "gpumod discover" in result.output
+        assert "--search deepseek" in result.output
+        assert "--author bartowski" in result.output
+        assert "--task code" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -394,3 +449,318 @@ class TestDiscoverDryRun:
         assert "dry-run" in result.output.lower()
         # Should NOT write file in dry-run mode
         mock_path.return_value.write_text.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TestDiscoverSearchOption
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverSearchOption:
+    """Tests for --search option."""
+
+    def test_discover_search_option(
+        self,
+        mock_system_info: SystemInfo,
+        mock_models: list[UnslothModel],
+        mock_gguf_files: list[GGUFFile],
+    ) -> None:
+        """--search passes search query to model lister."""
+        fitting_files = [f for f in mock_gguf_files if f.estimated_vram_mb <= 24064]
+
+        with (
+            patch("gpumod.cli_discover.SystemInfoCollector") as mock_collector_cls,
+            patch("gpumod.cli_discover.UnslothModelLister") as mock_lister_cls,
+            patch("gpumod.cli_discover.GGUFMetadataFetcher") as mock_fetcher_cls,
+        ):
+            collector = MagicMock()
+            collector.get_system_info = AsyncMock(return_value=mock_system_info)
+            mock_collector_cls.return_value = collector
+
+            lister = MagicMock()
+            lister.list_models = AsyncMock(return_value=mock_models)
+            mock_lister_cls.return_value = lister
+
+            fetcher = MagicMock()
+            fetcher.list_gguf_files = AsyncMock(return_value=fitting_files)
+            mock_fetcher_cls.return_value = fetcher
+
+            result = runner.invoke(app, ["discover", "--search", "deepseek", "--json"])
+
+        assert result.exit_code == 0
+        # Verify list_models was called with search parameter
+        lister.list_models.assert_awaited_once()
+        call_kwargs = lister.list_models.call_args
+        assert call_kwargs.kwargs.get("search") == "deepseek"
+
+    def test_discover_search_short_flag(
+        self,
+        mock_system_info: SystemInfo,
+        mock_models: list[UnslothModel],
+        mock_gguf_files: list[GGUFFile],
+    ) -> None:
+        """Short flag -s works for search."""
+        fitting_files = [f for f in mock_gguf_files if f.estimated_vram_mb <= 24064]
+
+        with (
+            patch("gpumod.cli_discover.SystemInfoCollector") as mock_collector_cls,
+            patch("gpumod.cli_discover.UnslothModelLister") as mock_lister_cls,
+            patch("gpumod.cli_discover.GGUFMetadataFetcher") as mock_fetcher_cls,
+        ):
+            collector = MagicMock()
+            collector.get_system_info = AsyncMock(return_value=mock_system_info)
+            mock_collector_cls.return_value = collector
+
+            lister = MagicMock()
+            lister.list_models = AsyncMock(return_value=mock_models)
+            mock_lister_cls.return_value = lister
+
+            fetcher = MagicMock()
+            fetcher.list_gguf_files = AsyncMock(return_value=fitting_files)
+            mock_fetcher_cls.return_value = fetcher
+
+            result = runner.invoke(app, ["discover", "-s", "kimi", "--json"])
+
+        assert result.exit_code == 0
+        call_kwargs = lister.list_models.call_args
+        assert call_kwargs.kwargs.get("search") == "kimi"
+
+
+# ---------------------------------------------------------------------------
+# TestDiscoverAuthorOption
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverAuthorOption:
+    """Tests for --author option."""
+
+    def test_discover_author_option(
+        self,
+        mock_system_info: SystemInfo,
+        mock_models: list[UnslothModel],
+        mock_gguf_files: list[GGUFFile],
+    ) -> None:
+        """--author sets the HuggingFace organization."""
+        fitting_files = [f for f in mock_gguf_files if f.estimated_vram_mb <= 24064]
+
+        with (
+            patch("gpumod.cli_discover.SystemInfoCollector") as mock_collector_cls,
+            patch("gpumod.cli_discover.UnslothModelLister") as mock_lister_cls,
+            patch("gpumod.cli_discover.GGUFMetadataFetcher") as mock_fetcher_cls,
+        ):
+            collector = MagicMock()
+            collector.get_system_info = AsyncMock(return_value=mock_system_info)
+            mock_collector_cls.return_value = collector
+
+            lister = MagicMock()
+            lister.list_models = AsyncMock(return_value=mock_models)
+            mock_lister_cls.return_value = lister
+
+            fetcher = MagicMock()
+            fetcher.list_gguf_files = AsyncMock(return_value=fitting_files)
+            mock_fetcher_cls.return_value = fetcher
+
+            result = runner.invoke(app, ["discover", "--author", "bartowski", "--json"])
+
+        assert result.exit_code == 0
+        # Verify UnslothModelLister was initialized with author
+        mock_lister_cls.assert_called_once_with(author="bartowski")
+
+    def test_discover_author_short_flag(
+        self,
+        mock_system_info: SystemInfo,
+        mock_models: list[UnslothModel],
+        mock_gguf_files: list[GGUFFile],
+    ) -> None:
+        """Short flag -a works for author."""
+        fitting_files = [f for f in mock_gguf_files if f.estimated_vram_mb <= 24064]
+
+        with (
+            patch("gpumod.cli_discover.SystemInfoCollector") as mock_collector_cls,
+            patch("gpumod.cli_discover.UnslothModelLister") as mock_lister_cls,
+            patch("gpumod.cli_discover.GGUFMetadataFetcher") as mock_fetcher_cls,
+        ):
+            collector = MagicMock()
+            collector.get_system_info = AsyncMock(return_value=mock_system_info)
+            mock_collector_cls.return_value = collector
+
+            lister = MagicMock()
+            lister.list_models = AsyncMock(return_value=mock_models)
+            mock_lister_cls.return_value = lister
+
+            fetcher = MagicMock()
+            fetcher.list_gguf_files = AsyncMock(return_value=fitting_files)
+            mock_fetcher_cls.return_value = fetcher
+
+            result = runner.invoke(app, ["discover", "-a", "deepseek-ai", "--json"])
+
+        assert result.exit_code == 0
+        mock_lister_cls.assert_called_once_with(author="deepseek-ai")
+
+    def test_discover_author_default_is_unsloth(
+        self,
+        mock_system_info: SystemInfo,
+        mock_models: list[UnslothModel],
+        mock_gguf_files: list[GGUFFile],
+    ) -> None:
+        """Default author is unsloth."""
+        fitting_files = [f for f in mock_gguf_files if f.estimated_vram_mb <= 24064]
+
+        with (
+            patch("gpumod.cli_discover.SystemInfoCollector") as mock_collector_cls,
+            patch("gpumod.cli_discover.UnslothModelLister") as mock_lister_cls,
+            patch("gpumod.cli_discover.GGUFMetadataFetcher") as mock_fetcher_cls,
+        ):
+            collector = MagicMock()
+            collector.get_system_info = AsyncMock(return_value=mock_system_info)
+            mock_collector_cls.return_value = collector
+
+            lister = MagicMock()
+            lister.list_models = AsyncMock(return_value=mock_models)
+            mock_lister_cls.return_value = lister
+
+            fetcher = MagicMock()
+            fetcher.list_gguf_files = AsyncMock(return_value=fitting_files)
+            mock_fetcher_cls.return_value = fetcher
+
+            result = runner.invoke(app, ["discover", "--json"])
+
+        assert result.exit_code == 0
+        # Default author should be unsloth
+        mock_lister_cls.assert_called_once_with(author="unsloth")
+
+
+# ---------------------------------------------------------------------------
+# TestDiscoverCombinedOptions
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverCombinedOptions:
+    """Tests for combined option usage."""
+
+    def test_discover_search_with_author(
+        self,
+        mock_system_info: SystemInfo,
+        mock_models: list[UnslothModel],
+        mock_gguf_files: list[GGUFFile],
+    ) -> None:
+        """--search and --author work together."""
+        fitting_files = [f for f in mock_gguf_files if f.estimated_vram_mb <= 24064]
+
+        with (
+            patch("gpumod.cli_discover.SystemInfoCollector") as mock_collector_cls,
+            patch("gpumod.cli_discover.UnslothModelLister") as mock_lister_cls,
+            patch("gpumod.cli_discover.GGUFMetadataFetcher") as mock_fetcher_cls,
+        ):
+            collector = MagicMock()
+            collector.get_system_info = AsyncMock(return_value=mock_system_info)
+            mock_collector_cls.return_value = collector
+
+            lister = MagicMock()
+            lister.list_models = AsyncMock(return_value=mock_models)
+            mock_lister_cls.return_value = lister
+
+            fetcher = MagicMock()
+            fetcher.list_gguf_files = AsyncMock(return_value=fitting_files)
+            mock_fetcher_cls.return_value = fetcher
+
+            result = runner.invoke(
+                app,
+                ["discover", "--author", "bartowski", "--search", "llama", "--json"],
+            )
+
+        assert result.exit_code == 0
+        # Verify author was set
+        mock_lister_cls.assert_called_once_with(author="bartowski")
+        # Verify search was passed
+        call_kwargs = lister.list_models.call_args
+        assert call_kwargs.kwargs.get("search") == "llama"
+
+    def test_discover_search_author_task(
+        self,
+        mock_system_info: SystemInfo,
+        mock_gguf_files: list[GGUFFile],
+    ) -> None:
+        """All three filters work together: --search --author --task."""
+        code_model = UnslothModel(
+            repo_id="bartowski/Qwen3-Coder-GGUF",
+            name="Qwen3 Coder",
+            description="A code generation model",
+            last_modified=datetime.now(tz=UTC),
+            tags=("gguf", "code"),
+            has_gguf=True,
+        )
+        fitting_files = [f for f in mock_gguf_files if f.estimated_vram_mb <= 24064]
+
+        with (
+            patch("gpumod.cli_discover.SystemInfoCollector") as mock_collector_cls,
+            patch("gpumod.cli_discover.UnslothModelLister") as mock_lister_cls,
+            patch("gpumod.cli_discover.GGUFMetadataFetcher") as mock_fetcher_cls,
+        ):
+            collector = MagicMock()
+            collector.get_system_info = AsyncMock(return_value=mock_system_info)
+            mock_collector_cls.return_value = collector
+
+            lister = MagicMock()
+            lister.list_models = AsyncMock(return_value=[code_model])
+            mock_lister_cls.return_value = lister
+
+            fetcher = MagicMock()
+            fetcher.list_gguf_files = AsyncMock(return_value=fitting_files)
+            mock_fetcher_cls.return_value = fetcher
+
+            result = runner.invoke(
+                app,
+                [
+                    "discover",
+                    "--author",
+                    "bartowski",
+                    "--search",
+                    "qwen",
+                    "--task",
+                    "code",
+                    "--json",
+                ],
+            )
+
+        assert result.exit_code == 0
+        mock_lister_cls.assert_called_once_with(author="bartowski")
+        call_kwargs = lister.list_models.call_args
+        assert call_kwargs.kwargs.get("search") == "qwen"
+        assert call_kwargs.kwargs.get("task") == "code"
+
+
+# ---------------------------------------------------------------------------
+# TestVramFormatting
+# ---------------------------------------------------------------------------
+
+
+class TestVramFormatting:
+    """Tests for VRAM display formatting."""
+
+    def test_format_vram_small_mb(self) -> None:
+        """Small values should display in MB."""
+        assert _format_vram(512) == "512 MB"
+        assert _format_vram(100) == "100 MB"
+        assert _format_vram(1) == "1 MB"
+
+    def test_format_vram_large_gb(self) -> None:
+        """Large values (>= 1024 MB) should display in GB."""
+        assert _format_vram(1024) == "1.0 GB"
+        assert _format_vram(2048) == "2.0 GB"
+        assert _format_vram(24000) == "23.4 GB"
+
+    def test_format_vram_fractional_gb(self) -> None:
+        """Fractional GB values should show one decimal place."""
+        assert _format_vram(1536) == "1.5 GB"
+        assert _format_vram(17276) == "16.9 GB"
+        assert _format_vram(23217) == "22.7 GB"
+
+    def test_format_vram_boundary(self) -> None:
+        """Test boundary between MB and GB display."""
+        assert _format_vram(1023) == "1023 MB"
+        assert _format_vram(1024) == "1.0 GB"
+
+    def test_format_vram_zero(self) -> None:
+        """Zero VRAM should display as MB."""
+        assert _format_vram(0) == "0 MB"

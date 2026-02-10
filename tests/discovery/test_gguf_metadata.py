@@ -187,3 +187,54 @@ class TestQuantizationPatterns:
     ) -> None:
         """Should correctly parse various quantization patterns."""
         assert fetcher._parse_quant_type(filename) == expected
+
+
+class TestImatrixFiltering:
+    """Tests for filtering out non-model GGUF files."""
+
+    @pytest.mark.asyncio
+    async def test_filters_out_imatrix_files(
+        self,
+        mock_hf_repo_with_imatrix: None,
+    ) -> None:
+        """Should filter out imatrix.gguf files (calibration data, not models)."""
+        fetcher = GGUFMetadataFetcher()
+        files = await fetcher.list_gguf_files("bartowski/test-model")
+        filenames = [f.filename for f in files]
+        # imatrix files should be excluded
+        assert not any("imatrix" in f.lower() for f in filenames)
+        # Actual model files should be included
+        assert any("Q4_K_M" in f for f in filenames)
+
+    @pytest.mark.asyncio
+    async def test_imatrix_case_insensitive(
+        self,
+        mock_hf_repo_with_imatrix_variants: None,
+    ) -> None:
+        """Should filter imatrix files regardless of case."""
+        fetcher = GGUFMetadataFetcher()
+        files = await fetcher.list_gguf_files("bartowski/test-model")
+        filenames = [f.filename for f in files]
+        # All imatrix variants should be excluded
+        assert not any("imatrix" in f.lower() for f in filenames)
+
+
+class TestEdgeCases:
+    """Edge case tests for GGUF metadata."""
+
+    @pytest.mark.asyncio
+    async def test_handles_zero_size_files(self) -> None:
+        """Should handle files with zero size gracefully."""
+        fetcher = GGUFMetadataFetcher()
+        vram = fetcher._estimate_vram(0)
+        assert vram == 0
+
+    @pytest.mark.asyncio
+    async def test_handles_very_large_files(self) -> None:
+        """Should handle very large file sizes (100+ GB)."""
+        fetcher = GGUFMetadataFetcher()
+        size_bytes = 100 * 1024 * 1024 * 1024  # 100 GB
+        vram = fetcher._estimate_vram(size_bytes)
+        # Should be ~110 GB (with 1.1 overhead)
+        assert vram > 100 * 1024  # > 100 GB in MB
+        assert vram < 120 * 1024  # < 120 GB in MB
