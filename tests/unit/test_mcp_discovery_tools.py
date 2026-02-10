@@ -395,7 +395,7 @@ class TestListGGUFFiles:
         """Basic list returns GGUF file metadata."""
         from gpumod.mcp_tools import list_gguf_files
 
-        with patch("gpumod.discovery.gguf_metadata.GGUFMetadataFetcher") as fetcher_cls:
+        with patch("gpumod.mcp_tools.GGUFMetadataFetcher") as fetcher_cls:
             mock_fetcher = AsyncMock()
             mock_fetcher.list_gguf_files.return_value = mock_gguf_files
             fetcher_cls.return_value = mock_fetcher
@@ -429,7 +429,7 @@ class TestListGGUFFiles:
         from gpumod.discovery.gguf_metadata import RepoNotFoundError
         from gpumod.mcp_tools import list_gguf_files
 
-        with patch("gpumod.discovery.gguf_metadata.GGUFMetadataFetcher") as fetcher_cls:
+        with patch("gpumod.mcp_tools.GGUFMetadataFetcher") as fetcher_cls:
             mock_fetcher = AsyncMock()
             mock_fetcher.list_gguf_files.side_effect = RepoNotFoundError("Not found")
             fetcher_cls.return_value = mock_fetcher
@@ -446,7 +446,7 @@ class TestListGGUFFiles:
         """Result includes all essential file fields."""
         from gpumod.mcp_tools import list_gguf_files
 
-        with patch("gpumod.discovery.gguf_metadata.GGUFMetadataFetcher") as fetcher_cls:
+        with patch("gpumod.mcp_tools.GGUFMetadataFetcher") as fetcher_cls:
             mock_fetcher = AsyncMock()
             mock_fetcher.list_gguf_files.return_value = [mock_gguf_files[0]]
             fetcher_cls.return_value = mock_fetcher
@@ -467,7 +467,7 @@ class TestListGGUFFiles:
         """vram_budget_mb filters to files that fit."""
         from gpumod.mcp_tools import list_gguf_files
 
-        with patch("gpumod.discovery.gguf_metadata.GGUFMetadataFetcher") as fetcher_cls:
+        with patch("gpumod.mcp_tools.GGUFMetadataFetcher") as fetcher_cls:
             mock_fetcher = AsyncMock()
             mock_fetcher.list_gguf_files.return_value = mock_gguf_files
             fetcher_cls.return_value = mock_fetcher
@@ -499,7 +499,7 @@ class TestListGGUFFiles:
         """Result includes repo_id in response."""
         from gpumod.mcp_tools import list_gguf_files
 
-        with patch("gpumod.discovery.gguf_metadata.GGUFMetadataFetcher") as fetcher_cls:
+        with patch("gpumod.mcp_tools.GGUFMetadataFetcher") as fetcher_cls:
             mock_fetcher = AsyncMock()
             mock_fetcher.list_gguf_files.return_value = mock_gguf_files
             fetcher_cls.return_value = mock_fetcher
@@ -515,7 +515,7 @@ class TestListGGUFFiles:
         """Repo with no GGUF files returns empty list."""
         from gpumod.mcp_tools import list_gguf_files
 
-        with patch("gpumod.discovery.gguf_metadata.GGUFMetadataFetcher") as fetcher_cls:
+        with patch("gpumod.mcp_tools.GGUFMetadataFetcher") as fetcher_cls:
             mock_fetcher = AsyncMock()
             mock_fetcher.list_gguf_files.return_value = []
             fetcher_cls.return_value = mock_fetcher
@@ -527,6 +527,90 @@ class TestListGGUFFiles:
 
             assert result["files"] == []
             assert result["count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# TestListModelFiles - get model files from a repo (unified GGUF + Safetensors)
+# ---------------------------------------------------------------------------
+
+
+class TestListModelFiles:
+    """Tests for list_model_files MCP tool (unified format support)."""
+
+    async def test_list_model_files_exists(self) -> None:
+        """list_model_files function is importable."""
+        from gpumod.mcp_tools import list_model_files
+
+        assert list_model_files is not None
+
+    async def test_list_model_files_gguf(self, mock_gguf_files: list[GGUFFile]) -> None:
+        """list_model_files returns GGUF files with format field."""
+        from gpumod.mcp_tools import list_model_files
+
+        with patch("gpumod.mcp_tools.GGUFMetadataFetcher") as fetcher_cls:
+            mock_fetcher = AsyncMock()
+            mock_fetcher.list_gguf_files.return_value = mock_gguf_files
+            fetcher_cls.return_value = mock_fetcher
+
+            result = await list_model_files(
+                repo_id="unsloth/Test-GGUF",
+                ctx=_make_mock_ctx(),
+            )
+
+        assert "files" in result
+        assert "model_format" in result
+        assert result["model_format"] == "gguf"
+        assert len(result["files"]) == 3
+
+    async def test_list_model_files_includes_driver_hint(
+        self, mock_gguf_files: list[GGUFFile]
+    ) -> None:
+        """list_model_files includes driver_hint for GGUF."""
+        from gpumod.mcp_tools import list_model_files
+
+        with patch("gpumod.mcp_tools.GGUFMetadataFetcher") as fetcher_cls:
+            mock_fetcher = AsyncMock()
+            mock_fetcher.list_gguf_files.return_value = mock_gguf_files
+            fetcher_cls.return_value = mock_fetcher
+
+            result = await list_model_files(
+                repo_id="unsloth/Test-GGUF",
+                ctx=_make_mock_ctx(),
+            )
+
+        assert "driver_hint" in result
+        assert result["driver_hint"] == "llamacpp"
+
+    async def test_list_model_files_validates_repo_id(self) -> None:
+        """repo_id must be valid format."""
+        from gpumod.mcp_tools import list_model_files
+
+        result = await list_model_files(
+            repo_id="invalid",
+            ctx=_make_mock_ctx(),
+        )
+        assert "error" in result
+        assert result["code"] == "VALIDATION_ERROR"
+
+    async def test_list_model_files_vram_budget(
+        self, mock_gguf_files: list[GGUFFile]
+    ) -> None:
+        """vram_budget_mb filters files that fit."""
+        from gpumod.mcp_tools import list_model_files
+
+        with patch("gpumod.mcp_tools.GGUFMetadataFetcher") as fetcher_cls:
+            mock_fetcher = AsyncMock()
+            mock_fetcher.list_gguf_files.return_value = mock_gguf_files
+            fetcher_cls.return_value = mock_fetcher
+
+            result = await list_model_files(
+                repo_id="unsloth/Test-GGUF",
+                vram_budget_mb=10000,
+                ctx=_make_mock_ctx(),
+            )
+
+        # Only Q2_K (4300) and Q4_K_M (8500) fit in 10GB
+        assert len(result["files"]) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -667,7 +751,7 @@ class TestDiscoveryToolsIntegration:
         chosen_repo = search_result["models"][0]["repo_id"]
 
         # Step 2: List GGUF files for chosen repo
-        with patch("gpumod.discovery.gguf_metadata.GGUFMetadataFetcher") as fetcher_cls:
+        with patch("gpumod.mcp_tools.GGUFMetadataFetcher") as fetcher_cls:
             mock_fetcher = AsyncMock()
             mock_fetcher.list_gguf_files.return_value = mock_gguf_files
             fetcher_cls.return_value = mock_fetcher
@@ -688,7 +772,7 @@ class TestDiscoveryToolsIntegration:
         from gpumod.mcp_tools import generate_preset, list_gguf_files
 
         # Step 1: List GGUF files
-        with patch("gpumod.discovery.gguf_metadata.GGUFMetadataFetcher") as fetcher_cls:
+        with patch("gpumod.mcp_tools.GGUFMetadataFetcher") as fetcher_cls:
             mock_fetcher = AsyncMock()
             mock_fetcher.list_gguf_files.return_value = mock_gguf_files
             fetcher_cls.return_value = mock_fetcher
