@@ -602,8 +602,8 @@ class TestRegistration:
 
         register_tools(server)
 
-        # Should have been called 9 times (6 read-only + 3 mutating)
-        assert server.tool.call_count == 9
+        # Should have been called 12 times (6 read-only + 3 mutating + 3 discovery)
+        assert server.tool.call_count == 12
 
         # Verify all tool names were registered
         tool_names = {call.kwargs["name"] for call in server.tool.call_args_list}
@@ -617,6 +617,10 @@ class TestRegistration:
             "switch_mode",
             "start_service",
             "stop_service",
+            # Discovery tools
+            "search_hf_models",
+            "list_gguf_files",
+            "generate_preset",
         }
         assert tool_names == expected_names
 

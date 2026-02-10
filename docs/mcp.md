@@ -120,7 +120,7 @@ MCP clients. Set `GPUMOD_LOG_LEVEL=DEBUG` for verbose output.
 
 ## Available MCP Tools
 
-The MCP server exposes 9 tools:
+The MCP server exposes 12 tools:
 
 | Tool | Description | Type |
 |------|-------------|------|
@@ -133,9 +133,48 @@ The MCP server exposes 9 tools:
 | `switch_mode` | Switch to a different GPU mode (starts/stops services) | Mutating |
 | `start_service` | Start a specific service | Mutating |
 | `stop_service` | Stop a specific service | Mutating |
+| `search_hf_models` | Search HuggingFace for GGUF models by author/keyword/task | Discovery |
+| `list_gguf_files` | List GGUF files in a repo with size and VRAM estimates | Discovery |
+| `generate_preset` | Generate preset YAML configuration for a GGUF model | Discovery |
 
 Mutating tools are clearly marked in their descriptions and should
 trigger confirmation prompts in MCP clients.
+
+### Discovery Tools
+
+The discovery tools help AI assistants find and configure new models:
+
+**search_hf_models**
+```
+Parameters:
+  author: str | None     # HuggingFace org (default: all)
+  search: str | None     # Keyword search in model names
+  task: str | None       # Filter: code, chat, embed, reasoning
+  limit: int = 20        # Max results (1-100)
+  no_cache: bool = False # Bypass cache
+
+Returns: { models: [...], count: int }
+```
+
+**list_gguf_files**
+```
+Parameters:
+  repo_id: str           # e.g., "unsloth/Qwen3-Coder-Next-GGUF"
+  vram_budget_mb: int | None  # Filter files that fit in VRAM
+
+Returns: { repo_id, files: [...], count: int }
+```
+
+**generate_preset**
+```
+Parameters:
+  repo_id: str           # HuggingFace repo ID
+  gguf_file: str         # GGUF filename to use
+  context_size: int = 8192  # Context window size
+  service_id: str | None # Custom service ID
+
+Returns: { preset: str, service_id: str }
+```
 
 ## Available MCP Resources
 
