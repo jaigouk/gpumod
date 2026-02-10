@@ -476,6 +476,80 @@ class TestDockerValidation:
 
 
 # ---------------------------------------------------------------------------
+# Lazy initialization
+# ---------------------------------------------------------------------------
+
+
+class TestDockerLazyInit:
+    """Verify DockerDriver lazy client initialization (prevents init-time failures)."""
+
+    def test_init_does_not_call_docker_from_env(self) -> None:
+        """DockerDriver() should NOT call docker.from_env() during __init__."""
+        from gpumod.services.drivers.docker import DockerDriver
+
+        with patch("gpumod.services.drivers.docker.docker.from_env") as mock_from_env:
+            driver = DockerDriver()
+            mock_from_env.assert_not_called()
+            # Verify internal state shows no client yet
+            assert driver._cached_client is None
+
+    def test_client_lazily_initialized_on_first_use(self) -> None:
+        """Accessing _client property should trigger docker.from_env()."""
+        from gpumod.services.drivers.docker import DockerDriver
+
+        mock_client = MagicMock()
+        with patch(
+            "gpumod.services.drivers.docker.docker.from_env", return_value=mock_client
+        ) as mock_from_env:
+            driver = DockerDriver()
+            # Not called yet
+            mock_from_env.assert_not_called()
+            # Access the client property
+            client = driver._client
+            mock_from_env.assert_called_once()
+            assert client is mock_client
+
+    def test_client_cached_after_first_use(self) -> None:
+        """docker.from_env() should only be called once, result cached."""
+        from gpumod.services.drivers.docker import DockerDriver
+
+        mock_client = MagicMock()
+        with patch(
+            "gpumod.services.drivers.docker.docker.from_env", return_value=mock_client
+        ) as mock_from_env:
+            driver = DockerDriver()
+            # Access twice
+            _ = driver._client
+            _ = driver._client
+            # Only called once
+            mock_from_env.assert_called_once()
+
+    def test_injected_client_used_without_from_env(self) -> None:
+        """When client is injected, docker.from_env() should never be called."""
+        from gpumod.services.drivers.docker import DockerDriver
+
+        injected = MagicMock()
+        with patch("gpumod.services.drivers.docker.docker.from_env") as mock_from_env:
+            driver = DockerDriver(client=injected)
+            client = driver._client
+            mock_from_env.assert_not_called()
+            assert client is injected
+
+    def test_service_registry_init_does_not_connect_to_docker(self) -> None:
+        """ServiceRegistry() should not trigger Docker connection."""
+        from gpumod.services.registry import ServiceRegistry
+
+        mock_db = MagicMock()
+        with patch("gpumod.services.drivers.docker.docker.from_env") as mock_from_env:
+            registry = ServiceRegistry(db=mock_db)
+            mock_from_env.assert_not_called()
+            # Driver exists but hasn't connected
+            driver = registry.get_driver(DriverType.DOCKER)
+            mock_from_env.assert_not_called()
+            assert driver is not None
+
+
+# ---------------------------------------------------------------------------
 # ServiceRegistry integration
 # ---------------------------------------------------------------------------
 
