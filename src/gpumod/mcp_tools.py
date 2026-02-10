@@ -296,6 +296,215 @@ async def stop_service(service_id: str, ctx: Context) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Discovery tools (3 read-only)
+# ---------------------------------------------------------------------------
+
+# Valid task types for search filtering
+_VALID_TASKS = frozenset({"code", "chat", "embed", "reasoning"})
+
+# Limits for validation
+_MAX_SEARCH_LIMIT = 100
+_MIN_CONTEXT_SIZE = 512
+_MAX_CONTEXT_SIZE = 262144  # 256k
+
+
+def _validate_repo_id(repo_id: str) -> str | None:
+    """Validate repo_id format (org/name). Returns error message or None."""
+    if not repo_id or not repo_id.strip():
+        return "repo_id is required"
+    if "/" not in repo_id or repo_id.count("/") != 1:
+        return "repo_id must be in format 'org/name' (e.g., 'unsloth/Qwen-GGUF')"
+    org, name = repo_id.split("/")
+    if not org or not name:
+        return "repo_id must have non-empty org and name"
+    return None
+
+
+async def search_hf_models(
+    ctx: Context,
+    author: str | None = None,
+    search: str | None = None,
+    task: str | None = None,
+    limit: int = 20,
+    no_cache: bool = False,
+) -> dict[str, Any]:
+    """Search HuggingFace for GGUF models by author, keyword, or task.
+
+    Args:
+        author: HuggingFace organization (default: searches all).
+        search: Keyword to search in model names.
+        task: Filter by task type (code, chat, embed, reasoning).
+        limit: Maximum results to return (1-100, default 20).
+        no_cache: Bypass cache for fresh results.
+
+    Returns:
+        Dict with 'models' list containing repo_id, name, description, tags.
+    """
+    from gpumod.discovery.unsloth_lister import HuggingFaceAPIError, UnslothModelLister
+
+    # Validate limit
+    if limit < 1:
+        return _validation_error("limit must be at least 1")
+    if limit > _MAX_SEARCH_LIMIT:
+        return _validation_error(f"limit cannot exceed {_MAX_SEARCH_LIMIT}")
+
+    # Validate task
+    if task is not None and task not in _VALID_TASKS:
+        return _validation_error(f"task must be one of: {', '.join(sorted(_VALID_TASKS))}")
+
+    try:
+        lister = UnslothModelLister(author=author, cache_ttl_seconds=3600)
+        models = await lister.list_models(
+            task=task,
+            search=search,
+            force_refresh=no_cache,
+        )
+
+        # Apply limit
+        models = models[:limit]
+
+        # Convert to serializable dicts
+        result_models = [
+            {
+                "repo_id": m.repo_id,
+                "name": m.name,
+                "description": m.description,
+                "tags": list(m.tags),
+                "has_gguf": m.has_gguf,
+            }
+            for m in models
+        ]
+
+        return {"models": result_models, "count": len(result_models)}
+
+    except HuggingFaceAPIError as exc:
+        return {"error": str(exc), "code": "API_ERROR"}
+
+
+async def list_gguf_files(
+    repo_id: str,
+    ctx: Context,
+    vram_budget_mb: int | None = None,
+) -> dict[str, Any]:
+    """List GGUF files in a HuggingFace repo with size and VRAM estimates.
+
+    Args:
+        repo_id: HuggingFace repo ID (e.g., 'unsloth/Qwen3-Coder-Next-GGUF').
+        vram_budget_mb: Optional VRAM budget to filter files that fit.
+
+    Returns:
+        Dict with 'files' list containing filename, size, quant_type, vram estimate.
+    """
+    from gpumod.discovery.gguf_metadata import GGUFMetadataFetcher, RepoNotFoundError
+
+    # Validate repo_id
+    error = _validate_repo_id(repo_id)
+    if error:
+        return _validation_error(error)
+
+    # Validate vram_budget_mb
+    if vram_budget_mb is not None and vram_budget_mb <= 0:
+        return _validation_error("vram_budget_mb must be positive")
+
+    try:
+        fetcher = GGUFMetadataFetcher()
+        files = await fetcher.list_gguf_files(repo_id)
+
+        # Filter by VRAM budget if specified
+        if vram_budget_mb is not None:
+            files = [f for f in files if f.estimated_vram_mb <= vram_budget_mb]
+
+        # Convert to serializable dicts
+        result_files = [
+            {
+                "filename": f.filename,
+                "size_bytes": f.size_bytes,
+                "quant_type": f.quant_type,
+                "estimated_vram_mb": f.estimated_vram_mb,
+                "is_split": f.is_split,
+                "split_parts": f.split_parts,
+            }
+            for f in files
+        ]
+
+        return {
+            "repo_id": repo_id,
+            "files": result_files,
+            "count": len(result_files),
+        }
+
+    except RepoNotFoundError:
+        return _not_found_error(f"Repository not found: {repo_id}")
+
+
+async def generate_preset(
+    repo_id: str,
+    gguf_file: str,
+    ctx: Context,
+    context_size: int = 8192,
+    service_id: str | None = None,
+) -> dict[str, Any]:
+    """Generate a preset YAML configuration for a GGUF model.
+
+    Args:
+        repo_id: HuggingFace repo ID.
+        gguf_file: GGUF filename to use.
+        context_size: Context window size (512-262144, default 8192).
+        service_id: Custom service ID (auto-generated if not provided).
+
+    Returns:
+        Dict with 'preset' containing YAML string.
+    """
+    import re
+
+    # Validate repo_id
+    error = _validate_repo_id(repo_id)
+    if error:
+        return _validation_error(error)
+
+    # Validate gguf_file
+    if not gguf_file or not gguf_file.lower().endswith(".gguf"):
+        return _validation_error("gguf_file must end with .gguf")
+
+    # Validate context_size
+    if context_size < _MIN_CONTEXT_SIZE:
+        return _validation_error(f"context_size must be at least {_MIN_CONTEXT_SIZE}")
+    if context_size > _MAX_CONTEXT_SIZE:
+        return _validation_error(f"context_size cannot exceed {_MAX_CONTEXT_SIZE}")
+
+    # Generate service_id from repo if not provided
+    if service_id is None:
+        # Extract model name from repo_id: "unsloth/Qwen3-GGUF" -> "qwen3"
+        _, repo_name = repo_id.split("/")
+        # Remove -GGUF suffix and clean up
+        clean_name = re.sub(r"-?GGUF$", "", repo_name, flags=re.IGNORECASE)
+        service_id = sanitize_name(clean_name.lower().replace(" ", "-"))
+
+    # Build preset YAML
+    preset_yaml = f"""# Generated preset for {repo_id}
+# Model: {gguf_file}
+
+services:
+  {service_id}:
+    driver: llamacpp
+    port: 8080
+    vram_mb: auto
+    extra_config:
+      model: hf://{repo_id}/{gguf_file}
+      context_size: {context_size}
+      n_gpu_layers: -1
+
+modes:
+  {service_id}:
+    name: "{service_id.replace("-", " ").title()}"
+    services:
+      - {service_id}
+"""
+
+    return {"preset": preset_yaml, "service_id": service_id}
+
+
+# ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
 
@@ -352,3 +561,28 @@ def register_tools(server: FastMCP[Any]) -> None:
         name="stop_service",
         description="Stop a specific service. [MUTATING]",
     )(stop_service)
+
+    # Discovery tools (read-only)
+    server.tool(
+        name="search_hf_models",
+        description=(
+            "Search HuggingFace for GGUF models. "
+            "Filter by author (org), keyword search, or task type (code/chat/embed/reasoning)."
+        ),
+    )(search_hf_models)
+
+    server.tool(
+        name="list_gguf_files",
+        description=(
+            "List GGUF files in a HuggingFace repo with size and VRAM estimates. "
+            "Optionally filter by VRAM budget."
+        ),
+    )(list_gguf_files)
+
+    server.tool(
+        name="generate_preset",
+        description=(
+            "Generate a preset YAML configuration for a GGUF model. "
+            "Creates llama.cpp service config with specified context size."
+        ),
+    )(generate_preset)
