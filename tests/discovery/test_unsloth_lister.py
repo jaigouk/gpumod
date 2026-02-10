@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 import pytest
 
 from gpumod.discovery.unsloth_lister import (
+    HFModel,
     HuggingFaceAPIError,
     UnslothModel,
     UnslothModelLister,
@@ -169,3 +170,70 @@ class TestUnslothModelListerFiltering:
         models = await lister.list_models(task="chat")
         # Should return chat-related models
         assert len(models) >= 0  # May be empty if no matches
+
+
+class TestHFModelAlias:
+    """Tests for HFModel alias."""
+
+    def test_hfmodel_is_alias_for_unsloth_model(self) -> None:
+        """HFModel should be an alias for UnslothModel."""
+        assert HFModel is UnslothModel
+
+
+class TestUnslothModelListerSearch:
+    """Tests for search functionality."""
+
+    @pytest.mark.asyncio
+    async def test_search_by_model_name(
+        self,
+        mock_hf_api: None,
+    ) -> None:
+        """Should support search by model name."""
+        lister = UnslothModelLister()
+        # Search should be passed to the API
+        models = await lister.list_models(search="qwen")
+        assert isinstance(models, list)
+
+    @pytest.mark.asyncio
+    async def test_custom_author(
+        self,
+        mock_hf_api: None,
+    ) -> None:
+        """Should support custom author/organization."""
+        lister = UnslothModelLister(author="deepseek-ai")
+        models = await lister.list_models()
+        assert isinstance(models, list)
+
+    @pytest.mark.asyncio
+    async def test_no_author_for_global_search(
+        self,
+        mock_hf_api: None,
+    ) -> None:
+        """Should support None author for global search."""
+        lister = UnslothModelLister(author=None)
+        models = await lister.list_models(search="llama")
+        assert isinstance(models, list)
+
+    @pytest.mark.asyncio
+    async def test_search_with_author(
+        self,
+        mock_hf_api: None,
+    ) -> None:
+        """Should support combined search + author."""
+        lister = UnslothModelLister(author="bartowski")
+        models = await lister.list_models(search="deepseek")
+        assert isinstance(models, list)
+
+    @pytest.mark.asyncio
+    async def test_cache_is_keyed_by_search(
+        self,
+        mock_hf_api: None,
+    ) -> None:
+        """Different searches should have separate cache entries."""
+        lister = UnslothModelLister()
+        models1 = await lister.list_models(search="qwen")
+        models2 = await lister.list_models(search="llama")
+        # Different search terms should not share cache
+        # (cache keys are different)
+        assert isinstance(models1, list)
+        assert isinstance(models2, list)

@@ -333,46 +333,57 @@ def mock_hf_repo_files() -> Generator[None, None, None]:
     """Mock HF repo file listing."""
     with patch("huggingface_hub.HfApi") as mock:
         api = MagicMock()
-        api.list_repo_files.return_value = [
-            "model-Q4_K_M.gguf",
-            "model-Q8_0.gguf",
-            "README.md",
+        # Mock repo_info with file siblings
+        siblings = []
+        file_data = [
+            ("model-Q4_K_M.gguf", 20_000_000_000),
+            ("model-Q8_0.gguf", 40_000_000_000),
+            ("README.md", 1000),
         ]
+        for fname, size in file_data:
+            file_info = MagicMock()
+            file_info.rfilename = fname
+            file_info.size = size
+            siblings.append(file_info)
+        repo_info = MagicMock()
+        repo_info.siblings = siblings
+        api.repo_info.return_value = repo_info
         mock.return_value = api
-        with patch("huggingface_hub.get_hf_file_metadata") as mock_meta:
-            mock_meta.return_value = MagicMock(size=20_000_000_000)
-            yield
+        yield
 
 
 @pytest.fixture
 def mock_hf_repo_files_with_sizes() -> Generator[None, None, None]:
     """Mock HF repo with file size metadata."""
-    with (
-        patch("huggingface_hub.HfApi") as mock_api,
-        patch("huggingface_hub.get_hf_file_metadata") as mock_meta,
-    ):
+    with patch("huggingface_hub.HfApi") as mock_api:
         api = MagicMock()
-        api.list_repo_files.return_value = ["model-Q4_K_M.gguf"]
+        # Mock repo_info with siblings containing file metadata
+        file_info = MagicMock()
+        file_info.rfilename = "model-Q4_K_M.gguf"
+        file_info.size = 20_000_000_000
+        repo_info = MagicMock()
+        repo_info.siblings = [file_info]
+        api.repo_info.return_value = repo_info
         mock_api.return_value = api
-        mock_meta.return_value = MagicMock(size=20_000_000_000)
         yield
 
 
 @pytest.fixture
 def mock_hf_repo_split_files() -> Generator[None, None, None]:
     """Mock HF repo with split GGUF files."""
-    with (
-        patch("huggingface_hub.HfApi") as mock,
-        patch("huggingface_hub.get_hf_file_metadata") as mock_meta,
-    ):
+    with patch("huggingface_hub.HfApi") as mock:
         api = MagicMock()
-        api.list_repo_files.return_value = [
-            "model-00001-of-00003.gguf",
-            "model-00002-of-00003.gguf",
-            "model-00003-of-00003.gguf",
-        ]
+        # Mock repo_info with split file siblings
+        siblings = []
+        for i in range(1, 4):
+            file_info = MagicMock()
+            file_info.rfilename = f"model-{i:05d}-of-00003.gguf"
+            file_info.size = 10_000_000_000
+            siblings.append(file_info)
+        repo_info = MagicMock()
+        repo_info.siblings = siblings
+        api.repo_info.return_value = repo_info
         mock.return_value = api
-        mock_meta.return_value = MagicMock(size=10_000_000_000)
         yield
 
 
@@ -381,10 +392,16 @@ def mock_hf_repo_no_gguf() -> Generator[None, None, None]:
     """Mock HF repo with no GGUF files."""
     with patch("huggingface_hub.HfApi") as mock:
         api = MagicMock()
-        api.list_repo_files.return_value = [
-            "adapter.safetensors",
-            "config.json",
-        ]
+        # Mock repo_info with non-GGUF files
+        siblings = []
+        for fname in ["adapter.safetensors", "config.json"]:
+            file_info = MagicMock()
+            file_info.rfilename = fname
+            file_info.size = 1_000_000
+            siblings.append(file_info)
+        repo_info = MagicMock()
+        repo_info.siblings = siblings
+        api.repo_info.return_value = repo_info
         mock.return_value = api
         yield
 
@@ -392,26 +409,24 @@ def mock_hf_repo_no_gguf() -> Generator[None, None, None]:
 @pytest.fixture
 def mock_hf_repo_multiple_quants() -> Generator[None, None, None]:
     """Mock HF repo with multiple quantizations."""
-    with (
-        patch("huggingface_hub.HfApi") as mock_api,
-        patch("huggingface_hub.get_hf_file_metadata") as mock_meta,
-    ):
+    with patch("huggingface_hub.HfApi") as mock_api:
         api = MagicMock()
-        api.list_repo_files.return_value = [
-            "model-Q2_K.gguf",
-            "model-Q4_K_M.gguf",
-            "model-Q8_0.gguf",
-        ]
+        # Mock repo_info with multiple quantization files
+        siblings = []
+        sizes = {
+            "model-Q2_K.gguf": 10_000_000_000,
+            "model-Q4_K_M.gguf": 20_000_000_000,
+            "model-Q8_0.gguf": 40_000_000_000,
+        }
+        for fname, size in sizes.items():
+            file_info = MagicMock()
+            file_info.rfilename = fname
+            file_info.size = size
+            siblings.append(file_info)
+        repo_info = MagicMock()
+        repo_info.siblings = siblings
+        api.repo_info.return_value = repo_info
         mock_api.return_value = api
-
-        def get_size(url: str) -> MagicMock:
-            if "Q2_K" in url:
-                return MagicMock(size=10_000_000_000)
-            if "Q4_K_M" in url:
-                return MagicMock(size=20_000_000_000)
-            return MagicMock(size=40_000_000_000)
-
-        mock_meta.side_effect = get_size
         yield
 
 
@@ -420,7 +435,58 @@ def mock_hf_repo_not_found() -> Generator[None, None, None]:
     """Mock HF repo not found."""
     with patch("huggingface_hub.HfApi") as mock:
         api = MagicMock()
-        # Use a generic exception since RepositoryNotFoundError requires complex args
+        # Both repo_info and list_repo_files should raise
+        # Use generic Exception with "not found" message (code checks for this)
+        api.repo_info.side_effect = Exception("Repository not found")
         api.list_repo_files.side_effect = Exception("Repository not found")
+        mock.return_value = api
+        yield
+
+
+@pytest.fixture
+def mock_hf_repo_with_imatrix() -> Generator[None, None, None]:
+    """Mock HF repo containing imatrix calibration file."""
+    with patch("huggingface_hub.HfApi") as mock:
+        api = MagicMock()
+        siblings = []
+        # Include imatrix file (should be filtered out) and real model files
+        file_data = [
+            ("model-imatrix.gguf", 500_000_000),  # Calibration data
+            ("model-Q4_K_M.gguf", 20_000_000_000),
+            ("model-Q8_0.gguf", 40_000_000_000),
+        ]
+        for fname, size in file_data:
+            file_info = MagicMock()
+            file_info.rfilename = fname
+            file_info.size = size
+            siblings.append(file_info)
+        repo_info = MagicMock()
+        repo_info.siblings = siblings
+        api.repo_info.return_value = repo_info
+        mock.return_value = api
+        yield
+
+
+@pytest.fixture
+def mock_hf_repo_with_imatrix_variants() -> Generator[None, None, None]:
+    """Mock HF repo with various imatrix naming patterns."""
+    with patch("huggingface_hub.HfApi") as mock:
+        api = MagicMock()
+        siblings = []
+        # Various imatrix naming patterns (all should be filtered)
+        file_data = [
+            ("model-imatrix.gguf", 500_000_000),
+            ("model-IMATRIX.gguf", 500_000_000),
+            ("model_imatrix_calibration.gguf", 600_000_000),
+            ("model-Q4_K_M.gguf", 20_000_000_000),  # Real model
+        ]
+        for fname, size in file_data:
+            file_info = MagicMock()
+            file_info.rfilename = fname
+            file_info.size = size
+            siblings.append(file_info)
+        repo_info = MagicMock()
+        repo_info.siblings = siblings
+        api.repo_info.return_value = repo_info
         mock.return_value = api
         yield

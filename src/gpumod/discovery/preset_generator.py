@@ -12,10 +12,13 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from gpumod.discovery.gguf_metadata import GGUFFile
 from gpumod.discovery.llamacpp_options import LlamaCppOptions
-from gpumod.discovery.system_info import SystemInfo
+
+if TYPE_CHECKING:
+    from gpumod.discovery.gguf_metadata import GGUFFile
+    from gpumod.discovery.system_info import SystemInfo
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +154,7 @@ class PresetGenerator:
         default_model = Path(request.gguf_file.filename).stem
 
         # Generate YAML
-        yaml_str = _PRESET_TEMPLATE.format(
+        return _PRESET_TEMPLATE.format(
             date=datetime.now(tz=UTC).strftime("%Y-%m-%d"),
             repo_id=request.repo_id,
             quant_type=request.gguf_file.quant_type or "unknown",
@@ -168,8 +171,6 @@ class PresetGenerator:
             threads=threads,
             extra_vars=extra_vars,
         )
-
-        return yaml_str
 
     def _derive_service_id(self, repo_id: str, gguf_file: GGUFFile) -> str:
         """Derive a valid service ID from repo/file info.

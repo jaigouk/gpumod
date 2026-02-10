@@ -32,16 +32,54 @@ from gpumod.discovery.unsloth_lister import (
 
 logger = logging.getLogger(__name__)
 
+
+def _format_vram(vram_mb: int) -> str:
+    """Format VRAM with appropriate units (MB or GB).
+
+    Args:
+        vram_mb: VRAM in megabytes.
+
+    Returns:
+        Formatted string like "1.5 GB" or "512 MB".
+    """
+    if vram_mb >= 1024:
+        return f"{vram_mb / 1024:.1f} GB"
+    return f"{vram_mb} MB"
+
+
+_DISCOVER_HELP = """Discover and configure models from HuggingFace.
+
+[bold]Examples:[/bold]
+  gpumod discover                              # List unsloth models
+  gpumod discover --search deepseek            # Search by name
+  gpumod discover -s kimi -a moonshotai        # Search in specific org
+  gpumod discover --author bartowski -s llama  # Combine author + search
+  gpumod discover --task code                  # Filter by task type
+"""
+
 discover_app = typer.Typer(
     name="discover",
-    help="Discover and configure models from HuggingFace.",
+    help=_DISCOVER_HELP,
     no_args_is_help=False,
+    rich_markup_mode="rich",
 )
 
 
 @discover_app.callback(invoke_without_command=True)
 def discover(  # noqa: C901, PLR0913, PLR0915
     ctx: typer.Context,
+    search: str = typer.Option(
+        None,
+        "--search",
+        "-s",
+        help="Search models by name (e.g., 'deepseek', 'kimi', 'qwen')",
+    ),
+    author: str = typer.Option(
+        "unsloth",
+        "--author",
+        "-a",
+        help="HuggingFace organization (default: unsloth)",
+    ),
     task: str = typer.Option(
         None,
         "--task",
@@ -79,13 +117,16 @@ def discover(  # noqa: C901, PLR0913, PLR0915
         help="Debug output",
     ),
 ) -> None:
-    """Discover models from Unsloth on HuggingFace.
+    """Discover GGUF models from HuggingFace.
 
-    Automatically finds GGUF models that fit your GPU, then generates
-    a ready-to-use preset for gpumod.
+    Searches for models by name, filters by VRAM, and generates
+    ready-to-use presets for gpumod.
 
-    Example:
+    Examples:
+        gpumod discover --search deepseek
+        gpumod discover --search kimi --author moonshotai
         gpumod discover --task code --context 8192
+        gpumod discover --author bartowski --search llama
     """
     if ctx.invoked_subcommand is not None:
         return
@@ -135,12 +176,20 @@ def discover(  # noqa: C901, PLR0913, PLR0915
 
         console.print(f"\n[bold]VRAM Budget:[/bold] {vram_budget} MB")
 
-        # Step 2: Fetch models from Unsloth
+        # Step 2: Fetch models from HuggingFace
         console.print("\n[bold]Discovering Models[/bold]")
         console.print("─" * 40)
 
+        # Build search description
+        search_desc = []
+        if search:
+            search_desc.append(f"search='{search}'")
+        if author:
+            search_desc.append(f"author={author}")
+        search_info = ", ".join(search_desc) if search_desc else "all GGUF models"
+
         try:
-            lister = UnslothModelLister()
+            lister = UnslothModelLister(author=author or None)
             if not as_json:
                 with Progress(
                     SpinnerColumn(),
@@ -148,10 +197,12 @@ def discover(  # noqa: C901, PLR0913, PLR0915
                     console=console,
                     transient=True,
                 ) as progress:
-                    progress.add_task("Fetching models from unsloth...", total=None)
-                    models = await lister.list_models(task=task, force_refresh=no_cache)
+                    progress.add_task(f"Fetching models ({search_info})...", total=None)
+                    models = await lister.list_models(
+                        task=task, search=search, force_refresh=no_cache
+                    )
             else:
-                models = await lister.list_models(task=task, force_refresh=no_cache)
+                models = await lister.list_models(task=task, search=search, force_refresh=no_cache)
         except HuggingFaceAPIError as exc:
             if as_json:
                 print(json.dumps({"error": str(exc)}))
@@ -164,9 +215,12 @@ def discover(  # noqa: C901, PLR0913, PLR0915
                 print(json.dumps([]))
             else:
                 console.print("[yellow]No models found matching criteria.[/yellow]")
+                if search:
+                    console.print("Try a different --search term or --author")
             raise typer.Exit(0)
 
-        console.print(f"Found {len(models)} GGUF models from Unsloth")
+        source = author or "HuggingFace"
+        console.print(f"Found {len(models)} GGUF models from {source}")
 
         # Step 3: For each model, get GGUF files and filter by VRAM
         console.print("\n[bold]Analyzing Quantizations[/bold]")
@@ -254,8 +308,8 @@ def discover(  # noqa: C901, PLR0913, PLR0915
             table.add_row(
                 str(idx),
                 model.name[:40],
-                best.quant_type or "?",
-                f"{best.estimated_vram_mb} MB",
+                best.quant_type or "unknown",
+                _format_vram(best.estimated_vram_mb),
             )
             flat_choices.append((model, best))
             idx += 1
@@ -286,8 +340,7 @@ def discover(  # noqa: C901, PLR0913, PLR0915
 
         # Check if model name suggests MoE
         is_moe = any(
-            kw in selected_model.name.lower()
-            for kw in ("moe", "mixture", "expert", "a3b")
+            kw in selected_model.name.lower() for kw in ("moe", "mixture", "expert", "a3b")
         )
 
         request = PresetRequest(

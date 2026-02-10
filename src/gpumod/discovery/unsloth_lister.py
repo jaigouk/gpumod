@@ -1,6 +1,9 @@
-"""HuggingFace Unsloth model lister.
+"""HuggingFace model lister.
 
-Lists GGUF models from the Unsloth organization on HuggingFace Hub.
+Lists GGUF models from HuggingFace Hub with support for:
+- Organization filtering (--author)
+- Keyword search (--search)
+- Task filtering (--task)
 Provides caching and filtering capabilities for model discovery.
 """
 
@@ -12,6 +15,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import ClassVar
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +26,9 @@ class HuggingFaceAPIError(Exception):
 
 @dataclass(frozen=True)
 class UnslothModel:
-    """Immutable model metadata from Unsloth HuggingFace repos.
+    """Immutable model metadata from HuggingFace repos.
+
+    Named UnslothModel for backwards compatibility, but supports any HF org.
 
     Attributes:
         repo_id: Full repo ID (e.g., "unsloth/Qwen3-Coder-Next-GGUF").
@@ -41,24 +47,32 @@ class UnslothModel:
     has_gguf: bool
 
 
+# Alias for clarity
+HFModel = UnslothModel
+
+
 class UnslothModelLister:
-    """Lists GGUF models from Unsloth organization on HuggingFace.
+    """Lists GGUF models from HuggingFace organizations.
 
     Provides caching to avoid repeated API calls and supports filtering
-    by task type (code, chat, embedding, etc.).
+    by task type, keyword search, and organization.
 
     Example:
         >>> lister = UnslothModelLister()
         >>> models = await lister.list_models(task="code")
         >>> for model in models:
         ...     print(f"{model.name}: {model.repo_id}")
+
+        >>> # Search by keyword
+        >>> lister = UnslothModelLister(author=None)
+        >>> models = await lister.list_models(search="deepseek")
     """
 
     # Pattern for extracting model name from repo ID
-    _NAME_PATTERN = re.compile(r"^unsloth/(.+?)(?:-GGUF)?$", re.IGNORECASE)
+    _NAME_PATTERN = re.compile(r"^[^/]+/(.+?)(?:-GGUF)?$", re.IGNORECASE)
 
     # Task keywords for filtering
-    _TASK_KEYWORDS: dict[str, tuple[str, ...]] = {
+    _TASK_KEYWORDS: ClassVar[dict[str, tuple[str, ...]]] = {
         "code": ("code", "coder", "coding", "starcoder", "codellama"),
         "chat": ("chat", "instruct", "assistant"),
         "embed": ("embed", "embedding", "bge", "e5"),
@@ -69,29 +83,31 @@ class UnslothModelLister:
         self,
         *,
         cache_ttl_seconds: int = 3600,
-        author: str = "unsloth",
+        author: str | None = "unsloth",
     ) -> None:
         """Initialize the lister.
 
         Args:
             cache_ttl_seconds: Cache TTL in seconds (default 1 hour).
-            author: HuggingFace organization to list from.
+            author: HuggingFace organization to list from. None for search mode.
         """
         self._cache_ttl = cache_ttl_seconds
         self._author = author
-        self._cache: list[UnslothModel] | None = None
-        self._cache_time: float = 0
+        self._cache: dict[str, list[UnslothModel]] = {}  # Cache by search key
+        self._cache_time: dict[str, float] = {}
 
     async def list_models(
         self,
         *,
         task: str | None = None,
+        search: str | None = None,
         force_refresh: bool = False,
     ) -> list[UnslothModel]:
-        """List GGUF models from Unsloth organization.
+        """List GGUF models from HuggingFace.
 
         Args:
             task: Optional task filter (code, chat, embed, reasoning).
+            search: Optional model name search query (e.g., "deepseek", "kimi").
             force_refresh: Bypass cache and fetch fresh data.
 
         Returns:
@@ -100,40 +116,65 @@ class UnslothModelLister:
         Raises:
             HuggingFaceAPIError: If the API call fails.
         """
+        # Create cache key from search params
+        cache_key = f"{self._author or 'all'}:{search or ''}"
+
         # Check cache
-        if not force_refresh and self._cache is not None:
-            if time.monotonic() - self._cache_time < self._cache_ttl:
-                return self._filter_by_task(self._cache, task)
+        if not force_refresh and cache_key in self._cache:
+            cache_time = self._cache_time.get(cache_key, 0)
+            if time.monotonic() - cache_time < self._cache_ttl:
+                return self._filter_by_task(self._cache[cache_key], task)
 
         # Fetch from HuggingFace
         try:
-            models = await self._fetch_models()
-            self._cache = models
-            self._cache_time = time.monotonic()
+            models = await self._fetch_models(search=search)
+            self._cache[cache_key] = models
+            self._cache_time[cache_key] = time.monotonic()
         except Exception as exc:
             # If we have cached data, return it on error
-            if self._cache is not None:
+            if cache_key in self._cache:
                 logger.warning("HuggingFace API error, returning cached data: %s", exc)
-                return self._filter_by_task(self._cache, task)
+                return self._filter_by_task(self._cache[cache_key], task)
             raise HuggingFaceAPIError(str(exc)) from exc
 
         return self._filter_by_task(models, task)
 
-    async def _fetch_models(self) -> list[UnslothModel]:
+    async def _fetch_models(self, *, search: str | None = None) -> list[UnslothModel]:
         """Fetch models from HuggingFace Hub API.
+
+        Args:
+            search: Optional search query for model names.
 
         Returns:
             List of UnslothModel for GGUF repos.
         """
+        import time as time_module
+
         from huggingface_hub import HfApi
 
         api = HfApi()
 
+        # Build search kwargs
+        kwargs: dict[str, object] = {}
+        if self._author:
+            kwargs["author"] = self._author
+        if search:
+            # HuggingFace search query - search in model name
+            kwargs["search"] = search
+        # Filter for GGUF models using tags filter
+        kwargs["filter"] = "gguf"
+
+        logger.debug("HuggingFace API query: %s", kwargs)
+        start = time_module.monotonic()
+
         # Run in thread since huggingface_hub is sync
         raw_models = await asyncio.to_thread(
             api.list_models,
-            author=self._author,
+            **kwargs,
         )
+
+        elapsed = time_module.monotonic() - start
+        logger.debug("HuggingFace API returned in %.2fs", elapsed)
 
         models: list[UnslothModel] = []
         for model in raw_models:
@@ -153,11 +194,8 @@ class UnslothModelLister:
 
             # Get description from card data
             description = None
-            if hasattr(model, "cardData") and model.cardData:
-                if isinstance(model.cardData, dict):
-                    description = model.cardData.get("model_name") or model.cardData.get(
-                        "description"
-                    )
+            if hasattr(model, "cardData") and model.cardData and isinstance(model.cardData, dict):
+                description = model.cardData.get("model_name") or model.cardData.get("description")
 
             # Get last modified
             last_modified = model.lastModified
@@ -190,19 +228,15 @@ class UnslothModelLister:
             Human-readable name like "Qwen3 Coder Next".
         """
         match = self._NAME_PATTERN.match(repo_id)
-        if match:
-            raw_name = match.group(1)
-        else:
-            # Fallback: just use the part after the slash
-            raw_name = repo_id.split("/")[-1]
+        # Fallback: just use the part after the slash
+        raw_name = match.group(1) if match else repo_id.split("/")[-1]
 
         # Remove common suffixes
         for suffix in ("-GGUF", "-gguf", "_GGUF", "_gguf"):
             raw_name = raw_name.removesuffix(suffix)
 
         # Convert hyphens/underscores to spaces and title case
-        name = raw_name.replace("-", " ").replace("_", " ")
-        return name
+        return raw_name.replace("-", " ").replace("_", " ")
 
     def _filter_by_task(
         self,
@@ -241,5 +275,5 @@ class UnslothModelLister:
 
     def clear_cache(self) -> None:
         """Clear the model cache."""
-        self._cache = None
-        self._cache_time = 0
+        self._cache.clear()
+        self._cache_time.clear()
