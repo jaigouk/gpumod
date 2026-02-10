@@ -103,7 +103,7 @@ class GGUFMetadataFetcher:
         import time
 
         from huggingface_hub import HfApi
-        from huggingface_hub.utils import RepositoryNotFoundError
+        from huggingface_hub.utils import RepositoryNotFoundError  # type: ignore[attr-defined]
 
         api = HfApi()
 
