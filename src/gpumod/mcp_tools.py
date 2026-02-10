@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastmcp import Context  # noqa: TC002 -- runtime import needed for FastMCP DI
 
+from gpumod.discovery.gguf_metadata import GGUFMetadataFetcher, RepoNotFoundError
 from gpumod.discovery.hf_searcher import HuggingFaceSearcher
 from gpumod.simulation import SimulationError
 from gpumod.validation import (
@@ -433,8 +434,6 @@ async def list_gguf_files(
     Returns:
         Dict with 'files' list containing filename, size, quant_type, vram estimate.
     """
-    from gpumod.discovery.gguf_metadata import GGUFMetadataFetcher, RepoNotFoundError
-
     # Validate repo_id
     error = _validate_repo_id(repo_id)
     if error:
@@ -473,6 +472,75 @@ async def list_gguf_files(
 
     except RepoNotFoundError:
         return _not_found_error(f"Repository not found: {repo_id}")
+
+
+async def list_model_files(
+    repo_id: str,
+    ctx: Context,
+    vram_budget_mb: int | None = None,
+) -> dict[str, Any]:
+    """List model files in a HuggingFace repo with format detection and VRAM estimates.
+
+    Unified tool that supports both GGUF and Safetensors model formats.
+
+    Args:
+        repo_id: HuggingFace repo ID (e.g., 'unsloth/Qwen3-Coder-Next-GGUF').
+        vram_budget_mb: Optional VRAM budget to filter files that fit.
+
+    Returns:
+        Dict with 'files' list, 'model_format', and 'driver_hint'.
+    """
+    # Validate repo_id
+    error = _validate_repo_id(repo_id)
+    if error:
+        return _validation_error(error)
+
+    # Validate vram_budget_mb
+    if vram_budget_mb is not None and vram_budget_mb <= 0:
+        return _validation_error("vram_budget_mb must be positive")
+
+    # Try GGUF format first (most common for quantized models)
+    try:
+        fetcher = GGUFMetadataFetcher()
+        files = await fetcher.list_gguf_files(repo_id)
+
+        if files:
+            # Filter by VRAM budget if specified
+            if vram_budget_mb is not None:
+                files = [f for f in files if f.estimated_vram_mb <= vram_budget_mb]
+
+            # Convert to serializable dicts
+            result_files = [
+                {
+                    "filename": f.filename,
+                    "size_bytes": f.size_bytes,
+                    "quant_type": f.quant_type,
+                    "estimated_vram_mb": f.estimated_vram_mb,
+                    "is_split": f.is_split,
+                    "split_parts": f.split_parts,
+                }
+                for f in files
+            ]
+
+            return {
+                "repo_id": repo_id,
+                "files": result_files,
+                "count": len(result_files),
+                "model_format": "gguf",
+                "driver_hint": "llamacpp",
+            }
+
+    except RepoNotFoundError:
+        return _not_found_error(f"Repository not found: {repo_id}")
+
+    # No GGUF files found - return empty with unknown format
+    return {
+        "repo_id": repo_id,
+        "files": [],
+        "count": 0,
+        "model_format": "unknown",
+        "driver_hint": None,
+    }
 
 
 async def generate_preset(
