@@ -10,12 +10,8 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from gpumod.services.vram import NvidiaSmiError, VRAMTracker
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +97,7 @@ class SystemInfoCollector:
                 ),
                 timeout=self._nvidia_smi_timeout,
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             msg = f"nvidia-smi timeout after {self._nvidia_smi_timeout}s"
             raise NvidiaSmiUnavailableError(msg) from exc
         except NvidiaSmiError as exc:
@@ -195,8 +191,8 @@ class SystemInfoCollector:
         try:
             from gpumod.config import get_settings
             from gpumod.db import Database
-            from gpumod.services.registry import ServiceRegistry
             from gpumod.models import ServiceState
+            from gpumod.services.registry import ServiceRegistry
 
             settings = get_settings()
             if not settings.db_path.exists():

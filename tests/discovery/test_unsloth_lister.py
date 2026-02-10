@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -22,7 +22,7 @@ class TestUnslothModelDataclass:
             repo_id="unsloth/Qwen3-Coder-Next-GGUF",
             name="Qwen3 Coder Next",
             description="80B MoE coding model",
-            last_modified=datetime.now(tz=timezone.utc),
+            last_modified=datetime.now(tz=UTC),
             tags=("gguf", "code"),
             has_gguf=True,
         )
@@ -35,7 +35,7 @@ class TestUnslothModelDataclass:
             repo_id="unsloth/test",
             name="Test",
             description=None,
-            last_modified=datetime.now(tz=timezone.utc),
+            last_modified=datetime.now(tz=UTC),
             tags=("gguf", "llama"),
             has_gguf=True,
         )

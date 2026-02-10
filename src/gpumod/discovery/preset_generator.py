@@ -9,17 +9,13 @@ from __future__ import annotations
 import logging
 import os
 import re
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from gpumod.discovery.gguf_metadata import GGUFFile
 from gpumod.discovery.llamacpp_options import LlamaCppOptions
 from gpumod.discovery.system_info import SystemInfo
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +152,7 @@ class PresetGenerator:
 
         # Generate YAML
         yaml_str = _PRESET_TEMPLATE.format(
-            date=datetime.now(tz=timezone.utc).strftime("%Y-%m-%d"),
+            date=datetime.now(tz=UTC).strftime("%Y-%m-%d"),
             repo_id=request.repo_id,
             quant_type=request.gguf_file.quant_type or "unknown",
             estimated_vram_mb=request.gguf_file.estimated_vram_mb,
@@ -190,8 +186,7 @@ class PresetGenerator:
 
         # Remove common suffixes
         for suffix in ("-GGUF", "-gguf", "_GGUF", "_gguf"):
-            if name.endswith(suffix):
-                name = name[: -len(suffix)]
+            name = name.removesuffix(suffix)
 
         # Convert to lowercase and replace invalid chars
         service_id = name.lower()
@@ -225,8 +220,7 @@ class PresetGenerator:
 
         # Remove GGUF suffix
         for suffix in ("-GGUF", "-gguf", "_GGUF", "_gguf"):
-            if name.endswith(suffix):
-                name = name[: -len(suffix)]
+            name = name.removesuffix(suffix)
 
         # Convert to title case with spaces
         name = name.replace("-", " ").replace("_", " ")

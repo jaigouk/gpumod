@@ -11,10 +11,6 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -89,9 +85,8 @@ class GGUFMetadataFetcher:
 
     def __init__(self) -> None:
         """Initialize the fetcher."""
-        pass
 
-    async def list_gguf_files(self, repo_id: str) -> list[GGUFFile]:
+    async def list_gguf_files(self, repo_id: str) -> list[GGUFFile]:  # noqa: C901
         """List all GGUF files in a HuggingFace repo with metadata.
 
         Args:
@@ -161,7 +156,7 @@ class GGUFMetadataFetcher:
             )
 
         # Process split file groups
-        for base, parts in split_groups.items():
+        for parts in split_groups.values():
             total_size = 0
             for part in parts:
                 size = await self._get_file_size(api, repo_id, part)

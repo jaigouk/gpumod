@@ -121,15 +121,9 @@ class TestDiscoverJson:
         fitting_files = [f for f in mock_gguf_files if f.estimated_vram_mb <= 24064]
 
         with (
-            patch(
-                "gpumod.cli_discover.SystemInfoCollector"
-            ) as mock_collector_cls,
-            patch(
-                "gpumod.cli_discover.UnslothModelLister"
-            ) as mock_lister_cls,
-            patch(
-                "gpumod.cli_discover.GGUFMetadataFetcher"
-            ) as mock_fetcher_cls,
+            patch("gpumod.cli_discover.SystemInfoCollector") as mock_collector_cls,
+            patch("gpumod.cli_discover.UnslothModelLister") as mock_lister_cls,
+            patch("gpumod.cli_discover.GGUFMetadataFetcher") as mock_fetcher_cls,
         ):
             # Setup mocks
             collector = MagicMock()
@@ -160,12 +154,8 @@ class TestDiscoverJson:
     ) -> None:
         """--json with no models returns empty list gracefully."""
         with (
-            patch(
-                "gpumod.cli_discover.SystemInfoCollector"
-            ) as mock_collector_cls,
-            patch(
-                "gpumod.cli_discover.UnslothModelLister"
-            ) as mock_lister_cls,
+            patch("gpumod.cli_discover.SystemInfoCollector") as mock_collector_cls,
+            patch("gpumod.cli_discover.UnslothModelLister") as mock_lister_cls,
         ):
             collector = MagicMock()
             collector.get_system_info = AsyncMock(return_value=mock_system_info)
@@ -208,15 +198,9 @@ class TestDiscoverVramFilter:
         ]
 
         with (
-            patch(
-                "gpumod.cli_discover.SystemInfoCollector"
-            ) as mock_collector_cls,
-            patch(
-                "gpumod.cli_discover.UnslothModelLister"
-            ) as mock_lister_cls,
-            patch(
-                "gpumod.cli_discover.GGUFMetadataFetcher"
-            ) as mock_fetcher_cls,
+            patch("gpumod.cli_discover.SystemInfoCollector") as mock_collector_cls,
+            patch("gpumod.cli_discover.UnslothModelLister") as mock_lister_cls,
+            patch("gpumod.cli_discover.GGUFMetadataFetcher") as mock_fetcher_cls,
         ):
             collector = MagicMock()
             collector.get_system_info = AsyncMock(return_value=mock_system_info)
@@ -243,15 +227,9 @@ class TestDiscoverVramFilter:
     ) -> None:
         """--vram overrides detected VRAM budget."""
         with (
-            patch(
-                "gpumod.cli_discover.SystemInfoCollector"
-            ) as mock_collector_cls,
-            patch(
-                "gpumod.cli_discover.UnslothModelLister"
-            ) as mock_lister_cls,
-            patch(
-                "gpumod.cli_discover.GGUFMetadataFetcher"
-            ) as mock_fetcher_cls,
+            patch("gpumod.cli_discover.SystemInfoCollector") as mock_collector_cls,
+            patch("gpumod.cli_discover.UnslothModelLister") as mock_lister_cls,
+            patch("gpumod.cli_discover.GGUFMetadataFetcher") as mock_fetcher_cls,
         ):
             collector = MagicMock()
             collector.get_system_info = AsyncMock(return_value=mock_system_info)
@@ -296,15 +274,9 @@ class TestDiscoverTaskFilter:
         )
 
         with (
-            patch(
-                "gpumod.cli_discover.SystemInfoCollector"
-            ) as mock_collector_cls,
-            patch(
-                "gpumod.cli_discover.UnslothModelLister"
-            ) as mock_lister_cls,
-            patch(
-                "gpumod.cli_discover.GGUFMetadataFetcher"
-            ) as mock_fetcher_cls,
+            patch("gpumod.cli_discover.SystemInfoCollector") as mock_collector_cls,
+            patch("gpumod.cli_discover.UnslothModelLister") as mock_lister_cls,
+            patch("gpumod.cli_discover.GGUFMetadataFetcher") as mock_fetcher_cls,
         ):
             collector = MagicMock()
             collector.get_system_info = AsyncMock(return_value=mock_system_info)
@@ -340,9 +312,7 @@ class TestDiscoverErrors:
         """Shows error when nvidia-smi unavailable."""
         from gpumod.discovery.system_info import NvidiaSmiUnavailableError
 
-        with patch(
-            "gpumod.cli_discover.SystemInfoCollector"
-        ) as mock_collector_cls:
+        with patch("gpumod.cli_discover.SystemInfoCollector") as mock_collector_cls:
             collector = MagicMock()
             collector.get_system_info = AsyncMock(
                 side_effect=NvidiaSmiUnavailableError("nvidia-smi not found")
@@ -362,21 +332,15 @@ class TestDiscoverErrors:
         from gpumod.discovery.unsloth_lister import HuggingFaceAPIError
 
         with (
-            patch(
-                "gpumod.cli_discover.SystemInfoCollector"
-            ) as mock_collector_cls,
-            patch(
-                "gpumod.cli_discover.UnslothModelLister"
-            ) as mock_lister_cls,
+            patch("gpumod.cli_discover.SystemInfoCollector") as mock_collector_cls,
+            patch("gpumod.cli_discover.UnslothModelLister") as mock_lister_cls,
         ):
             collector = MagicMock()
             collector.get_system_info = AsyncMock(return_value=mock_system_info)
             mock_collector_cls.return_value = collector
 
             lister = MagicMock()
-            lister.list_models = AsyncMock(
-                side_effect=HuggingFaceAPIError("API rate limited")
-            )
+            lister.list_models = AsyncMock(side_effect=HuggingFaceAPIError("API rate limited"))
             mock_lister_cls.return_value = lister
 
             result = runner.invoke(app, ["discover"])
@@ -403,21 +367,11 @@ class TestDiscoverDryRun:
         fitting_files = [f for f in mock_gguf_files if f.estimated_vram_mb <= 24064]
 
         with (
-            patch(
-                "gpumod.cli_discover.SystemInfoCollector"
-            ) as mock_collector_cls,
-            patch(
-                "gpumod.cli_discover.UnslothModelLister"
-            ) as mock_lister_cls,
-            patch(
-                "gpumod.cli_discover.GGUFMetadataFetcher"
-            ) as mock_fetcher_cls,
-            patch(
-                "gpumod.cli_discover.IntPrompt"
-            ) as mock_prompt,
-            patch(
-                "gpumod.cli_discover.Path"
-            ) as mock_path,
+            patch("gpumod.cli_discover.SystemInfoCollector") as mock_collector_cls,
+            patch("gpumod.cli_discover.UnslothModelLister") as mock_lister_cls,
+            patch("gpumod.cli_discover.GGUFMetadataFetcher") as mock_fetcher_cls,
+            patch("gpumod.cli_discover.IntPrompt") as mock_prompt,
+            patch("gpumod.cli_discover.Path") as mock_path,
         ):
             collector = MagicMock()
             collector.get_system_info = AsyncMock(return_value=mock_system_info)
