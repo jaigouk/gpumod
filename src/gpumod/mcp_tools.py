@@ -413,7 +413,7 @@ async def search_hf_models(  # noqa: PLR0911
             )
 
             # Convert SearchResult to serializable dicts with sanitization (SEC-E3)
-            result_models = [
+            result_models: list[dict[str, Any]] = [
                 {
                     "repo_id": r.repo_id,
                     "name": sanitize_name(r.name),

@@ -222,11 +222,7 @@ class HuggingFaceSearcher:
 
             # Get description
             description = None
-            if (
-                hasattr(model, "cardData")
-                and model.cardData
-                and isinstance(model.cardData, dict)
-            ):
+            if hasattr(model, "cardData") and model.cardData and isinstance(model.cardData, dict):
                 description = model.cardData.get("description")
 
             # Get last modified

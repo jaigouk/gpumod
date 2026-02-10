@@ -9,8 +9,7 @@ Following TDD workflow:
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Protocol, runtime_checkable
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -175,9 +174,7 @@ class TestHuggingFaceSearcherSearch:
         assert all(isinstance(r, SearchResult) for r in results)
 
     @pytest.mark.asyncio
-    async def test_search_with_driver_filter_gguf(
-        self, sample_hf_models: list[MagicMock]
-    ) -> None:
+    async def test_search_with_driver_filter_gguf(self, sample_hf_models: list[MagicMock]) -> None:
         """driver='llamacpp' returns only GGUF models."""
         from gpumod.discovery.hf_searcher import HuggingFaceSearcher
 
@@ -194,9 +191,7 @@ class TestHuggingFaceSearcherSearch:
         assert all(r.model_format == "gguf" for r in results)
 
     @pytest.mark.asyncio
-    async def test_search_with_driver_filter_vllm(
-        self, sample_hf_models: list[MagicMock]
-    ) -> None:
+    async def test_search_with_driver_filter_vllm(self, sample_hf_models: list[MagicMock]) -> None:
         """driver='vllm' returns only Safetensors models."""
         from gpumod.discovery.hf_searcher import HuggingFaceSearcher
 
@@ -213,9 +208,7 @@ class TestHuggingFaceSearcherSearch:
         assert all(r.model_format == "safetensors" for r in results)
 
     @pytest.mark.asyncio
-    async def test_search_with_author_filter(
-        self, sample_hf_models: list[MagicMock]
-    ) -> None:
+    async def test_search_with_author_filter(self, sample_hf_models: list[MagicMock]) -> None:
         """author parameter filters by organization."""
         from gpumod.discovery.hf_searcher import HuggingFaceSearcher
 

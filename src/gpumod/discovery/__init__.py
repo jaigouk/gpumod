@@ -19,25 +19,19 @@ from gpumod.discovery.system_info import SystemInfo, SystemInfoCollector
 from gpumod.discovery.unsloth_lister import HFModel, UnslothModel, UnslothModelLister
 
 __all__ = [
-    # Protocols (ISP/DIP)
-    "ModelSearcher",
-    "SearchResult",
-    # Searchers
-    "HuggingFaceSearcher",
-    "UnslothModelLister",
-    # Format detection
-    "detect_model_format",
-    "get_driver_hint",
-    # Metadata
     "GGUFFile",
     "GGUFMetadataFetcher",
     "HFModel",
-    "UnslothModel",
-    # System info
-    "SystemInfo",
-    "SystemInfoCollector",
-    # Preset generation
+    "HuggingFaceSearcher",
     "LlamaCppOptions",
+    "ModelSearcher",
     "PresetGenerator",
     "RecommendedConfig",
+    "SearchResult",
+    "SystemInfo",
+    "SystemInfoCollector",
+    "UnslothModel",
+    "UnslothModelLister",
+    "detect_model_format",
+    "get_driver_hint",
 ]
