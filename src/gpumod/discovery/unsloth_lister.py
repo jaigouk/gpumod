@@ -11,11 +11,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -117,9 +113,7 @@ class UnslothModelLister:
         except Exception as exc:
             # If we have cached data, return it on error
             if self._cache is not None:
-                logger.warning(
-                    "HuggingFace API error, returning cached data: %s", exc
-                )
+                logger.warning("HuggingFace API error, returning cached data: %s", exc)
                 return self._filter_by_task(self._cache, task)
             raise HuggingFaceAPIError(str(exc)) from exc
 
@@ -149,11 +143,7 @@ class UnslothModelLister:
 
             # Check if this is a GGUF repo (by name or tags)
             tags = tuple(model.tags or [])
-            is_gguf = (
-                "gguf" in tags
-                or "GGUF" in repo_id
-                or "gguf" in repo_id.lower()
-            )
+            is_gguf = "gguf" in tags or "GGUF" in repo_id or "gguf" in repo_id.lower()
 
             if not is_gguf:
                 continue
@@ -165,14 +155,16 @@ class UnslothModelLister:
             description = None
             if hasattr(model, "cardData") and model.cardData:
                 if isinstance(model.cardData, dict):
-                    description = model.cardData.get("model_name") or model.cardData.get("description")
+                    description = model.cardData.get("model_name") or model.cardData.get(
+                        "description"
+                    )
 
             # Get last modified
             last_modified = model.lastModified
             if last_modified is None:
-                last_modified = datetime.now(tz=timezone.utc)
+                last_modified = datetime.now(tz=UTC)
             elif not last_modified.tzinfo:
-                last_modified = last_modified.replace(tzinfo=timezone.utc)
+                last_modified = last_modified.replace(tzinfo=UTC)
 
             models.append(
                 UnslothModel(
@@ -206,8 +198,7 @@ class UnslothModelLister:
 
         # Remove common suffixes
         for suffix in ("-GGUF", "-gguf", "_GGUF", "_gguf"):
-            if raw_name.endswith(suffix):
-                raw_name = raw_name[: -len(suffix)]
+            raw_name = raw_name.removesuffix(suffix)
 
         # Convert hyphens/underscores to spaces and title case
         name = raw_name.replace("-", " ").replace("_", " ")

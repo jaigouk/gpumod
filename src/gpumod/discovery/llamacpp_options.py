@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ class LlamaCppOptions:
     """
 
     # Documented options with metadata
-    _OPTIONS: dict[str, OptionSpec] = {
+    _OPTIONS: ClassVar[dict[str, OptionSpec]] = {
         "n_gpu_layers": OptionSpec(
             name="n_gpu_layers",
             type=int,
@@ -134,7 +134,7 @@ class LlamaCppOptions:
             name="n_cpu_moe",
             type=int,
             default=0,
-            description="Number of CPU threads for MoE expert layers. Useful for large MoE models.",
+            description="CPU threads for MoE expert layers. Useful for large MoE models.",
             vram_impact=VRAMImpact.REDUCES,
             min_version="b4000",
         ),
@@ -155,11 +155,11 @@ class LlamaCppOptions:
     }
 
     # Model size tiers (in billions of parameters)
-    _SIZE_TIERS = {
-        "tiny": (0, 3),      # <3B
-        "small": (3, 10),    # 3-10B
+    _SIZE_TIERS: ClassVar[dict[str, tuple[float, float]]] = {
+        "tiny": (0, 3),  # <3B
+        "small": (3, 10),  # 3-10B
         "medium": (10, 35),  # 10-35B
-        "large": (35, 80),   # 35-80B
+        "large": (35, 80),  # 35-80B
         "xl": (80, float("inf")),  # >80B
     }
 

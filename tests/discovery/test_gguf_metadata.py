@@ -153,7 +153,7 @@ class TestQuantizationPatterns:
         return GGUFMetadataFetcher()
 
     @pytest.mark.parametrize(
-        "filename,expected",
+        ("filename", "expected"),
         [
             ("model-Q4_K_M.gguf", "Q4_K_M"),
             ("model-Q4_K_S.gguf", "Q4_K_S"),
