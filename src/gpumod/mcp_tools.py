@@ -311,17 +311,53 @@ _VALID_DRIVERS = frozenset({"llamacpp", "vllm", "any"})
 _MAX_SEARCH_LIMIT = 100
 _MIN_CONTEXT_SIZE = 512
 _MAX_CONTEXT_SIZE = 262144  # 256k
+_MAX_REPO_ID_LENGTH = 200  # HuggingFace limit is 96 per part, we allow some margin
+
+# Dangerous patterns that should never appear in repo_id (SEC-V1)
+_DANGEROUS_PATTERNS = (
+    ";",  # Shell command separator
+    "|",  # Pipe
+    "&",  # Background/AND
+    "$",  # Variable expansion
+    "`",  # Command substitution
+    ">",  # Redirect
+    "<",  # Redirect
+    "{{",  # Jinja2 template
+    "{%",  # Jinja2 template
+    "..",  # Path traversal
+    "\x00",  # Null byte
+    "'",  # SQL injection
+    '"',  # SQL injection
+    "--",  # SQL comment
+    "/*",  # SQL comment
+)
 
 
 def _validate_repo_id(repo_id: str) -> str | None:
-    """Validate repo_id format (org/name). Returns error message or None."""
+    """Validate repo_id format (org/name). Returns error message or None.
+
+    Implements SEC-V1 input validation for HuggingFace repo IDs.
+    Rejects shell injection, SQL injection, path traversal, and template injection.
+    """
     if not repo_id or not repo_id.strip():
         return "repo_id is required"
+
+    # Length check to prevent DoS
+    if len(repo_id) > _MAX_REPO_ID_LENGTH:
+        return f"repo_id exceeds maximum length of {_MAX_REPO_ID_LENGTH}"
+
+    # Check for dangerous patterns (SEC-V1: T1-T4)
+    for pattern in _DANGEROUS_PATTERNS:
+        if pattern in repo_id:
+            return "repo_id contains invalid characters"
+
     if "/" not in repo_id or repo_id.count("/") != 1:
         return "repo_id must be in format 'org/name' (e.g., 'unsloth/Qwen-GGUF')"
+
     org, name = repo_id.split("/")
     if not org or not name:
         return "repo_id must have non-empty org and name"
+
     return None
 
 
@@ -376,12 +412,12 @@ async def search_hf_models(  # noqa: PLR0911
                 force_refresh=no_cache,
             )
 
-            # Convert SearchResult to serializable dicts
+            # Convert SearchResult to serializable dicts with sanitization (SEC-E3)
             result_models = [
                 {
                     "repo_id": r.repo_id,
-                    "name": r.name,
-                    "description": r.description,
+                    "name": sanitize_name(r.name),
+                    "description": sanitize_name(r.description) if r.description else None,
                     "tags": list(r.tags),
                     "model_format": r.model_format,
                     "driver_hint": r.driver_hint,
@@ -402,12 +438,12 @@ async def search_hf_models(  # noqa: PLR0911
         # Apply limit
         models = models[:limit]
 
-        # Convert to serializable dicts
+        # Convert to serializable dicts with sanitization (SEC-E3)
         result_models = [
             {
                 "repo_id": m.repo_id,
-                "name": m.name,
-                "description": m.description,
+                "name": sanitize_name(m.name),
+                "description": sanitize_name(m.description) if m.description else None,
                 "tags": list(m.tags),
                 "has_gguf": m.has_gguf,
             }
@@ -543,7 +579,7 @@ async def list_model_files(
     }
 
 
-async def generate_preset(
+async def generate_preset(  # noqa: PLR0911, C901
     repo_id: str,
     gguf_file: str,
     ctx: Context,
@@ -568,9 +604,18 @@ async def generate_preset(
     if error:
         return _validation_error(error)
 
-    # Validate gguf_file
+    # Validate gguf_file (SEC-V1)
     if not gguf_file or not gguf_file.lower().endswith(".gguf"):
         return _validation_error("gguf_file must end with .gguf")
+
+    # Check for dangerous patterns in gguf_file (path traversal, etc.)
+    for pattern in _DANGEROUS_PATTERNS:
+        if pattern in gguf_file:
+            return _validation_error("gguf_file contains invalid characters")
+
+    # Reject absolute paths in gguf_file
+    if gguf_file.startswith("/"):
+        return _validation_error("gguf_file cannot be an absolute path")
 
     # Validate context_size
     if context_size < _MIN_CONTEXT_SIZE:
@@ -578,13 +623,20 @@ async def generate_preset(
     if context_size > _MAX_CONTEXT_SIZE:
         return _validation_error(f"context_size cannot exceed {_MAX_CONTEXT_SIZE}")
 
-    # Generate service_id from repo if not provided
+    # Generate service_id from repo if not provided, or validate if provided (SEC-V1)
     if service_id is None:
         # Extract model name from repo_id: "unsloth/Qwen3-GGUF" -> "qwen3"
         _, repo_name = repo_id.split("/")
         # Remove -GGUF suffix and clean up
         clean_name = re.sub(r"-?GGUF$", "", repo_name, flags=re.IGNORECASE)
         service_id = sanitize_name(clean_name.lower().replace(" ", "-"))
+    else:
+        # Validate user-provided service_id for dangerous patterns (SEC-V1)
+        for pattern in _DANGEROUS_PATTERNS:
+            if pattern in service_id:
+                return _validation_error("service_id contains invalid characters")
+        # Sanitize for terminal escapes (SEC-E3)
+        service_id = sanitize_name(service_id)
 
     # Build preset YAML
     preset_yaml = f"""# Generated preset for {repo_id}
@@ -684,6 +736,14 @@ def register_tools(server: FastMCP[Any]) -> None:
             "Optionally filter by VRAM budget."
         ),
     )(list_gguf_files)
+
+    server.tool(
+        name="list_model_files",
+        description=(
+            "List model files (GGUF or Safetensors) with format detection. "
+            "Unified tool supporting both llama.cpp and vLLM formats."
+        ),
+    )(list_model_files)
 
     server.tool(
         name="generate_preset",
