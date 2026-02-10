@@ -299,9 +299,7 @@ class TestSearchHFModelsDriverFilter:
             mock_searcher.search.return_value = [vllm_result]
             searcher_cls.return_value = mock_searcher
 
-            result = await search_hf_models(
-                search="model", driver="vllm", ctx=_make_mock_ctx()
-            )
+            result = await search_hf_models(search="model", driver="vllm", ctx=_make_mock_ctx())
 
             call_kwargs = mock_searcher.search.call_args.kwargs
             assert call_kwargs.get("driver") == "vllm"
@@ -374,9 +372,7 @@ class TestSearchHFModelsDriverFilter:
             mock_searcher.search.return_value = models
             searcher_cls.return_value = mock_searcher
 
-            result = await search_hf_models(
-                search="model", driver="any", ctx=_make_mock_ctx()
-            )
+            result = await search_hf_models(search="model", driver="any", ctx=_make_mock_ctx())
 
             call_kwargs = mock_searcher.search.call_args.kwargs
             assert call_kwargs.get("driver") == "any"
@@ -592,9 +588,7 @@ class TestListModelFiles:
         assert "error" in result
         assert result["code"] == "VALIDATION_ERROR"
 
-    async def test_list_model_files_vram_budget(
-        self, mock_gguf_files: list[GGUFFile]
-    ) -> None:
+    async def test_list_model_files_vram_budget(self, mock_gguf_files: list[GGUFFile]) -> None:
         """vram_budget_mb filters files that fit."""
         from gpumod.mcp_tools import list_model_files
 
@@ -825,9 +819,7 @@ class TestSearchHFModelsEdgeCases:
             mock_searcher.search.return_value = [result_model]
             searcher_cls.return_value = mock_searcher
 
-            result = await search_hf_models(
-                search="", driver="llamacpp", ctx=_make_mock_ctx()
-            )
+            result = await search_hf_models(search="", driver="llamacpp", ctx=_make_mock_ctx())
 
             assert "models" in result
             assert result["count"] >= 0
@@ -852,7 +844,7 @@ class TestSearchHFModelsEdgeCases:
             mock_searcher.search.return_value = [result_model]
             searcher_cls.return_value = mock_searcher
 
-            result = await search_hf_models(
+            await search_hf_models(
                 search="qwen",
                 author="unsloth",
                 driver="llamacpp",
@@ -874,9 +866,7 @@ class TestSearchHFModelsEdgeCases:
             mock_lister.list_models.return_value = []
             lister_cls.return_value = mock_lister
 
-            result = await search_hf_models(
-                search="模型 モデル 🤖", ctx=_make_mock_ctx()
-            )
+            result = await search_hf_models(search="模型 モデル 🤖", ctx=_make_mock_ctx())
 
             assert "models" in result or "error" in result
 
@@ -896,7 +886,6 @@ class TestSearchHFModelsEdgeCases:
 
     async def test_search_empty_results_from_api(self) -> None:
         """Empty results from API should return empty list, not error."""
-        from gpumod.discovery.protocols import SearchResult
         from gpumod.mcp_tools import search_hf_models
 
         with patch("gpumod.mcp_tools.HuggingFaceSearcher") as searcher_cls:
@@ -922,9 +911,7 @@ class TestSearchHFModelsEdgeCases:
             lister_cls.return_value = mock_lister
 
             # Author with hyphens and numbers (valid HF org names)
-            result = await search_hf_models(
-                author="meta-llama", ctx=_make_mock_ctx()
-            )
+            result = await search_hf_models(author="meta-llama", ctx=_make_mock_ctx())
 
             assert "models" in result
 
@@ -1016,9 +1003,7 @@ class TestListModelFilesEdgeCases:
         assert "error" in result
         assert result["code"] == "VALIDATION_ERROR"
 
-    async def test_list_very_large_vram_budget(
-        self, mock_gguf_files: list[GGUFFile]
-    ) -> None:
+    async def test_list_very_large_vram_budget(self, mock_gguf_files: list[GGUFFile]) -> None:
         """Very large VRAM budget should return all files."""
         from gpumod.mcp_tools import list_model_files
 
@@ -1077,9 +1062,7 @@ class TestListGGUFFilesEdgeCases:
             assert result["files"][0]["is_split"] is True
             assert result["files"][0]["split_parts"] == 3
 
-    async def test_list_vram_budget_filters_all(
-        self, mock_gguf_files: list[GGUFFile]
-    ) -> None:
+    async def test_list_vram_budget_filters_all(self, mock_gguf_files: list[GGUFFile]) -> None:
         """VRAM budget that's too small filters out all files."""
         from gpumod.mcp_tools import list_gguf_files
 
@@ -1437,9 +1420,7 @@ class TestDiscoveryToolsSecurity:
             mock_searcher.search.return_value = [malicious_result]
             searcher_cls.return_value = mock_searcher
 
-            result = await search_hf_models(
-                search="evil", driver="llamacpp", ctx=_make_mock_ctx()
-            )
+            result = await search_hf_models(search="evil", driver="llamacpp", ctx=_make_mock_ctx())
 
             # ANSI codes should not appear in output (sanitized or stripped)
             model = result["models"][0]
