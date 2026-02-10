@@ -120,7 +120,7 @@ MCP clients. Set `GPUMOD_LOG_LEVEL=DEBUG` for verbose output.
 
 ## Available MCP Tools
 
-The MCP server exposes 12 tools:
+The MCP server exposes 13 tools:
 
 | Tool | Description | Type |
 |------|-------------|------|
@@ -133,8 +133,9 @@ The MCP server exposes 12 tools:
 | `switch_mode` | Switch to a different GPU mode (starts/stops services) | Mutating |
 | `start_service` | Start a specific service | Mutating |
 | `stop_service` | Stop a specific service | Mutating |
-| `search_hf_models` | Search HuggingFace for GGUF models by author/keyword/task | Discovery |
+| `search_hf_models` | Search HuggingFace for models by author/keyword/task/driver | Discovery |
 | `list_gguf_files` | List GGUF files in a repo with size and VRAM estimates | Discovery |
+| `list_model_files` | List model files (GGUF or Safetensors) with format detection | Discovery |
 | `generate_preset` | Generate preset YAML configuration for a GGUF model | Discovery |
 
 Mutating tools are clearly marked in their descriptions and should
@@ -150,10 +151,12 @@ Parameters:
   author: str | None     # HuggingFace org (default: all)
   search: str | None     # Keyword search in model names
   task: str | None       # Filter: code, chat, embed, reasoning
+  driver: str | None     # Filter: llamacpp (GGUF), vllm (Safetensors), any
   limit: int = 20        # Max results (1-100)
   no_cache: bool = False # Bypass cache
 
 Returns: { models: [...], count: int }
+  # When driver param used, models include model_format and driver_hint
 ```
 
 **list_gguf_files**
@@ -163,6 +166,17 @@ Parameters:
   vram_budget_mb: int | None  # Filter files that fit in VRAM
 
 Returns: { repo_id, files: [...], count: int }
+```
+
+**list_model_files** (unified format support)
+```
+Parameters:
+  repo_id: str           # e.g., "unsloth/Qwen3-Coder-Next-GGUF"
+  vram_budget_mb: int | None  # Filter files that fit in VRAM
+
+Returns: { repo_id, files: [...], count, model_format, driver_hint }
+  # model_format: "gguf" | "safetensors" | "unknown"
+  # driver_hint: "llamacpp" | "vllm" | null
 ```
 
 **generate_preset**
