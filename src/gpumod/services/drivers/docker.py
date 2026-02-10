@@ -56,9 +56,21 @@ class DockerDriver(ServiceDriver):
         http_timeout: float = 10.0,
         container_prefix: str = "gpumod",
     ) -> None:
-        self._client = client or docker.from_env()
+        self._injected_client = client  # None means lazy-init on first use
+        self._cached_client: docker.DockerClient | None = None
         self._http_timeout = http_timeout
         self._prefix = container_prefix
+
+    @property
+    def _client(self) -> docker.DockerClient:
+        """Lazy Docker client - only connects when first used."""
+        if self._cached_client is not None:
+            return self._cached_client
+        if self._injected_client is not None:
+            self._cached_client = self._injected_client
+        else:
+            self._cached_client = docker.from_env()
+        return self._cached_client
 
     # ------------------------------------------------------------------
     # ServiceDriver interface
