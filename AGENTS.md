@@ -50,6 +50,14 @@ All must pass before any commit:
 - NEVER amend unless explicitly asked
 - Stage specific files, not `git add -A`
 
+### Web Search Rules
+
+- Current date is 2026 — always use "2026" in search queries
+- NEVER use results from 2025 or earlier unless explicitly asked
+- Prefer Context7 MCP over WebSearch for library documentation
+- When using Context7, pay attention to version numbers in library IDs
+- Prefer official documentation over blog posts
+
 ## Key Conventions
 
 ### Architecture Documentation
