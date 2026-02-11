@@ -1,4 +1,4 @@
-"""MCP tools for gpumod -- 6 read-only + 3 mutating tools.
+"""MCP tools for gpumod -- 6 read-only + 3 mutating + 5 discovery tools.
 
 Provides tool functions for GPU status, service/mode/model browsing,
 VRAM simulation, and service lifecycle management. All tools follow
@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastmcp import Context  # noqa: TC002 -- runtime import needed for FastMCP DI
 
+from gpumod.discovery.config_fetcher import ConfigFetcher, ConfigNotFoundError
 from gpumod.discovery.gguf_metadata import GGUFMetadataFetcher, RepoNotFoundError
 from gpumod.discovery.hf_searcher import HuggingFaceSearcher
 from gpumod.simulation import SimulationError
@@ -579,6 +580,43 @@ async def list_model_files(
     }
 
 
+async def fetch_model_config(
+    repo_id: str,
+    ctx: Context,
+) -> dict[str, Any]:
+    """Fetch config.json from a HuggingFace repo for model architecture detection.
+
+    Args:
+        repo_id: HuggingFace repo ID (e.g., 'meta-llama/Llama-3.1-8B').
+
+    Returns:
+        Dict with model architecture info: architectures, context_length, is_moe, etc.
+    """
+    # Validate repo_id
+    error = _validate_repo_id(repo_id)
+    if error:
+        return _validation_error(error)
+
+    try:
+        fetcher = ConfigFetcher()
+        config = await fetcher.fetch(repo_id)
+
+        return {
+            "repo_id": config.repo_id,
+            "architectures": config.architectures,
+            "total_params": config.total_params,
+            "is_moe": config.is_moe,
+            "num_experts": config.num_experts,
+            "context_length": config.context_length,
+            "vocab_size": config.vocab_size,
+        }
+
+    except ConfigNotFoundError:
+        return _not_found_error(f"config.json not found for {repo_id}")
+    except RepoNotFoundError:
+        return _not_found_error(f"Repository not found: {repo_id}")
+
+
 async def generate_preset(  # noqa: PLR0911, C901
     repo_id: str,
     gguf_file: str,
@@ -744,6 +782,14 @@ def register_tools(server: FastMCP[Any]) -> None:
             "Unified tool supporting both llama.cpp and vLLM formats."
         ),
     )(list_model_files)
+
+    server.tool(
+        name="fetch_model_config",
+        description=(
+            "Fetch config.json from a HuggingFace repo. "
+            "Returns model architecture, context length, MoE status, and expert count."
+        ),
+    )(fetch_model_config)
 
     server.tool(
         name="generate_preset",

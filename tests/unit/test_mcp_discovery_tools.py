@@ -1516,3 +1516,209 @@ class TestDiscoveryToolsSecurity:
 
         # Should reject or sanitize
         assert "error" in result or "files" in result
+
+
+# ---------------------------------------------------------------------------
+# TestFetchModelConfig - fetch config.json from HuggingFace
+# ---------------------------------------------------------------------------
+
+
+class TestFetchModelConfig:
+    """Tests for fetch_model_config MCP tool."""
+
+    async def test_fetch_returns_model_config(self) -> None:
+        """fetch_model_config returns structured config data."""
+        from gpumod.discovery.config_fetcher import ModelConfig
+        from gpumod.mcp_tools import fetch_model_config
+
+        mock_config = ModelConfig(
+            repo_id="meta-llama/Llama-3.1-8B",
+            architectures=["LlamaForCausalLM"],
+            total_params=8_000_000_000,
+            is_moe=False,
+            num_experts=None,
+            context_length=131072,
+            vocab_size=128256,
+            raw_config={"key": "value"},
+        )
+
+        with patch("gpumod.mcp_tools.ConfigFetcher") as fetcher_cls:
+            mock_fetcher = AsyncMock()
+            mock_fetcher.fetch.return_value = mock_config
+            fetcher_cls.return_value = mock_fetcher
+
+            result = await fetch_model_config(
+                repo_id="meta-llama/Llama-3.1-8B",
+                ctx=_make_mock_ctx(),
+            )
+
+            assert "repo_id" in result
+            assert result["repo_id"] == "meta-llama/Llama-3.1-8B"
+            assert result["architectures"] == ["LlamaForCausalLM"]
+            assert result["context_length"] == 131072
+            assert result["is_moe"] is False
+
+    async def test_fetch_validates_repo_id_required(self) -> None:
+        """repo_id is required."""
+        from gpumod.mcp_tools import fetch_model_config
+
+        result = await fetch_model_config(repo_id="", ctx=_make_mock_ctx())
+        assert "error" in result
+        assert result["code"] == "VALIDATION_ERROR"
+
+    async def test_fetch_validates_repo_id_format(self) -> None:
+        """repo_id must be org/name format."""
+        from gpumod.mcp_tools import fetch_model_config
+
+        result = await fetch_model_config(repo_id="invalid", ctx=_make_mock_ctx())
+        assert "error" in result
+        assert result["code"] == "VALIDATION_ERROR"
+
+    async def test_fetch_handles_config_not_found(self) -> None:
+        """Missing config.json returns NOT_FOUND error."""
+        from gpumod.discovery.config_fetcher import ConfigNotFoundError
+        from gpumod.mcp_tools import fetch_model_config
+
+        with patch("gpumod.mcp_tools.ConfigFetcher") as fetcher_cls:
+            mock_fetcher = AsyncMock()
+            mock_fetcher.fetch.side_effect = ConfigNotFoundError("config.json not found")
+            fetcher_cls.return_value = mock_fetcher
+
+            result = await fetch_model_config(
+                repo_id="user/no-config-repo",
+                ctx=_make_mock_ctx(),
+            )
+
+            assert "error" in result
+            assert result["code"] == "NOT_FOUND"
+
+    async def test_fetch_handles_repo_not_found(self) -> None:
+        """Non-existent repo returns NOT_FOUND error."""
+        from gpumod.discovery.gguf_metadata import RepoNotFoundError
+        from gpumod.mcp_tools import fetch_model_config
+
+        with patch("gpumod.mcp_tools.ConfigFetcher") as fetcher_cls:
+            mock_fetcher = AsyncMock()
+            mock_fetcher.fetch.side_effect = RepoNotFoundError("Repo not found")
+            fetcher_cls.return_value = mock_fetcher
+
+            result = await fetch_model_config(
+                repo_id="fake/nonexistent-repo",
+                ctx=_make_mock_ctx(),
+            )
+
+            assert "error" in result
+            assert result["code"] == "NOT_FOUND"
+
+    async def test_fetch_returns_moe_info(self) -> None:
+        """MoE model config includes expert count."""
+        from gpumod.discovery.config_fetcher import ModelConfig
+        from gpumod.mcp_tools import fetch_model_config
+
+        mock_config = ModelConfig(
+            repo_id="mistralai/Mixtral-8x7B-v0.1",
+            architectures=["MixtralForCausalLM"],
+            total_params=46_700_000_000,
+            is_moe=True,
+            num_experts=8,
+            context_length=32768,
+            vocab_size=32000,
+            raw_config={},
+        )
+
+        with patch("gpumod.mcp_tools.ConfigFetcher") as fetcher_cls:
+            mock_fetcher = AsyncMock()
+            mock_fetcher.fetch.return_value = mock_config
+            fetcher_cls.return_value = mock_fetcher
+
+            result = await fetch_model_config(
+                repo_id="mistralai/Mixtral-8x7B-v0.1",
+                ctx=_make_mock_ctx(),
+            )
+
+            assert result["is_moe"] is True
+            assert result["num_experts"] == 8
+
+    async def test_fetch_returns_all_fields(self) -> None:
+        """Result includes all ModelConfig fields."""
+        from gpumod.discovery.config_fetcher import ModelConfig
+        from gpumod.mcp_tools import fetch_model_config
+
+        mock_config = ModelConfig(
+            repo_id="test/model",
+            architectures=["TestArch"],
+            total_params=7_000_000_000,
+            is_moe=False,
+            num_experts=None,
+            context_length=4096,
+            vocab_size=50000,
+            raw_config={"test": True},
+        )
+
+        with patch("gpumod.mcp_tools.ConfigFetcher") as fetcher_cls:
+            mock_fetcher = AsyncMock()
+            mock_fetcher.fetch.return_value = mock_config
+            fetcher_cls.return_value = mock_fetcher
+
+            result = await fetch_model_config(
+                repo_id="test/model",
+                ctx=_make_mock_ctx(),
+            )
+
+            assert "repo_id" in result
+            assert "architectures" in result
+            assert "total_params" in result
+            assert "is_moe" in result
+            assert "num_experts" in result
+            assert "context_length" in result
+            assert "vocab_size" in result
+
+
+class TestFetchModelConfigSecurity:
+    """Security tests for fetch_model_config (SEC-V1)."""
+
+    async def test_repo_id_rejects_shell_injection(self) -> None:
+        """repo_id with shell metacharacters should be rejected."""
+        from gpumod.mcp_tools import fetch_model_config
+
+        shell_payloads = [
+            "; rm -rf /",
+            "| cat /etc/passwd",
+            "$(whoami)",
+            "`id`",
+            "user/repo; rm -rf /",
+        ]
+
+        for payload in shell_payloads:
+            result = await fetch_model_config(repo_id=payload, ctx=_make_mock_ctx())
+            assert "error" in result, f"Shell injection not rejected: {payload}"
+            assert result["code"] == "VALIDATION_ERROR"
+
+    async def test_repo_id_rejects_path_traversal(self) -> None:
+        """repo_id with path traversal should be rejected."""
+        from gpumod.mcp_tools import fetch_model_config
+
+        traversal_payloads = [
+            "../../etc/passwd",
+            "../../../root/.ssh/id_rsa",
+            "/etc/passwd",
+            "user/../../../etc/passwd",
+        ]
+
+        for payload in traversal_payloads:
+            result = await fetch_model_config(repo_id=payload, ctx=_make_mock_ctx())
+            assert "error" in result, f"Path traversal not rejected: {payload}"
+
+    async def test_repo_id_rejects_template_injection(self) -> None:
+        """repo_id with Jinja2 template syntax should be rejected."""
+        from gpumod.mcp_tools import fetch_model_config
+
+        template_payloads = [
+            "{{7*7}}",
+            "{{config}}",
+            "user/{{7*7}}",
+        ]
+
+        for payload in template_payloads:
+            result = await fetch_model_config(repo_id=payload, ctx=_make_mock_ctx())
+            assert "error" in result, f"Template injection not rejected: {payload}"

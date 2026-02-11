@@ -6,6 +6,7 @@ system info collection, and preset generation for llama.cpp services.
 Supports both GGUF (llama.cpp) and Safetensors (vLLM) model formats.
 """
 
+from gpumod.discovery.config_fetcher import ConfigFetcher, ConfigNotFoundError, ModelConfig
 from gpumod.discovery.gguf_metadata import GGUFFile, GGUFMetadataFetcher
 from gpumod.discovery.hf_searcher import (
     HuggingFaceSearcher,
@@ -19,11 +20,14 @@ from gpumod.discovery.system_info import SystemInfo, SystemInfoCollector
 from gpumod.discovery.unsloth_lister import HFModel, UnslothModel, UnslothModelLister
 
 __all__ = [
+    "ConfigFetcher",
+    "ConfigNotFoundError",
     "GGUFFile",
     "GGUFMetadataFetcher",
     "HFModel",
     "HuggingFaceSearcher",
     "LlamaCppOptions",
+    "ModelConfig",
     "ModelSearcher",
     "PresetGenerator",
     "RecommendedConfig",
