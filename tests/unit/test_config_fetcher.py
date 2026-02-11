@@ -122,9 +122,7 @@ class TestModelConfig:
 class TestConfigFetcher:
     """Tests for ConfigFetcher class."""
 
-    async def test_fetch_returns_model_config(
-        self, sample_config_json: dict[str, Any]
-    ) -> None:
+    async def test_fetch_returns_model_config(self, sample_config_json: dict[str, Any]) -> None:
         """fetch() returns ModelConfig with parsed data."""
         from gpumod.discovery.config_fetcher import ConfigFetcher, ModelConfig
 
@@ -150,9 +148,7 @@ class TestConfigFetcher:
             assert result.context_length == 131072
             assert result.vocab_size == 128256
 
-    async def test_fetch_detects_moe_model(
-        self, moe_config_json: dict[str, Any]
-    ) -> None:
+    async def test_fetch_detects_moe_model(self, moe_config_json: dict[str, Any]) -> None:
         """fetch() correctly detects MoE models."""
         from gpumod.discovery.config_fetcher import ConfigFetcher
 
@@ -278,9 +274,7 @@ class TestConfigFetcher:
             with pytest.raises(ConfigNotFoundError):
                 await fetcher.fetch("fake/nonexistent-repo")
 
-    async def test_fetch_preserves_raw_config(
-        self, sample_config_json: dict[str, Any]
-    ) -> None:
+    async def test_fetch_preserves_raw_config(self, sample_config_json: dict[str, Any]) -> None:
         """fetch() preserves raw config.json in result."""
         from gpumod.discovery.config_fetcher import ConfigFetcher
 
@@ -341,9 +335,7 @@ class TestConfigFetcherCache:
 
             assert result1.repo_id == result2.repo_id
 
-    async def test_cache_miss_after_ttl_expires(
-        self, sample_config_json: dict[str, Any]
-    ) -> None:
+    async def test_cache_miss_after_ttl_expires(self, sample_config_json: dict[str, Any]) -> None:
         """Cache expires after TTL, makes new request."""
         from gpumod.discovery.config_fetcher import ConfigFetcher
 

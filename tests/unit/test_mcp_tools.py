@@ -602,8 +602,8 @@ class TestRegistration:
 
         register_tools(server)
 
-        # Should have been called 14 times (6 read-only + 3 mutating + 5 discovery)
-        assert server.tool.call_count == 14
+        # Should have been called 16 times (6 read-only + 3 mutating + 6 discovery + 1 consult)
+        assert server.tool.call_count == 16
 
         # Verify all tool names were registered
         tool_names = {call.kwargs["name"] for call in server.tool.call_args_list}
@@ -623,6 +623,9 @@ class TestRegistration:
             "list_model_files",
             "fetch_model_config",
             "generate_preset",
+            "fetch_driver_docs",
+            # RLM Consult tool
+            "consult",
         }
         assert tool_names == expected_names
 

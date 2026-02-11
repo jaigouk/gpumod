@@ -90,9 +90,11 @@ gpumod tui
 
 ## MCP Integration
 
-gpumod exposes 9 tools and 8 resources via the
+gpumod exposes 16 tools and 8 resources via the
 [Model Context Protocol](https://modelcontextprotocol.io/). Add it to your
-IDE to let AI assistants query GPU status, simulate VRAM, and switch modes.
+IDE to let AI assistants query GPU status, simulate VRAM, switch modes,
+discover models on HuggingFace, and consult an RLM-based reasoning engine
+for complex questions like "Can I run Qwen3-235B on 24GB?".
 
 ```json
 {

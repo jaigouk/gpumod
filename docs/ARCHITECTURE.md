@@ -172,6 +172,49 @@ description: System architecture for gpumod — a GPU service manager for ML wor
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### Level 2: Discovery Layer
+
+The discovery layer provides read-only access to external knowledge sources
+(HuggingFace, GitHub) without LLM calls. These components back the Tier 2
+MCP tools.
+
+```
++--------------------------------------------------------------+
+|                     DISCOVERY LAYER                           |
++--------------------------------------------------------------+
+|  HuggingFaceSearcher   <- Search HF models by query          |
+|  GGUFMetadataFetcher   <- GGUF file listing + VRAM estimates |
+|  ConfigFetcher         <- Model config.json (architecture)   |
+|  DriverDocsFetcher     <- Official llama.cpp/vLLM docs       |
+|  PresetGenerator       <- YAML service configs               |
+|  SystemInfoCollector   <- GPU, RAM, driver info              |
++--------------------------------------------------------------+
+```
+
+**Data flow:** MCP tools -> Discovery components -> HuggingFace API / GitHub raw
+
+### Level 2: Consulting Layer
+
+The consulting layer provides multi-step reasoning for complex queries using
+RLM (Recursive Language Models). It is optional and read-only — returns
+recommendations but never executes mutating operations.
+
+```
++--------------------------------------------------------------+
+|                    CONSULTING LAYER                           |
++--------------------------------------------------------------+
+|  GpumodConsultEnv      <- Custom RLM environment             |
+|  |-- Whitelisted read-only MCP tools                         |
+|  |-- AST-validated code execution                            |
+|  +-- Timeout enforcement (5s per block, 60s total)           |
+|  RLMOrchestrator       <- Manages RLM lifecycle              |
+|  +-- ConsultResult     <- Structured recommendation output   |
++--------------------------------------------------------------+
+```
+
+**Data flow:** `consult` MCP tool -> RLMOrchestrator -> GpumodConsultEnv ->
+whitelisted read-only tools (gpu_status, list_gguf_files, etc.)
+
 ### Level 2: Service Layer Components
 
 #### ServiceManager
@@ -357,27 +400,75 @@ User                    ServiceManager          LifecycleManager        VRAMTrac
 
 ### MCP Integration
 
+gpumod exposes 16 tools and 8 resources via MCP, organized into three tiers:
+
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     AI Assistant (Claude Code)                  │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │ stdio (JSON-RPC)
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     gpumod MCP Server                           │
-├─────────────────────────────────────────────────────────────────┤
-│  Tools:                      Resources:                         │
-│  - switch_mode               - gpumod://modes                   │
-│  - gpu_status                - gpumod://services                │
-│  - simulate_mode             - gpumod://models                  │
-│  - start_service             - gpumod://help                    │
-│  - stop_service                                                 │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     ServiceManager                              │
-└─────────────────────────────────────────────────────────────────┘
++------------------------------------------------------------------+
+|                   AI Assistant (Claude Code)                       |
++-------------------------------+----------------------------------+
+                                | stdio (JSON-RPC)
+                                v
++------------------------------------------------------------------+
+|                      gpumod MCP Server                            |
++------------------------------------------------------------------+
+|                                                                   |
+|  Tier 1 - Direct (0 LLM calls):                                  |
+|    gpu_status, list_services, list_modes, service_info,           |
+|    model_info, simulate_mode, switch_mode, start_service,         |
+|    stop_service                                                   |
+|                                                                   |
+|  Tier 2 - Discovery (0 LLM calls):                               |
+|    search_hf_models, list_gguf_files, list_model_files,           |
+|    fetch_model_config, generate_preset, fetch_driver_docs         |
+|                                                                   |
+|  Tier 3 - Consulting (N LLM calls):                              |
+|    consult (RLM-based multi-step reasoning)                       |
+|                                                                   |
+|  Resources:                                                       |
+|    gpumod://modes, gpumod://services, gpumod://models,            |
+|    gpumod://help, ...                                             |
++-------------------------------+----------------------------------+
+                                |
+           +--------------------+--------------------+
+           |                    |                    |
+           v                    v                    v
++----------------+   +------------------+   +-----------------+
+| ServiceManager |   | Discovery Layer  |   | Consulting Layer|
+| (Tier 1 ops)   |   | (Tier 2 fetches) |   | (Tier 3 RLM)   |
++----------------+   +------------------+   +-----------------+
+```
+
+#### Tool Tiers
+
+| Tier | Tools | LLM Calls | Use Case |
+| ---- | ----- | --------- | -------- |
+| **1 - Direct** | gpu_status, list_services, list_modes, service_info, model_info, simulate_mode, switch_mode, start_service, stop_service | 0 | Routine operations |
+| **2 - Discovery** | search_hf_models, list_gguf_files, list_model_files, fetch_model_config, generate_preset, fetch_driver_docs | 0 | External data lookup |
+| **3 - Consulting** | consult | N | Complex multi-step reasoning |
+
+#### RLM Consult Tool
+
+The `consult` tool uses RLM to answer questions like "Can I run Qwen3-235B on
+24GB?" by programmatically exploring model metadata, driver docs, and VRAM
+constraints across multiple turns.
+
+```
++------------------------------------------------------------------+
+|                  consult MCP tool                                 |
++------------------------------------------------------------------+
+|  RLMOrchestrator                                                  |
+|  +-- GpumodConsultEnv (NonIsolatedEnv)                            |
+|      |                                                            |
+|      |  Whitelisted (read-only):        Blocked (NameError):      |
+|      |    gpu_status                      switch_mode             |
+|      |    list_gguf_files                 start_service           |
+|      |    fetch_model_config              stop_service            |
+|      |    fetch_driver_docs                                       |
+|      |    search_hf_models                                        |
+|      |    simulate_mode                                           |
+|      |    generate_preset                                         |
+|      |    json, re (stdlib)                                       |
++------------------------------------------------------------------+
 ```
 
 ---
@@ -410,6 +501,42 @@ All services expose HTTP health endpoints. gpumod:
 - Uses exponential backoff with jitter
 - Tails journalctl logs on startup timeout
 
+### Knowledge Sources
+
+The discovery and consulting layers draw from a 4-tier source hierarchy.
+See [docs/research/knowledge_sources.md](research/knowledge_sources.md) for
+the full catalog.
+
+| Tier | Source Type | TTL | Examples |
+| ---- | ----------- | --- | -------- |
+| **1 - Core** | Official tool docs | 24h | llama.cpp server README, vLLM engine args |
+| **2 - Curated** | Trusted guides | 7 days | MoE offload guide, Unsloth docs |
+| **3 - Dynamic** | API data | 1h | HF config.json, GGUF file listings |
+| **4 - Community** | Manual curation | Manual | VRAM rules, model quirks |
+
+Caching uses TTL-based expiry per tier. Tier 1-2 sources fall back to cached
+copies on fetch failure. Tier 3 data is always fresh from APIs.
+
+### Function Whitelisting
+
+RLM code execution uses function whitelisting as the primary security control.
+Only explicitly exposed functions are callable from LLM-generated code.
+
+**Whitelisted (read-only):**
+- `gpu_status`, `list_gguf_files`, `fetch_model_config`, `fetch_driver_docs`,
+  `search_hf_models`, `simulate_mode`, `generate_preset`
+- Standard library: `json`, `re`
+
+**Blocked (raise `NameError`):**
+- `switch_mode`, `start_service`, `stop_service` (mutating operations)
+- `import`, `exec`, `eval`, `open` (blocked via AST validation)
+
+**AST validation:** Before executing LLM-generated code, an AST check rejects
+`import` statements, `exec`/`eval` calls, and file I/O. This provides defense
+in depth alongside the restricted namespace.
+
+**Timeouts:** 5 seconds per code block, 60 seconds total per consult call.
+
 ### Security
 
 | Area            | Control                                                               |
@@ -417,6 +544,7 @@ All services expose HTTP health endpoints. gpumod:
 | **Docker**      | Privileged mode blocked, host network blocked, unsafe mounts rejected |
 | **TUI**         | Untrusted text sanitized to prevent markup injection                  |
 | **AI Planning** | LLM suggestions are advisory only, never auto-executed                |
+| **RLM Consult** | Function whitelisting, AST validation, read-only tools only           |
 
 ---
 
@@ -473,6 +601,45 @@ All services expose HTTP health endpoints. gpumod:
 - (+) Suggests alternatives when over capacity
 - (-) Estimates can be inaccurate (KV cache varies)
 
+### ADR-5: RLM for Complex Queries
+
+**Context:** Users ask multi-step questions like "Can I run Qwen3-235B on 24GB?"
+that require chaining model metadata, quantization options, driver flags, and
+live VRAM data. No single MCP tool can answer these.
+
+**Decision:** Use RLM (Recursive Language Models) with a custom `NonIsolatedEnv`
+environment. The LLM explores data programmatically via a REPL, calling
+whitelisted read-only MCP tools.
+
+**Consequences:**
+
+- (+) Programmatic exploration — LLM decides what to look up based on findings
+- (+) Source citations — every recommendation traces to specific data
+- (+) Read-only — returns advice, never executes mutations
+- (-) Multiple LLM calls per query (cost, latency)
+- (-) Requires LLM API access (not offline-capable)
+
+**Reference:** [docs/research/rlm_langextract.md](research/rlm_langextract.md)
+
+### ADR-6: Function Whitelisting over Full Sandboxing
+
+**Context:** RLM executes LLM-generated Python code. This is a security risk
+requiring mitigation.
+
+**Decision:** For v1, use function whitelisting (restricted namespace) plus AST
+validation. Defer full sandbox-runtime (`srt`) isolation to a future release.
+
+**Consequences:**
+
+- (+) Simple to implement and reason about
+- (+) No network/filesystem sandbox complications (fetchers need network)
+- (+) Functions not in namespace raise `NameError` — clean failure mode
+- (-) Less isolation than OS-level sandboxing
+- (-) Relies on AST validation catching all dangerous patterns
+
+**Future:** Evaluate sandbox-runtime (`srt`) with tool-based fetch pattern
+for stronger isolation (tracked in gpumod-b9x).
+
 ---
 
 ## 10. Glossary
@@ -489,6 +656,12 @@ All services expose HTTP health endpoints. gpumod:
 | **KV Cache**    | Key-Value cache for transformers (grows with context length) |
 | **Orphan**      | Running service not in current mode's definition             |
 | **MCP**         | Model Context Protocol for AI assistant integration          |
+| **Discovery Layer** | Components that fetch external data (HF, GitHub) without LLM calls |
+| **Consulting Layer** | RLM-based reasoning layer for complex multi-step queries    |
+| **RLM**         | Recursive Language Model — treats context as a REPL variable |
+| **NonIsolatedEnv** | RLM base class for custom environments with shared namespace |
+| **Function Whitelisting** | Security pattern: only explicitly exposed functions are callable |
+| **Knowledge Source Tier** | Trust/freshness classification (Core, Curated, Dynamic, Community) |
 
 ---
 
@@ -506,3 +679,5 @@ All services expose HTTP health endpoints. gpumod:
 - [CLI Reference](cli.md) — Command documentation
 - [Presets Guide](presets.md) — YAML service definitions
 - [MCP Integration](mcp.md) — AI assistant setup
+- [PRD: RLM Consult Tool](PRD.md) — Detailed design for the consulting layer
+- [Knowledge Sources](research/knowledge_sources.md) — Validated source catalog
