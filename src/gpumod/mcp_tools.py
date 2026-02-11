@@ -1,4 +1,4 @@
-"""MCP tools for gpumod -- 6 read-only + 3 mutating + 5 discovery tools.
+"""MCP tools for gpumod -- 6 read-only + 3 mutating + 6 discovery + 1 consult tools.
 
 Provides tool functions for GPU status, service/mode/model browsing,
 VRAM simulation, and service lifecycle management. All tools follow
@@ -7,14 +7,20 @@ SEC-V1 input validation and SEC-A1 audit logging requirements.
 
 from __future__ import annotations
 
+import asyncio
+import functools
+import inspect
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from fastmcp import Context  # noqa: TC002 -- runtime import needed for FastMCP DI
 
 from gpumod.discovery.config_fetcher import ConfigFetcher, ConfigNotFoundError
+from gpumod.discovery.docs_fetcher import DocsNotFoundError, DriverDocsFetcher
 from gpumod.discovery.gguf_metadata import GGUFMetadataFetcher, RepoNotFoundError
 from gpumod.discovery.hf_searcher import HuggingFaceSearcher
+from gpumod.rlm.orchestrator import RLMOrchestrator
 from gpumod.simulation import SimulationError
 from gpumod.validation import (
     sanitize_name,
@@ -701,6 +707,212 @@ modes:
 
 
 # ---------------------------------------------------------------------------
+# Driver docs tool (read-only)
+# ---------------------------------------------------------------------------
+
+# SEC-V1: version must be alphanumeric, dots, hyphens only
+_VERSION_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9.\-]{0,63}$")
+
+# SEC-V1: section name must not contain dangerous patterns
+_SECTION_MAX_LENGTH = 200
+
+
+def _validate_driver(driver: str) -> dict[str, str] | None:
+    """Validate driver name for docs fetcher. Returns error dict or None."""
+    allowed = {"llamacpp", "vllm"}
+    if driver not in allowed:
+        return _validation_error(f"driver must be one of: {', '.join(sorted(allowed))}")
+    return None
+
+
+def _validate_version(version: str) -> dict[str, str] | None:
+    """Validate version string format (SEC-V1). Returns error dict or None."""
+    if not _VERSION_RE.match(version):
+        return _validation_error("version contains invalid characters")
+    return None
+
+
+def _validate_section(section: str) -> dict[str, str] | None:
+    """Validate section name (SEC-V1). Returns error dict or None."""
+    if len(section) > _SECTION_MAX_LENGTH:
+        return _validation_error(f"section exceeds maximum length of {_SECTION_MAX_LENGTH}")
+    for pattern in _DANGEROUS_PATTERNS:
+        if pattern in section:
+            return _validation_error("section contains invalid characters")
+    return None
+
+
+async def fetch_driver_docs(
+    driver: str,
+    ctx: Context,
+    version: str | None = None,
+    section: str | None = None,
+) -> dict[str, Any]:
+    """Fetch driver documentation (llama.cpp or vLLM) for command-line flags and config.
+
+    Args:
+        driver: Driver name ("llamacpp" or "vllm").
+        version: Explicit version. Auto-detected if omitted.
+        section: Optional section header to return (e.g., "Server options").
+
+    Returns:
+        Dict with driver, version, source_url, content, and sections.
+    """
+    # Validate inputs (SEC-V1)
+    error = _validate_driver(driver)
+    if error:
+        return error
+
+    if version is not None:
+        error = _validate_version(version)
+        if error:
+            return error
+
+    if section is not None:
+        error = _validate_section(section)
+        if error:
+            return error
+
+    try:
+        fetcher = DriverDocsFetcher()
+        docs = await fetcher.fetch(driver=driver, version=version, section=section)
+
+        return {
+            "driver": docs.driver,
+            "version": docs.version,
+            "source_url": docs.source_url,
+            "content": docs.content,
+            "sections": docs.sections,
+            "cached_at": docs.cached_at.isoformat(),
+        }
+
+    except DocsNotFoundError:
+        return _not_found_error(f"Documentation not found for {driver}")
+
+
+# ---------------------------------------------------------------------------
+# RLM Consult tool (read-only, multi-step reasoning)
+# ---------------------------------------------------------------------------
+
+# SEC-V1: query must not be empty and must not exceed a reasonable length
+_QUERY_MAX_LENGTH = 2000
+_MAX_TURNS_HARD_LIMIT = 10
+
+
+def _make_sync_wrapper(
+    coro_func: Any,
+    loop: asyncio.AbstractEventLoop,
+    **bound_kwargs: Any,
+) -> Any:
+    """Create a sync callable that bridges to an async MCP tool.
+
+    The RLM environment's ``execute_code`` uses ``exec()`` in a thread,
+    so tool wrappers must be synchronous. This creates a sync function
+    that submits the async coroutine back to the main event loop and
+    blocks until it completes.
+    """
+
+    @functools.wraps(coro_func)
+    def wrapper(**kwargs: Any) -> Any:
+        merged = {**bound_kwargs, **kwargs}
+        future = asyncio.run_coroutine_threadsafe(coro_func(**merged), loop)
+        return future.result(timeout=30)
+
+    return wrapper
+
+
+def _build_tool_wrappers(ctx: Context) -> dict[str, Any]:
+    """Build sync tool wrappers that bridge MCP Context to the RLM environment.
+
+    Only read-only tools are exposed. Each wrapper captures ``ctx`` and the
+    running event loop so it can be called synchronously from the REPL thread.
+    """
+    loop = asyncio.get_running_loop()
+
+    return {
+        "gpu_status": _make_sync_wrapper(gpu_status, loop, ctx=ctx),
+        "list_gguf_files": _make_sync_wrapper(list_gguf_files, loop, ctx=ctx),
+        "fetch_model_config": _make_sync_wrapper(fetch_model_config, loop, ctx=ctx),
+        "fetch_driver_docs": _make_sync_wrapper(fetch_driver_docs, loop, ctx=ctx),
+        "search_hf_models": _make_sync_wrapper(search_hf_models, loop, ctx=ctx),
+        "simulate_mode": _make_sync_wrapper(simulate_mode, loop, ctx=ctx),
+        "generate_preset": _make_sync_wrapper(generate_preset, loop, ctx=ctx),
+    }
+
+
+def _validate_consult_inputs(query: str, max_turns: int) -> dict[str, str] | None:
+    """Validate consult tool inputs. Returns error dict or None."""
+    if not query or not query.strip():
+        return _validation_error("query is required")
+    if len(query) > _QUERY_MAX_LENGTH:
+        return _validation_error(f"query exceeds maximum length of {_QUERY_MAX_LENGTH}")
+    for pattern in _DANGEROUS_PATTERNS:
+        if pattern in query:
+            return _validation_error("query contains invalid characters")
+    if max_turns < 1:
+        return _validation_error("max_turns must be at least 1")
+    if max_turns > _MAX_TURNS_HARD_LIMIT:
+        return _validation_error(f"max_turns cannot exceed {_MAX_TURNS_HARD_LIMIT}")
+    return None
+
+
+async def consult(
+    query: str,
+    ctx: Context,
+    max_turns: int = 5,
+) -> dict[str, Any]:
+    """Multi-step reasoning for complex GPU/model questions.
+
+    Uses RLM to programmatically explore model metadata, driver docs,
+    and VRAM constraints. Returns recommendations, never executes actions.
+
+    Args:
+        query: Natural language question (e.g., "Can I run Qwen3-235B on 24GB?").
+        max_turns: Maximum REPL iterations (1-10, default 5).
+
+    Returns:
+        Dict with can_run, recommendation, reasoning_steps, suggested_commands,
+        sources, turns_used, and incomplete flag.
+    """
+    error = _validate_consult_inputs(query, max_turns)
+    if error:
+        return error
+
+    logger.info("MCP tool consult called: query=%r, max_turns=%d", query[:100], max_turns)
+
+    # Build sync tool wrappers for the RLM environment.
+    tool_wrappers = _build_tool_wrappers(ctx)
+
+    try:
+        orchestrator = RLMOrchestrator(tool_wrappers=tool_wrappers)
+    except Exception as exc:
+        logger.exception("Failed to create RLM orchestrator")
+        return {"error": f"Failed to initialize consult: {exc}", "code": "INIT_ERROR"}
+
+    # Call the orchestrator.  The result may be a coroutine (AsyncMock in
+    # tests) or a plain value (sync RLMOrchestrator in production).
+    # We handle both uniformly via ``inspect.isawaitable``.
+    try:
+        result = orchestrator.consult(query, max_turns=max_turns)
+        if inspect.isawaitable(result):
+            result = await result
+    except TimeoutError:
+        logger.exception("RLM consultation timed out")
+        return {"error": "Consultation timed out", "code": "TIMEOUT_ERROR"}
+    except Exception as exc:
+        logger.exception("RLM consultation failed")
+        error_msg = str(exc)
+        if "api_key" in error_msg.lower() or "authentication" in error_msg.lower():
+            return {
+                "error": "LLM API key not configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.",
+                "code": "AUTH_ERROR",
+            }
+        return {"error": f"Consultation failed: {error_msg}", "code": "RLM_ERROR"}
+
+    return result.model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
 
@@ -798,3 +1010,21 @@ def register_tools(server: FastMCP[Any]) -> None:
             "Creates llama.cpp service config with specified context size."
         ),
     )(generate_preset)
+
+    server.tool(
+        name="fetch_driver_docs",
+        description=(
+            "Fetch driver documentation (llama.cpp or vLLM) for command-line flags and config. "
+            "Auto-detects installed version. Supports section filtering."
+        ),
+    )(fetch_driver_docs)
+
+    # RLM Consult tool (read-only, multi-step reasoning)
+    server.tool(
+        name="consult",
+        description=(
+            "Multi-step reasoning for complex GPU/model questions. "
+            "Uses RLM to explore model metadata, driver docs, and VRAM constraints. "
+            "Returns recommendations with source citations, never executes actions."
+        ),
+    )(consult)

@@ -109,9 +109,7 @@ class ConfigFetcher:
 
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code == 404:
-                    raise ConfigNotFoundError(
-                        f"config.json not found for {repo_id}"
-                    ) from exc
+                    raise ConfigNotFoundError(f"config.json not found for {repo_id}") from exc
                 raise
             except httpx.RequestError as exc:
                 if "not found" in str(exc).lower():
