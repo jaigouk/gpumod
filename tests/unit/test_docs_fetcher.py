@@ -595,20 +595,21 @@ class TestFetchDriverDocsTool:
             assert result["version"] == "b8000"
 
     async def test_fetch_with_section_filter(self, llamacpp_readme):
-        """Tool passes section filter to fetcher."""
+        """Tool uses SectionFilter for section filtering (gpumod-v7k refactor)."""
         from gpumod.mcp_tools import fetch_driver_docs
 
-        docs = DriverDocs(
+        # Full docs returned by fetcher (section=None)
+        full_docs = DriverDocs(
             driver="llamacpp",
             version="b7999",
             source_url="https://example.com",
-            content="## Server options\n...",
-            sections=["Server options"],
+            content=llamacpp_readme,
+            sections=["llama.cpp Server", "Usage", "Server options", "Advanced"],
         )
 
         with patch("gpumod.mcp_tools.DriverDocsFetcher") as fetcher_cls:
             mock_fetcher = AsyncMock()
-            mock_fetcher.fetch.return_value = docs
+            mock_fetcher.fetch.return_value = full_docs
             fetcher_cls.return_value = mock_fetcher
 
             result = await fetch_driver_docs(
@@ -617,10 +618,15 @@ class TestFetchDriverDocsTool:
                 ctx=_make_mock_ctx(),
             )
 
+            # Fetcher is called without section (SectionFilter handles filtering)
             mock_fetcher.fetch.assert_awaited_once_with(
-                driver="llamacpp", version=None, section="Server options"
+                driver="llamacpp", version=None, section=None
             )
+            # Result should have filtered section
             assert result["sections"] == ["Server options"]
+            assert "--port" in result["content"]
+            # Should include truncation metadata
+            assert "metadata" in result
 
 
 # ---------------------------------------------------------------------------
