@@ -1,8 +1,3 @@
----
-title: Presets Reference
-description: YAML preset schema for gpumod — define vLLM, llama.cpp, FastAPI, and Docker service configurations for repeatable GPU deployments.
----
-
 # Presets Reference
 
 Presets are YAML files that define service configurations for repeatable
@@ -174,3 +169,8 @@ Docker presets use `extra_config` for container settings (image, ports,
 environment variables, volumes). The Docker driver enforces security
 controls: no `--privileged`, no host network, no unsafe volume mounts,
 and environment variable sanitization.
+
+## See Also
+
+- [Preset Modification Workflow](presets-workflow.md) — VRAM validation checklist
+- [Architecture](ARCHITECTURE.md) — System overview
