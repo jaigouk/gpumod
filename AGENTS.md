@@ -29,6 +29,7 @@ ruff format src tests
 ### TDD Required
 
 Write tests FIRST, then implementation:
+
 1. **RED** — Write failing test
 2. **GREEN** — Minimal code to pass
 3. **REFACTOR** — Improve while keeping green
@@ -37,14 +38,15 @@ Write tests FIRST, then implementation:
 
 All must pass before any commit (enforced by pre-commit hook):
 
-| Gate | Command | Requirement |
-|------|---------|-------------|
-| Lint | `uv run ruff check src tests` | 0 errors |
-| Format | `uv run ruff format --check src tests` | No changes |
-| Types | `uv run mypy src --strict` | 0 errors |
-| Tests | `uv run pytest tests/unit -q` | All pass |
+| Gate   | Command                                | Requirement |
+| ------ | -------------------------------------- | ----------- |
+| Lint   | `uv run ruff check src tests`          | 0 errors    |
+| Format | `uv run ruff format --check src tests` | No changes  |
+| Types  | `uv run mypy src --strict`             | 0 errors    |
+| Tests  | `uv run pytest tests/unit -q`          | All pass    |
 
 **Pre-commit hook** (`scripts/pre-commit-check.sh`) runs all checks automatically.
+
 - Commits are **blocked** if any check fails
 - Skip tests for faster iteration: `SKIP_TESTS=1 git commit ...`
 - Emergency bypass (use sparingly): `SKIP_PRECOMMIT=1 git commit ...`
@@ -70,6 +72,7 @@ All must pass before any commit (enforced by pre-commit hook):
 ### Architecture Documentation
 
 [ARCHITECTURE.md](docs/ARCHITECTURE.md) follows arc42 structure. When updating:
+
 - Focus on **what** and **why**, not implementation details
 - No version tags (v0.1.1) — that's changelog material
 - Use ADR format for decisions (Context → Decision → Consequences)
@@ -77,12 +80,47 @@ All must pass before any commit (enforced by pre-commit hook):
 ### Issue Tracking
 
 Use beads for task management:
+
 ```bash
 bd ready              # Find available work
 bd create --title="..." --type=task
 bd close <id>         # Mark complete
 bd sync               # Push changes
 ```
+
+### Definition of Done
+
+Work is NOT complete until ALL criteria are met:
+
+| Criterion        | Required For     | How to Verify                 |
+| ---------------- | ---------------- | ----------------------------- |
+| Tests pass       | All changes      | `uv run pytest tests/unit -q` |
+| Types check      | All changes      | `uv run mypy src --strict`    |
+| Lint clean       | All changes      | `uv run ruff check src tests` |
+| **Docs updated** | Flow/API changes | Review docs/ for accuracy     |
+| Beads synced     | All changes      | `bd sync`                     |
+
+**Documentation Updates Required When:**
+
+- Adding new CLI commands → Update `docs/cli.md`
+- Changing service behavior → Update `docs/ARCHITECTURE.md`
+- Modifying preset format → Update `docs/presets.md`
+- Adding MCP tools → Update tool docstrings + `docs/ARCHITECTURE.md`
+- Changing workflows → Update relevant docs + `AGENTS.md`
+
+**Acceptance Criteria Template:**
+Every feature ticket SHOULD include:
+
+```markdown
+## Acceptance Criteria
+
+- [ ] Feature implemented with tests
+- [ ] Documentation updated (specify which docs)
+- [ ] Quality gates pass
+```
+
+This follows [docs-as-code](https://www.writethedocs.org/guide/docs-as-code/) best practices:
+block merges for incomplete documentation, treat docs with same rigor as code.
 
 ## Session Completion
 
@@ -110,4 +148,5 @@ broken code. If a commit is blocked, fix the issue and try again.
 - [Architecture](docs/ARCHITECTURE.md) — System design (arc42)
 - [CLI Reference](docs/cli.md) — Command documentation
 - [Presets Guide](docs/presets.md) — Service definitions
+- [Preset Workflow](docs/presets-workflow.md) — VRAM validation checklist
 - [QA Procedures](docs/qa.md) — Manual testing
