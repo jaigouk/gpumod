@@ -17,7 +17,9 @@ from typing import TYPE_CHECKING, Any
 from fastmcp import Context  # noqa: TC002 -- runtime import needed for FastMCP DI
 
 from gpumod.discovery.config_fetcher import ConfigFetcher, ConfigNotFoundError
+from gpumod.discovery.content_truncator import TokenTruncator
 from gpumod.discovery.docs_fetcher import DocsNotFoundError, DriverDocsFetcher
+from gpumod.discovery.section_filter import SectionFilter, SectionNotFoundError
 from gpumod.discovery.gguf_metadata import GGUFMetadataFetcher, RepoNotFoundError
 from gpumod.discovery.hf_searcher import HuggingFaceSearcher
 from gpumod.rlm.orchestrator import RLMOrchestrator
@@ -747,6 +749,8 @@ async def fetch_driver_docs(
     ctx: Context,
     version: str | None = None,
     section: str | None = None,
+    max_tokens: int = 20000,
+    fuzzy: bool = True,
 ) -> dict[str, Any]:
     """Fetch driver documentation (llama.cpp or vLLM) for command-line flags and config.
 
@@ -754,9 +758,13 @@ async def fetch_driver_docs(
         driver: Driver name ("llamacpp" or "vllm").
         version: Explicit version. Auto-detected if omitted.
         section: Optional section header to return (e.g., "Server options").
+            Supports fuzzy matching by default (e.g., "server" matches "Server options").
+        max_tokens: Maximum tokens in response (default 20000). Set 0 to disable.
+        fuzzy: If True (default), use fuzzy section matching. If False, exact match only.
 
     Returns:
-        Dict with driver, version, source_url, content, and sections.
+        Dict with driver, version, source_url, content, sections, and metadata.
+        On section not found: returns error with available_sections and best_match hint.
     """
     # Validate inputs (SEC-V1)
     error = _validate_driver(driver)
@@ -775,15 +783,54 @@ async def fetch_driver_docs(
 
     try:
         fetcher = DriverDocsFetcher()
-        docs = await fetcher.fetch(driver=driver, version=version, section=section)
+        # Fetch without section filtering first (we'll filter with SectionFilter)
+        docs = await fetcher.fetch(driver=driver, version=version, section=None)
+
+        # Apply section filtering with fuzzy matching
+        if section is not None:
+            section_filter = SectionFilter()
+            try:
+                docs = section_filter.filter(docs, section, fuzzy=fuzzy)
+            except SectionNotFoundError as e:
+                return {
+                    "error": "SECTION_NOT_FOUND",
+                    "code": "SECTION_NOT_FOUND",
+                    "message": str(e),
+                    "available_sections": e.available_sections,
+                    "best_match": (
+                        {"section": e.best_match.section, "score": e.best_match.score}
+                        if e.best_match
+                        else None
+                    ),
+                    "hint": e.hint,
+                }
+
+        # Apply token truncation
+        content = docs.content
+        truncated = False
+        original_tokens = 0
+        result_tokens = 0
+
+        if max_tokens > 0:
+            truncator = TokenTruncator(max_tokens=max_tokens)
+            result = truncator.truncate(content)
+            content = result.content
+            truncated = result.truncated
+            original_tokens = result.original_length
+            result_tokens = result.result_length
 
         return {
             "driver": docs.driver,
             "version": docs.version,
             "source_url": docs.source_url,
-            "content": docs.content,
+            "content": content,
             "sections": docs.sections,
             "cached_at": docs.cached_at.isoformat(),
+            "metadata": {
+                "truncated": truncated,
+                "token_count": result_tokens if max_tokens > 0 else 0,
+                "total_tokens": original_tokens if max_tokens > 0 else 0,
+            },
         }
 
     except DocsNotFoundError:
