@@ -26,19 +26,20 @@ gpumod's preflight system automatically validates these before starting a servic
 | Check | What It Does | Failure Action |
 |-------|--------------|----------------|
 | **ModelFileCheck** | Verifies GGUF file exists at `unit_vars.models_dir/model_file` | Shows download URL and wget/curl commands |
+| **VRAMCheck** | Validates VRAM requirement fits in available GPU memory | Shows suggestions (reduce n_gpu_layers, ctx_size, or try smaller quant) |
 | **DiskSpaceChecker** | Validates disk space before download (10% safety buffer) | Blocks download if insufficient |
 | **TokenizerCheck** | Verifies tokenizer accessibility | Warns if tokenizer unavailable |
 
 These checks run automatically via `PreflightRunner.default()` — no manual
 action required.
 
-### Manual (your responsibility)
+### Still Manual (your responsibility)
 
-VRAM validation is **not yet automated**. You must manually verify:
+While VRAM validation is now automated, you should still understand:
 
-1. VRAM budget fits the model configuration
-2. Configuration parameters (`n_gpu_layers`, `ctx_size`, etc.) are correct
-3. MoE offload settings are appropriate (if applicable)
+1. **Why** your VRAM budget was set to a certain value
+2. How to tune `n_gpu_layers` and `ctx_size` for your specific model
+3. MoE offload settings (`n_cpu_moe`) for mixture-of-experts models
 
 ---
 

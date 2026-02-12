@@ -32,6 +32,7 @@ from gpumod.preflight.model_file import (
     ModelFileCheck,
 )
 from gpumod.preflight.tokenizer import TokenizerCheck
+from gpumod.preflight.vram_check import VRAMCheck, VRAMSuggestion
 
 if TYPE_CHECKING:
     from gpumod.models import Service
@@ -48,6 +49,8 @@ __all__ = [
     "PreflightCheck",
     "PreflightRunner",
     "TokenizerCheck",
+    "VRAMCheck",
+    "VRAMSuggestion",
     "run_preflight",
 ]
 
@@ -76,7 +79,7 @@ class PreflightRunner:
         PreflightRunner:
             Runner configured with standard checks.
         """
-        return cls(checks=[ModelFileCheck(), TokenizerCheck()])
+        return cls(checks=[ModelFileCheck(), VRAMCheck(), TokenizerCheck()])
 
     async def run_all(self, service: Service) -> dict[str, CheckResult]:
         """Run all registered checks on a service.
