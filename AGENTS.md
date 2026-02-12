@@ -35,13 +35,19 @@ Write tests FIRST, then implementation:
 
 ### Quality Gates
 
-All must pass before any commit:
+All must pass before any commit (enforced by pre-commit hook):
 
 | Gate | Command | Requirement |
 |------|---------|-------------|
-| Lint | `ruff check src tests` | 0 errors |
-| Types | `uv run mypy src` | 0 errors |
+| Lint | `uv run ruff check src tests` | 0 errors |
+| Format | `uv run ruff format --check src tests` | No changes |
+| Types | `uv run mypy src --strict` | 0 errors |
 | Tests | `uv run pytest tests/unit -q` | All pass |
+
+**Pre-commit hook** (`scripts/pre-commit-check.sh`) runs all checks automatically.
+- Commits are **blocked** if any check fails
+- Skip tests for faster iteration: `SKIP_TESTS=1 git commit ...`
+- Emergency bypass (use sparingly): `SKIP_PRECOMMIT=1 git commit ...`
 
 ### Git Rules
 
@@ -49,6 +55,7 @@ All must pass before any commit:
 - NEVER add Co-Authored-By lines
 - NEVER amend unless explicitly asked
 - Stage specific files, not `git add -A`
+- Pre-commit hook ensures quality gates pass
 
 ### Web Search Rules
 
@@ -82,12 +89,21 @@ bd sync               # Push changes
 Before ending work:
 
 ```bash
-git status                    # Check changes
-ruff check src tests          # Lint
-uv run pytest tests/unit -q   # Tests
-bd sync                       # Sync issues
-# Only commit/push if user requests
+# 1. Check what changed
+git status
+
+# 2. Verify quality (or let pre-commit hook do it)
+./scripts/pre-commit-check.sh
+
+# 3. Sync beads issues
+bd sync
+
+# 4. Only commit/push if user explicitly requests
+# Pre-commit hook will block if checks fail
 ```
+
+**The pre-commit hook enforces all quality gates** — you cannot commit
+broken code. If a commit is blocked, fix the issue and try again.
 
 ## See Also
 

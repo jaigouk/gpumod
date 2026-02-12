@@ -22,6 +22,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from gpumod.preflight.base import CheckResult, PreflightCheck
+from gpumod.preflight.model_file import (
+    DiskSpaceChecker,
+    DiskSpaceResult,
+    DownloadAbortedError,
+    DownloadInfo,
+    InsufficientDiskSpaceError,
+    ModelDownloader,
+    ModelFileCheck,
+)
 from gpumod.preflight.tokenizer import TokenizerCheck
 
 if TYPE_CHECKING:
@@ -29,6 +38,13 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CheckResult",
+    "DiskSpaceChecker",
+    "DiskSpaceResult",
+    "DownloadAbortedError",
+    "DownloadInfo",
+    "InsufficientDiskSpaceError",
+    "ModelDownloader",
+    "ModelFileCheck",
     "PreflightCheck",
     "PreflightRunner",
     "TokenizerCheck",
@@ -60,7 +76,7 @@ class PreflightRunner:
         PreflightRunner:
             Runner configured with standard checks.
         """
-        return cls(checks=[TokenizerCheck()])
+        return cls(checks=[ModelFileCheck(), TokenizerCheck()])
 
     async def run_all(self, service: Service) -> dict[str, CheckResult]:
         """Run all registered checks on a service.

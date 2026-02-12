@@ -352,13 +352,14 @@ class TestPreflightIntegration:
     """Tests for preflight integration into service lifecycle."""
 
     @pytest.mark.asyncio
-    async def test_default_runner_includes_tokenizer_check(self) -> None:
-        """Default PreflightRunner includes TokenizerCheck."""
+    async def test_default_runner_includes_all_checks(self) -> None:
+        """Default PreflightRunner includes ModelFileCheck and TokenizerCheck."""
         from gpumod.preflight import PreflightRunner
 
         runner = PreflightRunner.default()
 
         check_names = [c.name for c in runner.checks]
+        assert "model_file" in check_names
         assert "tokenizer" in check_names
 
     @pytest.mark.asyncio
