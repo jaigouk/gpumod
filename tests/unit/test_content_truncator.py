@@ -18,9 +18,9 @@ import pytest
 # These imports will fail until we implement them (RED phase)
 try:
     from gpumod.discovery.content_truncator import (
+        CharTruncator,
         ContentTruncator,
         TokenTruncator,
-        CharTruncator,
         TruncationResult,
     )
 except ImportError:

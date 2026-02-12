@@ -12,7 +12,6 @@ import re
 from dataclasses import dataclass
 from typing import Protocol
 
-
 # Approximate tokens per character ratio for English markdown
 # Conservative estimate: ~4 chars per token (actual varies by content)
 _CHARS_PER_TOKEN_ESTIMATE = 4
@@ -86,9 +85,7 @@ class TokenTruncator:
         result_tokens = self._estimate_tokens(truncated_content)
 
         # Add truncation indicator
-        indicator = (
-            f"\n\n[...truncated, showing ~{result_tokens} of ~{original_tokens} tokens]"
-        )
+        indicator = f"\n\n[...truncated, showing ~{result_tokens} of ~{original_tokens} tokens]"
         truncated_content += indicator
 
         return TruncationResult(
@@ -182,9 +179,7 @@ class CharTruncator:
         truncated = self._truncate_at_boundary(content, target)
 
         # Add indicator
-        indicator = (
-            f"\n\n[...truncated, showing {len(truncated)} of {original_chars} chars]"
-        )
+        indicator = f"\n\n[...truncated, showing {len(truncated)} of {original_chars} chars]"
         truncated += indicator
 
         return TruncationResult(

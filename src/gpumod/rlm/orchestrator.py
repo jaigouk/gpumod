@@ -14,7 +14,7 @@ import re
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import BaseModel, Field
-from rlm.clients import BaseLM, get_client
+from rlm.clients import BaseLM, get_client  # type: ignore[attr-defined]
 from rlm.core.lm_handler import LMHandler
 from rlm.utils.parsing import find_code_blocks, find_final_answer
 
@@ -159,7 +159,7 @@ class RLMOrchestrator:
         try:
             result = self._run_loop(env, handler, query, max_turns)
         finally:
-            handler.stop()
+            handler.stop()  # type: ignore[no-untyped-call]
             env.cleanup()
 
         return result
@@ -189,7 +189,7 @@ class RLMOrchestrator:
         ]
 
         for turn in range(max_turns):
-            response: str = handler.completion(messages)
+            response: str = handler.completion(messages)  # type: ignore[arg-type]
 
             # Check for final answer.
             final_raw = find_final_answer(response, environment=env)
@@ -241,7 +241,7 @@ class RLMOrchestrator:
                 ),
             }
         )
-        response = handler.completion(messages)
+        response = handler.completion(messages)  # type: ignore[arg-type]
         final_raw = find_final_answer(response, environment=env)
         if final_raw is not None:
             result = _parse_final_answer(final_raw)
