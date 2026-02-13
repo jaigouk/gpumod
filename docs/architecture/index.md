@@ -735,6 +735,6 @@ for stronger isolation (tracked in gpumod-b9x).
 
 ## See Also
 
-- [Configuration Guide](configuration.md) — Environment variables and settings
-- [CLI Reference](cli.md) — Command documentation
-- [MCP Integration](mcp.md) — AI assistant setup
+- [Configuration Guide](../getting-started/configuration.md) — Environment variables and settings
+- [CLI Reference](../getting-started/cli.md) — Command documentation
+- [MCP Integration](../user-guide/mcp.md) — AI assistant setup
