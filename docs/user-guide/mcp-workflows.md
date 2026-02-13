@@ -461,10 +461,8 @@ This stops everything and releases VRAM. Always works.
 
 ## See Also
 
-- [CLI Reference](../cli.md) — Command-line interface
-- [Presets Guide](../presets.md) — YAML service definitions
-- [MCP Integration](../mcp.md) — Setup for AI assistants
-- [QA Testing](../qa.md) — Manual test procedures
+- [CLI Reference](../getting-started/cli.md) — Command-line interface
+- [MCP Integration](mcp.md) — Setup for AI assistants
 
 ---
 

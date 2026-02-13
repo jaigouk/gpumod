@@ -60,7 +60,7 @@ gpumod mode switch coding-mode
 gpumod tui
 ```
 
-See the [Getting Started](getting-started.md) guide for sudoers configuration
+See the [Getting Started](getting-started/index.md) guide for sudoers configuration
 and full deployment instructions.
 
 ## MCP Integration
@@ -80,7 +80,7 @@ IDE to let AI assistants query GPU status, simulate VRAM, and switch modes.
 }
 ```
 
-See [MCP Integration](mcp.md) for setup instructions for Claude Code,
+See [MCP Integration](user-guide/mcp.md) for setup instructions for Claude Code,
 Cursor, Claude Desktop, and Antigravity.
 
 ## Requirements
