@@ -949,6 +949,106 @@ class TestVramWaitOnSwitch:
         assert required == 5000
 
 
+class TestVramTimeoutAborts:
+    """Test that VRAM timeout aborts mode switch instead of proceeding (gpumod-277)."""
+
+    async def test_vram_timeout_returns_failure(self) -> None:
+        """Mode switch should fail when VRAM wait times out.
+
+        This tests the fix for gpumod-277: previously, VRAM timeout would
+        log a warning and proceed anyway, potentially causing system crashes.
+        Now it should return ModeResult(success=False) with an error message.
+        """
+        db = _build_sleepable_mock_db(current_mode="code")
+        registry = _build_sleepable_mock_registry(
+            service_states={
+                "svc-devstral": ServiceState.RUNNING,
+                "svc-rag-llm": ServiceState.STOPPED,
+            }
+        )
+        lifecycle = _build_sleepable_mock_lifecycle()
+        vram = _build_mock_vram()
+        # Simulate VRAM timeout - wait_for_vram_release returns False
+        vram.wait_for_vram_release = AsyncMock(return_value=False)
+        sleep_ctrl = _build_mock_sleep()
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        result = await manager.switch_mode("rag")
+
+        # Mode switch should fail
+        assert result.success is False
+        assert result.mode_id == "rag"
+        assert any("VRAM" in e for e in result.errors)
+        # Services should NOT be started after timeout
+        lifecycle.start.assert_not_called()
+        lifecycle.wake.assert_not_called()
+        # DB should NOT be updated (mode didn't change)
+
+    async def test_vram_timeout_does_not_update_db(self) -> None:
+        """Failed mode switch due to VRAM timeout should not update current_mode."""
+        db = _build_sleepable_mock_db(current_mode="code")
+        registry = _build_sleepable_mock_registry(
+            service_states={
+                "svc-devstral": ServiceState.RUNNING,
+                "svc-rag-llm": ServiceState.STOPPED,
+            }
+        )
+        lifecycle = _build_sleepable_mock_lifecycle()
+        vram = _build_mock_vram()
+        vram.wait_for_vram_release = AsyncMock(return_value=False)
+        sleep_ctrl = _build_mock_sleep()
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        await manager.switch_mode("rag")
+
+        # DB should NOT be updated on failure
+        db.set_current_mode.assert_not_called()
+
+    async def test_vram_timeout_error_message_is_actionable(self) -> None:
+        """VRAM timeout error should explain the issue clearly."""
+        db = _build_sleepable_mock_db(current_mode="code")
+        registry = _build_sleepable_mock_registry(
+            service_states={
+                "svc-devstral": ServiceState.RUNNING,
+                "svc-rag-llm": ServiceState.STOPPED,
+            }
+        )
+        lifecycle = _build_sleepable_mock_lifecycle()
+        vram = _build_mock_vram()
+        vram.wait_for_vram_release = AsyncMock(return_value=False)
+        sleep_ctrl = _build_mock_sleep()
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+        )
+
+        result = await manager.switch_mode("rag")
+
+        assert result.success is False
+        # Error should mention what happened
+        error_text = " ".join(result.errors)
+        assert "VRAM" in error_text
+        assert "timeout" in error_text.lower() or "released" in error_text.lower()
+
+
 class TestSleepAwareSwitchOrder:
     """Test that sleep/stop happens before wake/start (free VRAM first)."""
 

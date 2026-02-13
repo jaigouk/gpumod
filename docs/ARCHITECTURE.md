@@ -484,6 +484,67 @@ GPU VRAM is the central constraint. gpumod addresses this through:
 3. **Sleep states** — L1/L2/Router reduce VRAM while keeping services warm
 4. **Orphan detection** — Clean up services not in current mode definition
 
+#### VRAM Protection Mechanism (Defense-in-Depth)
+
+The system crash risk from VRAM exhaustion is mitigated at multiple layers:
+
+```
+Mode Switch Flow with VRAM Protection
+======================================
+
+User: gpumod mode switch rag
+         │
+         ▼
+┌────────────────────────────────────┐
+│  1. Pre-flight VRAM Simulation     │ ◄── Layer 1: Block if target mode > total VRAM
+│     (ServiceManager.switch_mode)   │
+└────────────────┬───────────────────┘
+                 │ ✓ Total VRAM fits
+                 ▼
+┌────────────────────────────────────┐
+│  2. Stop Outgoing Services         │
+│     (LifecycleManager.stop)        │
+└────────────────┬───────────────────┘
+                 │
+                 ▼
+┌────────────────────────────────────┐
+│  3. Wait for VRAM Release          │ ◄── Layer 2: Timeout = FATAL ERROR (not warning)
+│     (VRAMTracker.wait_for_vram)    │     Prevents: CUDA async release race condition
+│                                    │     On timeout: Returns ModeResult(success=False)
+└────────────────┬───────────────────┘
+                 │ ✓ VRAM released
+                 ▼
+┌────────────────────────────────────┐
+│  4. Start Incoming Services        │
+│     (LifecycleManager.start)       │
+│         │                          │
+│         └──► wake() ───────────────│◄── Layer 3: Driver VRAM preflight
+│             (LlamaCppDriver)       │     Checks: free_mb >= vram_mb + 512MB margin
+│                                    │     Raises: InsufficientVRAMError if insufficient
+└────────────────────────────────────┘
+```
+
+**Race Condition Explanation:**
+
+CUDA memory release is asynchronous. When `systemctl stop` returns, the GPU memory
+may still be held by the kernel driver for milliseconds to seconds. Without waiting,
+a subsequent model load can see "30GB needed vs 714MB free" and crash the system.
+
+**Layer Details:**
+
+| Layer | Component | Check | Failure Mode |
+| ----- | --------- | ----- | ------------ |
+| **1** | ServiceManager pre-flight | Target mode total < GPU capacity | `ModeResult(success=False)` |
+| **2** | VRAM wait timeout | free_mb >= required_mb within 120s | `ModeResult(success=False)` |
+| **3** | Driver preflight (llama.cpp) | free_mb >= service.vram_mb + 512MB | `InsufficientVRAMError` |
+
+**Manual curl Attack Vector:**
+
+Direct `curl POST /models/load` bypasses gpumod's ServiceManager. Mitigation:
+- Layer 3 (driver preflight) catches this when `VRAMTracker` is injected
+- llama-router services bind to `127.0.0.1` (configurable), reducing external attack surface
+- Future: HTTP proxy layer for comprehensive protection (tracked in backlog)
+
 ### Sleep Levels
 
 | Level      | Wake Time | VRAM Saved | Mechanism                     |
