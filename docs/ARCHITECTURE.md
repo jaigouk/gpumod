@@ -565,8 +565,7 @@ All services expose HTTP health endpoints. gpumod:
 ### Knowledge Sources
 
 The discovery and consulting layers draw from a 4-tier source hierarchy.
-See [docs/research/knowledge_sources.md](research/knowledge_sources.md) for
-the full catalog.
+See `research/knowledge_sources.md` in the repository for the full catalog.
 
 | Tier | Source Type | TTL | Examples |
 | ---- | ----------- | --- | -------- |
@@ -680,7 +679,7 @@ whitelisted read-only MCP tools.
 - (-) Multiple LLM calls per query (cost, latency)
 - (-) Requires LLM API access (not offline-capable)
 
-**Reference:** [docs/research/rlm_langextract.md](research/rlm_langextract.md)
+**Reference:** See `research/rlm_langextract.md` in the repository.
 
 ### ADR-6: Function Whitelisting over Full Sandboxing
 
@@ -738,7 +737,4 @@ for stronger isolation (tracked in gpumod-b9x).
 
 - [Configuration Guide](configuration.md) — Environment variables and settings
 - [CLI Reference](cli.md) — Command documentation
-- [Presets Guide](presets.md) — YAML service definitions
 - [MCP Integration](mcp.md) — AI assistant setup
-- [PRD: RLM Consult Tool](PRD.md) — Detailed design for the consulting layer
-- [Knowledge Sources](research/knowledge_sources.md) — Validated source catalog
