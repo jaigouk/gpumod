@@ -71,7 +71,7 @@ All must pass before any commit (enforced by pre-commit hook):
 
 ### Architecture Documentation
 
-[ARCHITECTURE.md](docs/ARCHITECTURE.md) follows arc42 structure. When updating:
+[ARCHITECTURE.md](docs/architecture/index.md) follows arc42 structure. When updating:
 
 - Focus on **what** and **why**, not implementation details
 - No version tags (v0.1.1) — that's changelog material
@@ -102,10 +102,10 @@ Work is NOT complete until ALL criteria are met:
 
 **Documentation Updates Required When:**
 
-- Adding new CLI commands → Update `docs/cli.md`
-- Changing service behavior → Update `docs/ARCHITECTURE.md`
-- Modifying preset format → Update `docs/presets.md`
-- Adding MCP tools → Update tool docstrings + `docs/ARCHITECTURE.md`
+- Adding new CLI commands → Update `docs/getting-started/cli.md`
+- Changing service behavior → Update `docs/architecture/index.md`
+- Modifying preset format → Update `docs/internal/presets.md`
+- Adding MCP tools → Update tool docstrings + `docs/architecture/index.md`
 - Changing workflows → Update relevant docs + `AGENTS.md`
 
 **Acceptance Criteria Template:**
@@ -145,8 +145,11 @@ broken code. If a commit is blocked, fix the issue and try again.
 
 ## See Also
 
-- [Architecture](docs/ARCHITECTURE.md) — System design (arc42)
-- [CLI Reference](docs/cli.md) — Command documentation
-- [Presets Guide](docs/presets.md) — Service definitions
-- [Preset Workflow](docs/presets-workflow.md) — VRAM validation checklist
-- [QA Procedures](docs/qa.md) — Manual testing
+- [Architecture](docs/architecture/index.md) — System design (arc42)
+- [CLI Reference](docs/getting-started/cli.md) — Command documentation
+- [MCP Workflows](docs/user-guide/mcp-workflows.md) — AI assistant usage patterns
+
+**Internal docs** (in `docs/internal/`):
+- Presets Guide — Service definitions
+- Preset Workflow — VRAM validation checklist
+- QA Procedures — Manual testing
