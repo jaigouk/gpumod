@@ -483,6 +483,37 @@ class TestRenderLlamacppUnit:
         )
         assert "--ctx-size 8192" in result
 
+    def test_host_defaults_to_localhost(
+        self, llamacpp_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        """Host should default to 127.0.0.1 for security (gpumod-277 defense-in-depth)."""
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        unit_vars: dict[str, Any] = {"model_path": "/models/code.gguf"}
+        result = engine.render_service_unit(
+            llamacpp_service, default_settings, unit_vars=unit_vars
+        )
+        assert "--host 127.0.0.1" in result
+        assert "--host 0.0.0.0" not in result
+
+    def test_host_can_be_overridden(
+        self, llamacpp_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        """Host can be overridden via unit_vars for users who need external access."""
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        unit_vars: dict[str, Any] = {
+            "model_path": "/models/code.gguf",
+            "host": "0.0.0.0",  # Explicitly allow external access  # noqa: S104
+        }
+        result = engine.render_service_unit(
+            llamacpp_service, default_settings, unit_vars=unit_vars
+        )
+        assert "--host 0.0.0.0" in result
+        assert "--host 127.0.0.1" not in result
+
 
 # ── render_service_unit for fastapi ─────────────────────────────────────
 

@@ -179,16 +179,16 @@ The discovery layer provides read-only access to external knowledge sources
 MCP tools.
 
 ```
-+--------------------------------------------------------------+
-|                     DISCOVERY LAYER                           |
-+--------------------------------------------------------------+
-|  HuggingFaceSearcher   <- Search HF models by query          |
-|  GGUFMetadataFetcher   <- GGUF file listing + VRAM estimates |
-|  ConfigFetcher         <- Model config.json (architecture)   |
-|  DriverDocsFetcher     <- Official llama.cpp/vLLM docs       |
-|  PresetGenerator       <- YAML service configs               |
-|  SystemInfoCollector   <- GPU, RAM, driver info              |
-+--------------------------------------------------------------+
+┌──────────────────────────────────────────────────────────────┐
+│                     DISCOVERY LAYER                          │
+├──────────────────────────────────────────────────────────────┤
+│  HuggingFaceSearcher   ← Search HF models by query           │
+│  GGUFMetadataFetcher   ← GGUF file listing + VRAM estimates  │
+│  ConfigFetcher         ← Model config.json (architecture)    │
+│  DriverDocsFetcher     ← Official llama.cpp/vLLM docs        │
+│  PresetGenerator       ← YAML service configs                │
+│  SystemInfoCollector   ← GPU, RAM, driver info               │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 **Data flow:** MCP tools -> Discovery components -> HuggingFace API / GitHub raw
@@ -200,16 +200,16 @@ RLM (Recursive Language Models). It is optional and read-only — returns
 recommendations but never executes mutating operations.
 
 ```
-+--------------------------------------------------------------+
-|                    CONSULTING LAYER                           |
-+--------------------------------------------------------------+
-|  GpumodConsultEnv      <- Custom RLM environment             |
-|  |-- Whitelisted read-only MCP tools                         |
-|  |-- AST-validated code execution                            |
-|  +-- Timeout enforcement (5s per block, 60s total)           |
-|  RLMOrchestrator       <- Manages RLM lifecycle              |
-|  +-- ConsultResult     <- Structured recommendation output   |
-+--------------------------------------------------------------+
+┌──────────────────────────────────────────────────────────────┐
+│                    CONSULTING LAYER                          │
+├──────────────────────────────────────────────────────────────┤
+│  GpumodConsultEnv      ← Custom RLM environment              │
+│  ├── Whitelisted read-only MCP tools                         │
+│  ├── AST-validated code execution                            │
+│  └── Timeout enforcement (5s per block, 60s total)           │
+│  RLMOrchestrator       ← Manages RLM lifecycle               │
+│  └── ConsultResult     ← Structured recommendation output    │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 **Data flow:** `consult` MCP tool -> RLMOrchestrator -> GpumodConsultEnv ->
@@ -403,39 +403,39 @@ User                    ServiceManager          LifecycleManager        VRAMTrac
 gpumod exposes 16 tools and 8 resources via MCP, organized into three tiers:
 
 ```
-+------------------------------------------------------------------+
-|                   AI Assistant (Claude Code)                       |
-+-------------------------------+----------------------------------+
-                                | stdio (JSON-RPC)
-                                v
-+------------------------------------------------------------------+
-|                      gpumod MCP Server                            |
-+------------------------------------------------------------------+
-|                                                                   |
-|  Tier 1 - Direct (0 LLM calls):                                  |
-|    gpu_status, list_services, list_modes, service_info,           |
-|    model_info, simulate_mode, switch_mode, start_service,         |
-|    stop_service                                                   |
-|                                                                   |
-|  Tier 2 - Discovery (0 LLM calls):                               |
-|    search_hf_models, list_gguf_files, list_model_files,           |
-|    fetch_model_config, generate_preset, fetch_driver_docs         |
-|                                                                   |
-|  Tier 3 - Consulting (N LLM calls):                              |
-|    consult (RLM-based multi-step reasoning)                       |
-|                                                                   |
-|  Resources:                                                       |
-|    gpumod://modes, gpumod://services, gpumod://models,            |
-|    gpumod://help, ...                                             |
-+-------------------------------+----------------------------------+
-                                |
-           +--------------------+--------------------+
-           |                    |                    |
-           v                    v                    v
-+----------------+   +------------------+   +-----------------+
-| ServiceManager |   | Discovery Layer  |   | Consulting Layer|
-| (Tier 1 ops)   |   | (Tier 2 fetches) |   | (Tier 3 RLM)   |
-+----------------+   +------------------+   +-----------------+
+┌──────────────────────────────────────────────────────────────────┐
+│                   AI Assistant (Claude Code)                     │
+└───────────────────────────────┬──────────────────────────────────┘
+                                │ stdio (JSON-RPC)
+                                ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                      gpumod MCP Server                           │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Tier 1 - Direct (0 LLM calls):                                  │
+│    gpu_status, list_services, list_modes, service_info,          │
+│    model_info, simulate_mode, switch_mode, start_service,        │
+│    stop_service                                                  │
+│                                                                  │
+│  Tier 2 - Discovery (0 LLM calls):                               │
+│    search_hf_models, list_gguf_files, list_model_files,          │
+│    fetch_model_config, generate_preset, fetch_driver_docs        │
+│                                                                  │
+│  Tier 3 - Consulting (N LLM calls):                              │
+│    consult (RLM-based multi-step reasoning)                      │
+│                                                                  │
+│  Resources:                                                      │
+│    gpumod://modes, gpumod://services, gpumod://models,           │
+│    gpumod://help, ...                                            │
+└───────────────────────────────┬──────────────────────────────────┘
+                                │
+           ┌────────────────────┼────────────────────┐
+           │                    │                    │
+           ▼                    ▼                    ▼
+┌────────────────┐   ┌──────────────────┐   ┌─────────────────┐
+│ ServiceManager │   │ Discovery Layer  │   │ Consulting Layer│
+│ (Tier 1 ops)   │   │ (Tier 2 fetches) │   │ (Tier 3 RLM)    │
+└────────────────┘   └──────────────────┘   └─────────────────┘
 ```
 
 #### Tool Tiers
@@ -453,22 +453,22 @@ The `consult` tool uses RLM to answer questions like "Can I run Qwen3-235B on
 constraints across multiple turns.
 
 ```
-+------------------------------------------------------------------+
-|                  consult MCP tool                                 |
-+------------------------------------------------------------------+
-|  RLMOrchestrator                                                  |
-|  +-- GpumodConsultEnv (NonIsolatedEnv)                            |
-|      |                                                            |
-|      |  Whitelisted (read-only):        Blocked (NameError):      |
-|      |    gpu_status                      switch_mode             |
-|      |    list_gguf_files                 start_service           |
-|      |    fetch_model_config              stop_service            |
-|      |    fetch_driver_docs                                       |
-|      |    search_hf_models                                        |
-|      |    simulate_mode                                           |
-|      |    generate_preset                                         |
-|      |    json, re (stdlib)                                       |
-+------------------------------------------------------------------+
+┌──────────────────────────────────────────────────────────────────┐
+│                  consult MCP tool                                │
+├──────────────────────────────────────────────────────────────────┤
+│  RLMOrchestrator                                                 │
+│  └── GpumodConsultEnv (NonIsolatedEnv)                           │
+│      │                                                           │
+│      │  Whitelisted (read-only):        Blocked (NameError):     │
+│      │    gpu_status                      switch_mode            │
+│      │    list_gguf_files                 start_service          │
+│      │    fetch_model_config              stop_service           │
+│      │    fetch_driver_docs                                      │
+│      │    search_hf_models                                       │
+│      │    simulate_mode                                          │
+│      │    generate_preset                                        │
+│      │    json, re (stdlib)                                      │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ---
