@@ -14,11 +14,16 @@ import httpx
 from gpumod.models import ServiceState, ServiceStatus
 from gpumod.services import systemd
 from gpumod.services.base import ServiceDriver
+from gpumod.services.vram import InsufficientVRAMError
 
 if TYPE_CHECKING:
     from gpumod.models import Service
+    from gpumod.services.vram import VRAMTracker
 
 logger = logging.getLogger(__name__)
+
+# Safety margin for VRAM checks (in MB)
+_VRAM_SAFETY_MARGIN_MB = 512
 
 
 class LlamaCppDriver(ServiceDriver):
@@ -28,10 +33,18 @@ class LlamaCppDriver(ServiceDriver):
     ----------
     http_timeout:
         Timeout in seconds for HTTP requests to the llama-server API.
+    vram_tracker:
+        Optional VRAMTracker for VRAM preflight checks before loading models.
+        If provided, wake() will verify sufficient VRAM before calling /models/load.
     """
 
-    def __init__(self, http_timeout: float = 10.0) -> None:
+    def __init__(
+        self,
+        http_timeout: float = 10.0,
+        vram_tracker: VRAMTracker | None = None,
+    ) -> None:
         self._http_timeout = http_timeout
+        self._vram_tracker = vram_tracker
 
     # ------------------------------------------------------------------
     # ServiceDriver interface
@@ -109,7 +122,29 @@ class LlamaCppDriver(ServiceDriver):
         1. ``unit_vars.default_model`` — explicit model alias in the preset
         2. Discover available models from the server and match by ``model_id``
         3. Load the first available unloaded model
+
+        Raises
+        ------
+        InsufficientVRAMError
+            If a VRAMTracker is configured and there is not enough free VRAM
+            to load the model (including safety margin).
         """
+        # VRAM preflight check (gpumod-277)
+        if self._vram_tracker is not None:
+            usage = await self._vram_tracker.get_usage()
+            required_mb = service.vram_mb + _VRAM_SAFETY_MARGIN_MB
+            if usage.free_mb < required_mb:
+                logger.error(
+                    "Insufficient VRAM to load model for %r: need %dMB, only %dMB free",
+                    service.id,
+                    service.vram_mb,
+                    usage.free_mb,
+                )
+                raise InsufficientVRAMError(
+                    required_mb=service.vram_mb,
+                    available_mb=usage.free_mb,
+                )
+
         model = self._get_default_model(service)
 
         if not model:

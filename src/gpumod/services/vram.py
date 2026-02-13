@@ -34,6 +34,27 @@ class NvidiaSmiError(Exception):
     """Raised when nvidia-smi is missing or returns a non-zero exit code."""
 
 
+class InsufficientVRAMError(Exception):
+    """Raised when there is not enough VRAM to load a model.
+
+    Attributes
+    ----------
+    required_mb:
+        VRAM required in megabytes.
+    available_mb:
+        VRAM available in megabytes.
+    """
+
+    def __init__(self, required_mb: int, available_mb: int, message: str | None = None) -> None:
+        self.required_mb = required_mb
+        self.available_mb = available_mb
+        if message is None:
+            message = (
+                f"Insufficient VRAM: need {required_mb}MB but only {available_mb}MB available"
+            )
+        super().__init__(message)
+
+
 class VRAMTracker:
     """Query GPU information and VRAM usage via nvidia-smi or pynvml.
 

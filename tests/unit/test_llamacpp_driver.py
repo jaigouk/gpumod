@@ -7,8 +7,9 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from gpumod.models import DriverType, Service, ServiceState, SleepMode
+from gpumod.models import DriverType, Service, ServiceState, SleepMode, VRAMUsage
 from gpumod.services.drivers.llamacpp import LlamaCppDriver
+from gpumod.services.vram import InsufficientVRAMError
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -623,3 +624,92 @@ class TestLlamaCppSupportsSleep:
     def test_supports_sleep_returns_true(self) -> None:
         driver = LlamaCppDriver()
         assert driver.supports_sleep is True
+
+
+# ---------------------------------------------------------------------------
+# Tests: VRAM preflight in wake() (gpumod-277)
+# ---------------------------------------------------------------------------
+
+
+class TestWakeVramPreflight:
+    """Tests for VRAM preflight check in wake() (gpumod-277).
+
+    When a VRAMTracker is provided to LlamaCppDriver, wake() should check
+    available VRAM before attempting to load a model. This prevents system
+    crashes from extreme VRAM deficits (e.g., 30GB model vs 1GB free).
+    """
+
+    async def test_wake_raises_insufficient_vram_error_when_not_enough_vram(self) -> None:
+        """wake() should raise InsufficientVRAMError when VRAM is insufficient.
+
+        This tests the fix for gpumod-277: manual curl to /models/load with
+        insufficient VRAM caused system crashes. Now wake() checks VRAM first.
+        """
+        # Mock VRAMTracker with very little free VRAM
+        vram_tracker = AsyncMock()
+        vram_tracker.get_usage = AsyncMock(
+            return_value=VRAMUsage(total_mb=24000, used_mb=23000, free_mb=1000)
+        )
+
+        # Create driver with VRAMTracker injection
+        driver = LlamaCppDriver(vram_tracker=vram_tracker)
+
+        # Service requires 20GB VRAM
+        svc = make_router_service_with_default_model()  # vram_mb=20000
+
+        # wake() should raise InsufficientVRAMError
+        with pytest.raises(InsufficientVRAMError) as exc_info:
+            await driver.wake(svc)
+
+        assert exc_info.value.required_mb == 20000
+        assert exc_info.value.available_mb == 1000
+
+    async def test_wake_succeeds_when_enough_vram(self) -> None:
+        """wake() should proceed normally when sufficient VRAM is available."""
+        # Mock VRAMTracker with plenty of free VRAM
+        vram_tracker = AsyncMock()
+        vram_tracker.get_usage = AsyncMock(
+            return_value=VRAMUsage(total_mb=24000, used_mb=1000, free_mb=23000)
+        )
+
+        driver = LlamaCppDriver(vram_tracker=vram_tracker)
+        svc = make_router_service_with_default_model()  # vram_mb=20000
+
+        with patch("gpumod.services.drivers.llamacpp.httpx.AsyncClient") as cls:
+            mock_client = _mock_http_client()
+            cls.return_value = mock_client
+            await driver.wake(svc)
+
+            # Should proceed to load the model
+            mock_client.post.assert_awaited_once()
+
+    async def test_wake_without_vram_tracker_does_not_check(self) -> None:
+        """wake() without VRAMTracker should not perform VRAM check (backward compatible)."""
+        driver = LlamaCppDriver()  # No VRAMTracker
+        svc = make_router_service_with_default_model()
+
+        with patch("gpumod.services.drivers.llamacpp.httpx.AsyncClient") as cls:
+            mock_client = _mock_http_client()
+            cls.return_value = mock_client
+            # Should NOT raise, even though we can't verify VRAM
+            await driver.wake(svc)
+
+            mock_client.post.assert_awaited_once()
+
+    async def test_wake_includes_safety_margin_in_vram_check(self) -> None:
+        """VRAM check should include a safety margin (512MB default).
+
+        Service needs 20GB, but check should require 20GB + 512MB margin.
+        """
+        vram_tracker = AsyncMock()
+        # 20400MB free: more than 20000MB required but less than 20000+512=20512MB
+        vram_tracker.get_usage = AsyncMock(
+            return_value=VRAMUsage(total_mb=24000, used_mb=3600, free_mb=20400)
+        )
+
+        driver = LlamaCppDriver(vram_tracker=vram_tracker)
+        svc = make_router_service_with_default_model()  # vram_mb=20000
+
+        # Should raise because 20400 < 20000 + 512
+        with pytest.raises(InsufficientVRAMError):
+            await driver.wake(svc)

@@ -206,7 +206,18 @@ class ServiceManager:
                     safety_margin_mb=512,
                 )
                 if not vram_released:
-                    logger.warning("VRAM wait timed out, proceeding with service start anyway")
+                    logger.error(
+                        "VRAM not released within timeout. "
+                        "Previous service may still hold GPU memory."
+                    )
+                    return ModeResult(
+                        success=False,
+                        mode_id=target_mode_id,
+                        errors=[
+                            "VRAM not released within timeout. "
+                            "Previous service may still hold GPU memory."
+                        ],
+                    )
 
         # 6. Handle incoming services
         woken_ids, started_ids = await self._handle_incoming_services(to_start)
