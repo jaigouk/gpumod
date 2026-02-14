@@ -204,15 +204,27 @@ class TestCalculateVram:
 
 
 class TestProductionModes:
-    """Validate the 6 production mode YAMLs load via ModeLoader."""
+    """Validate the production mode YAMLs load via ModeLoader."""
 
-    def test_discovers_all_6_production_modes(self) -> None:
+    def test_discovers_all_production_modes(self) -> None:
         from gpumod.templates.modes import ModeLoader
 
         loader = ModeLoader(mode_dirs=[MODES_DIR])
         modes = loader.discover_modes()
         ids = {m.id for m in modes}
-        assert ids == {"code", "rag", "hacker", "speak", "blank", "finetuning", "nemotron"}
+        expected = {
+            "code",
+            "rag",
+            "hacker",
+            "speak",
+            "blank",
+            "finetuning",
+            "nemotron",
+            "multi-agent-gpt-oss",
+            "multi-agent-qwen3-coder",
+            "multi-agent-qwen3-next",
+        }
+        assert ids == expected
 
     def test_vram_calculation_with_real_presets(self) -> None:
         from gpumod.templates.modes import ModeLoader

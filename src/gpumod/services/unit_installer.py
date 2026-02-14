@@ -80,24 +80,20 @@ class UnitFileInstaller:
         self._daemon_reload_needed = False
 
     async def ensure_unit_file(self, service: Service) -> None:
-        """Install the unit file for *service* if it does not already exist.
+        """Install or update the unit file for *service*.
 
-        After installing, marks that a ``systemctl --user daemon-reload``
+        Compares the existing unit file content (if any) with the newly
+        rendered content. Only writes if the file is missing or changed.
+
+        After installing or updating, marks that a ``systemctl --user daemon-reload``
         is needed (batched until :meth:`daemon_reload_if_needed`).
         """
         if not service.unit_name:
             return
 
         unit_path = self._unit_dir / service.unit_name
-        if await asyncio.to_thread(unit_path.exists):
-            return
 
-        logger.info(
-            "Unit file %s missing, auto-installing for service %r",
-            unit_path,
-            service.id,
-        )
-
+        # Always render to compare content
         settings = await _build_settings(self._db)
         unit_vars: dict[str, Any] | None = service.extra_config.get("unit_vars")
 
@@ -114,10 +110,29 @@ class UnitFileInstaller:
             )
             return
 
+        # Check if file exists and compare content
+        if await asyncio.to_thread(unit_path.exists):
+            existing = await asyncio.to_thread(unit_path.read_text)
+            if existing == rendered:
+                # Content unchanged, no action needed
+                return
+            logger.info(
+                "Unit file %s changed, regenerating for service %r",
+                unit_path,
+                service.id,
+            )
+        else:
+            logger.info(
+                "Unit file %s missing, auto-installing for service %r",
+                unit_path,
+                service.id,
+            )
+
+        # Write new or updated content
         await asyncio.to_thread(self._unit_dir.mkdir, parents=True, exist_ok=True)
         await asyncio.to_thread(unit_path.write_text, rendered)
         self._daemon_reload_needed = True
-        logger.info("Auto-installed unit file: %s", unit_path)
+        logger.info("Installed unit file: %s", unit_path)
 
     async def daemon_reload_if_needed(self) -> None:
         """Run ``systemctl --user daemon-reload`` if any units were installed."""
