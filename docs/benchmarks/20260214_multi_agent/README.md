@@ -351,7 +351,7 @@ The 80B model with 5 parallel slots and 40K context requires ~25.6GB VRAM, excee
 
 ---
 
-## Summary Comparison
+## Summary Comparison (v1 - Simple Race Condition Bug)
 
 | Metric | GPT-OSS 20B | Qwen3-Coder 30B | Qwen3-Next 80B |
 |--------|-------------|-----------------|----------------|
@@ -362,20 +362,77 @@ The 80B model with 5 parallel slots and 40K context requires ~25.6GB VRAM, excee
 | VRAM Used | ~14GB | ~20GB | >25GB |
 | Best For | Reasoning tasks | **Multi-agent coding** | Single-agent |
 
-## Conclusions
+> **Note:** v1 showed GPT-OSS 0/5 because the benchmark didn't extract `reasoning_content`.
+> See v2 below for corrected results.
 
-1. **Qwen3-Coder 30B is the winner** for multi-agent coding tasks on RTX 4090:
-   - All 5 agents correctly identify bugs
-   - Fastest total time (6.5s vs 7.1s)
-   - Produces actionable answers (not just reasoning)
+---
 
-2. **GPT-OSS 20B** is a reasoning model - outputs to `reasoning_content` field
-   - Good for chain-of-thought but needs different prompting
-   - Higher throughput (77 tok/s) but wasted on incomplete answers
+## Benchmark v2 - Multiple Difficulty Levels
 
-3. **Qwen3-Coder-Next 80B** doesn't fit 5 parallel slots on 24GB GPU
-   - Would need reduced parallelism or CPU offloading
-   - Better suited for single-agent high-quality responses
+After fixing the reasoning model extraction issue and adding harder bug scenarios:
+
+### Test Scenarios
+
+| Difficulty | Bug Type | Description |
+|------------|----------|-------------|
+| Easy | Off-by-one | Pagination loses last page (integer division) |
+| Medium | Resource Leak | Connection not released on exception |
+| Hard | Async State | Shared mutable state across await boundaries |
+
+### GPT-OSS 20B v2 Results
+
+| Scenario | Bugs Found | Score | TTFT | Time |
+|----------|------------|-------|------|------|
+| Easy (Pagination) | **5/5** ✅ | 93.3% | 453ms | 14.0s |
+| Medium (Resource Leak) | 4/5 | 66.7% | 471ms | 14.3s |
+| Hard (Async State) | **5/5** ✅ | 93.3% | 676ms | 14.7s |
+
+**Key Finding:** GPT-OSS works when extracting `reasoning_content` field!
+
+### Qwen3-Coder 30B v2 Results
+
+| Scenario | Bugs Found | Score | TTFT | Time |
+|----------|------------|-------|------|------|
+| Easy (Pagination) | 4/5 | 80.0% | 381ms | 5.6s |
+| Medium (Resource Leak) | **5/5** ✅ | 86.7% | 291ms | 13.0s |
+| Hard (Async State) | **5/5** ✅ | 86.7% | 602ms | 12.9s |
+
+### v2 Summary Comparison
+
+| Metric | GPT-OSS 20B | Qwen3-Coder 30B |
+|--------|-------------|-----------------|
+| Avg Total Time | 14.3s | 10.5s |
+| Avg TTFT | 533ms | 425ms |
+| Avg tok/s | 70 | 53 |
+| Easy Score | **93.3%** | 80.0% |
+| Medium Score | 66.7% | **86.7%** |
+| Hard Score | **93.3%** | 86.7% |
+| Avg Score | **84.4%** | 84.5% |
+
+---
+
+## Updated Conclusions
+
+1. **Both models are now competitive** when properly configured:
+   - GPT-OSS 20B: Excellent on easy and hard bugs (93.3%)
+   - Qwen3-Coder 30B: Consistent across all difficulties (80-87%)
+
+2. **Qwen3-Coder 30B is faster** (2x on easy, similar on complex):
+   - Better TTFT (425ms vs 533ms)
+   - Lower latency for interactive use
+
+3. **GPT-OSS 20B requires `reasoning_content` extraction**:
+   - Standard `content` field is empty
+   - Analysis is in `reasoning_content` (like DeepSeek R1)
+   - Higher token generation (70 tok/s) but longer responses
+
+4. **Bug difficulty affects detection differently**:
+   - GPT-OSS: Best on easy/hard, struggles on medium
+   - Qwen3-Coder: Consistent performance, slightly better on medium
+
+5. **Recommendation**:
+   - **Qwen3-Coder 30B** for low-latency multi-agent workflows
+   - **GPT-OSS 20B** for complex reasoning tasks with longer context
 
 ## Bug Found During Testing
 
