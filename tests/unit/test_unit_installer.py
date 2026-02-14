@@ -77,19 +77,44 @@ class TestUnitFileInstaller:
         mock_engine.render_service_unit.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_skips_existing_unit_file(self, tmp_path: Path) -> None:
-        """When unit file already exists, it should not be overwritten."""
+    async def test_skips_unchanged_unit_file(self, tmp_path: Path) -> None:
+        """When unit file exists with same content, it should not be rewritten."""
         installer, mock_engine, _ = _make_installer(tmp_path)
         service = _make_service()
 
-        # Pre-create the file
+        # Pre-create the file with SAME content as what template will render
+        expected_content = "[Unit]\nDescription=Test\n[Service]\nExecStart=/usr/bin/test\n"
         unit_path = tmp_path / "vllm-chat.service"
-        unit_path.write_text("existing content")
+        unit_path.write_text(expected_content)
 
         await installer.ensure_unit_file(service)
 
-        assert unit_path.read_text() == "existing content"
-        mock_engine.render_service_unit.assert_not_called()
+        # Content should remain unchanged
+        assert unit_path.read_text() == expected_content
+        # Template should be rendered to compare, but file not rewritten
+        mock_engine.render_service_unit.assert_called_once()
+        # No daemon reload needed since file unchanged
+        assert not installer._daemon_reload_needed
+
+    @pytest.mark.asyncio
+    async def test_regenerates_unit_file_when_content_changed(self, tmp_path: Path) -> None:
+        """When unit file exists but config changed, it should be regenerated."""
+        installer, mock_engine, _ = _make_installer(tmp_path)
+        service = _make_service()
+
+        # Pre-create the file with DIFFERENT content (old config)
+        unit_path = tmp_path / "vllm-chat.service"
+        unit_path.write_text("[Unit]\nDescription=OLD CONFIG\n")
+
+        await installer.ensure_unit_file(service)
+
+        # Should be overwritten with new rendered content
+        new_content = unit_path.read_text()
+        assert "[Unit]" in new_content
+        assert "OLD CONFIG" not in new_content
+        mock_engine.render_service_unit.assert_called_once()
+        # Daemon reload needed since file changed
+        assert installer._daemon_reload_needed
 
     @pytest.mark.asyncio
     async def test_skips_service_without_unit_name(self, tmp_path: Path) -> None:
@@ -113,12 +138,14 @@ class TestUnitFileInstaller:
         assert installer._daemon_reload_needed
 
     @pytest.mark.asyncio
-    async def test_no_reload_when_file_exists(self, tmp_path: Path) -> None:
-        """No reload flag when unit file already exists."""
+    async def test_no_reload_when_file_unchanged(self, tmp_path: Path) -> None:
+        """No reload flag when unit file exists with same content."""
         installer, _, _ = _make_installer(tmp_path)
         service = _make_service()
 
-        (tmp_path / "vllm-chat.service").write_text("existing")
+        # Pre-create with SAME content as rendered
+        expected_content = "[Unit]\nDescription=Test\n[Service]\nExecStart=/usr/bin/test\n"
+        (tmp_path / "vllm-chat.service").write_text(expected_content)
 
         await installer.ensure_unit_file(service)
         assert not installer._daemon_reload_needed
