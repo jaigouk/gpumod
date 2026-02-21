@@ -23,6 +23,8 @@ from gpumod.discovery.gguf_metadata import GGUFMetadataFetcher, RepoNotFoundErro
 from gpumod.discovery.hf_searcher import HuggingFaceSearcher
 from gpumod.discovery.section_filter import SectionFilter, SectionNotFoundError
 from gpumod.rlm.orchestrator import RLMOrchestrator
+from gpumod.services.lifecycle import LifecycleError
+from gpumod.services.vram import InsufficientVRAMError
 from gpumod.simulation import SimulationError
 from gpumod.validation import (
     sanitize_name,
@@ -265,6 +267,19 @@ async def switch_mode(mode_id: str, ctx: Context) -> dict[str, Any]:
         mode_result = await manager.switch_mode(mode_id)
     except ValueError as exc:
         return _not_found_error(str(exc))
+    except InsufficientVRAMError as exc:
+        return {
+            "success": False,
+            "error": str(exc),
+            "required_mb": exc.required_mb,
+            "available_mb": exc.available_mb,
+        }
+    except LifecycleError as exc:
+        return {
+            "success": False,
+            "error": exc.reason,
+            "service_id": exc.service_id,
+        }
 
     result: dict[str, Any] = mode_result.model_dump(mode="json")
     return _sanitize_dict_names(result)
@@ -284,6 +299,20 @@ async def start_service(service_id: str, ctx: Context) -> dict[str, Any]:
         await manager.start_service(service_id)
     except ValueError as exc:
         return _not_found_error(str(exc))
+    except InsufficientVRAMError as exc:
+        return {
+            "success": False,
+            "error": str(exc),
+            "service_id": service_id,
+            "required_mb": exc.required_mb,
+            "available_mb": exc.available_mb,
+        }
+    except LifecycleError as exc:
+        return {
+            "success": False,
+            "error": exc.reason,
+            "service_id": exc.service_id,
+        }
 
     return {"success": True, "service_id": service_id, "action": "started"}
 

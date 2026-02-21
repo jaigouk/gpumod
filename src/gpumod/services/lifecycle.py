@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from gpumod.models import ServiceState, SleepMode
 from gpumod.services.systemd import get_unit_state, journal_logs
@@ -16,9 +17,60 @@ if TYPE_CHECKING:
     from gpumod.services.base import ServiceDriver
     from gpumod.services.registry import ServiceRegistry
     from gpumod.services.unit_installer import UnitFileInstaller
+    from gpumod.services.vram import VRAMTracker
 
 # States that indicate the process has exited and won't recover.
 _DEAD_STATES: frozenset[str] = frozenset({"failed", "inactive", "dead"})
+
+# Known fatal journal patterns → (category, suggestion).
+_FATAL_PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
+    (
+        re.compile(r"cudaMalloc failed: out of memory", re.IGNORECASE),
+        "cuda_oom",
+        "Try a smaller model, reduce context size, or free VRAM with 'gpumod mode blank'",
+    ),
+    (
+        re.compile(r"CUDA error: out of memory", re.IGNORECASE),
+        "cuda_oom",
+        "Try a smaller model, reduce context size, or free VRAM with 'gpumod mode blank'",
+    ),
+    (
+        re.compile(r"torch\.(?:cuda\.)?OutOfMemoryError", re.IGNORECASE),
+        "cuda_oom",
+        "Try a smaller model, reduce context size, or free VRAM with 'gpumod mode blank'",
+    ),
+    (
+        re.compile(r"failed to load model", re.IGNORECASE),
+        "model_load_failed",
+        "Check the model path and ensure the file exists and is not corrupted",
+    ),
+    (
+        re.compile(r"No such file or directory.*\.(gguf|safetensors)", re.IGNORECASE),
+        "model_not_found",
+        "Model file is missing — download it or fix the path in the preset",
+    ),
+]
+
+
+def classify_journal_error(lines: list[str]) -> dict[str, Any] | None:
+    """Scan journal lines for known fatal error patterns.
+
+    Returns
+    -------
+    dict or None
+        If a known pattern is found: ``{"category", "matched_line", "suggestion"}``.
+        None if no pattern matches.
+    """
+    for line in lines:
+        for pattern, category, suggestion in _FATAL_PATTERNS:
+            if pattern.search(line):
+                return {
+                    "category": category,
+                    "matched_line": line,
+                    "suggestion": suggestion,
+                }
+    return None
+
 
 logger = logging.getLogger(__name__)
 
@@ -101,9 +153,11 @@ class LifecycleManager:
         registry: ServiceRegistry,
         *,
         unit_installer: UnitFileInstaller | None = None,
+        vram_tracker: VRAMTracker | None = None,
     ) -> None:
         self._registry = registry
         self._unit_installer = unit_installer
+        self._vram_tracker = vram_tracker
 
     # ------------------------------------------------------------------
     # Public API
@@ -133,6 +187,17 @@ class LifecycleManager:
             if status.state in (ServiceState.RUNNING, ServiceState.SLEEPING):
                 logger.info("Service %r already running, skipping", svc.id)
                 continue
+
+            # VRAM preflight: fail fast if not enough VRAM before starting
+            if self._vram_tracker is not None and svc.vram_mb:
+                usage = await self._vram_tracker.get_usage()
+                if usage is not None and svc.vram_mb > usage.free_mb:
+                    from gpumod.services.vram import InsufficientVRAMError
+
+                    raise InsufficientVRAMError(
+                        required_mb=svc.vram_mb,
+                        available_mb=usage.free_mb,
+                    )
 
             logger.info("Starting service %r", svc.id)
             await driver.start(svc)
