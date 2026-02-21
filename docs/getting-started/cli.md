@@ -415,3 +415,29 @@ gpumod watch --timeout 60
 The watcher monitors `.yaml` and `.yml` files, ignoring editor temp files
 (`.swp`, `.tmp`, `~` backups). Changes are debounced to coalesce rapid saves
 from editors. Press `Ctrl+C` to stop.
+
+## gpumod install-server
+
+Install the gpumod MCP server as a systemd user service. Auto-detects the
+Python interpreter, venv, and project working directory.
+
+```bash
+# Preview the generated unit file without writing
+gpumod install-server --dry-run
+
+# Install to ~/.config/systemd/user/gpumod-mcp.service
+gpumod install-server
+
+# Install with custom host and port
+gpumod install-server --host 0.0.0.0 --port 8808
+
+# Install to a custom directory, skip daemon-reload
+gpumod install-server --unit-dir /tmp/units --no-reload
+```
+
+After installation, enable and start the service:
+
+```bash
+systemctl --user enable gpumod-mcp
+systemctl --user start gpumod-mcp
+```

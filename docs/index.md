@@ -65,7 +65,7 @@ and full deployment instructions.
 
 ## MCP Integration
 
-gpumod exposes 9 tools and 8 resources via the
+gpumod exposes 16 tools and 8 resources via the
 [Model Context Protocol](https://modelcontextprotocol.io/). Add it to your
 IDE to let AI assistants query GPU status, simulate VRAM, and switch modes.
 
