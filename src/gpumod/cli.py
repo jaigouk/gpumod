@@ -325,6 +325,68 @@ app.add_typer(discover_app, name="discover")
 
 
 # ---------------------------------------------------------------------------
+# install-server command (gpumod-xbx)
+# ---------------------------------------------------------------------------
+
+
+@app.command("install-server")
+def install_server(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print unit file without writing."),
+    host: str = typer.Option(None, "--host", help="Host to bind MCP server to."),
+    port: int = typer.Option(None, "--port", help="Port to bind MCP server to."),
+    unit_dir: str = typer.Option(None, "--unit-dir", help="Target directory for unit file."),
+    no_reload: bool = typer.Option(False, "--no-reload", help="Skip systemctl daemon-reload."),
+) -> None:
+    """Install the gpumod MCP server as a systemd user service."""
+    from gpumod.services.mcp_installer import (
+        detect_server_paths,
+        install_server_unit,
+        render_mcp_unit,
+    )
+
+    console = Console()
+    paths = detect_server_paths()
+
+    if dry_run:
+        rendered = render_mcp_unit(
+            python_bin=paths["python_bin"],
+            venv_bin=paths["venv_bin"],
+            working_dir=paths["working_dir"],
+            host=host,
+            port=port,
+        )
+        console.print(rendered)
+        return
+
+    target_dir = Path(unit_dir) if unit_dir else None
+    unit_path = install_server_unit(
+        python_bin=paths["python_bin"],
+        venv_bin=paths["venv_bin"],
+        working_dir=paths["working_dir"],
+        host=host,
+        port=port,
+        unit_dir=target_dir,
+    )
+
+    console.print(f"[bold green]Installed:[/bold green] {unit_path}")
+
+    if not no_reload:
+        import subprocess
+
+        subprocess.run(
+            ["/usr/bin/systemctl", "--user", "daemon-reload"],
+            check=False,
+        )
+        console.print("[dim]Ran systemctl --user daemon-reload[/dim]")
+
+    console.print(
+        "\n[bold]To enable and start:[/bold]\n"
+        "  systemctl --user enable gpumod-mcp\n"
+        "  systemctl --user start gpumod-mcp"
+    )
+
+
+# ---------------------------------------------------------------------------
 # State color mapping for Rich table rendering
 # ---------------------------------------------------------------------------
 
