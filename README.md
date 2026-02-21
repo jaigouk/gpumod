@@ -107,26 +107,25 @@ for complex questions like "Can I run Qwen3-235B on 24GB?".
 }
 ```
 
-See [docs/mcp.md](docs/mcp.md) for setup instructions for Claude Code,
+See [MCP Integration](docs/user-guide/mcp.md) for setup instructions for Claude Code,
 Cursor, Claude Desktop, and Antigravity.
 
 ## Security
 
 Input validation at every boundary, error sanitization, rate limiting,
 parameterized queries, sandboxed templates, and no `shell=True`. See
-[docs/SECURITY.md](docs/SECURITY.md) for the full threat model.
+[Security](docs/architecture/SECURITY.md) for the full threat model.
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
-| [CLI Reference](docs/cli.md) | All commands: status, service, mode, simulate, model, template, plan, tui |
-| [MCP Integration](docs/mcp.md) | MCP server setup for Claude Code, Cursor, Claude Desktop, Antigravity |
-| [Configuration](docs/configuration.md) | Environment variables, LLM backends, settings |
-| [Presets](docs/presets.md) | YAML preset schema, driver types, built-in examples |
-| [AI Planning](docs/ai-planning.md) | LLM-assisted VRAM allocation planning |
-| [Architecture](docs/ARCHITECTURE.md) | System design and component overview |
-| [Security](docs/SECURITY.md) | Threat model, input validation, security controls |
+| [CLI Reference](docs/getting-started/cli.md) | All commands: status, service, mode, simulate, model, template, plan, tui |
+| [MCP Integration](docs/user-guide/mcp.md) | MCP server setup for Claude Code, Cursor, Claude Desktop, Antigravity |
+| [Configuration](docs/getting-started/configuration.md) | Environment variables, LLM backends, settings |
+| [AI Planning](docs/user-guide/ai-planning.md) | LLM-assisted VRAM allocation planning |
+| [Architecture](docs/architecture/index.md) | System design and component overview |
+| [Security](docs/architecture/SECURITY.md) | Threat model, input validation, security controls |
 | [Benchmarks](docs/benchmarks/README.md) | LLM benchmark framework and results |
 | [Contributing](docs/contributing.md) | Development setup, tests, code quality, PR process |
 
