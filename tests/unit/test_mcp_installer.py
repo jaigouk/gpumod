@@ -144,8 +144,10 @@ class TestRenderMcpUnit:
         )
         assert "GPUMOD_MCP_HOST=0.0.0.0" in result
         assert "GPUMOD_MCP_PORT=8808" in result
+        assert "GPUMOD_MCP_TRANSPORT=streamable-http" in result
 
-    def test_no_host_port_by_default(self) -> None:
+    def test_default_renders_transport(self) -> None:
+        """Default render (no explicit transport) sets streamable-http."""
         from gpumod.services.mcp_installer import render_mcp_unit
 
         result = render_mcp_unit(
@@ -153,8 +155,35 @@ class TestRenderMcpUnit:
             venv_bin="/opt/gpumod/.venv/bin",
             working_dir="/opt/gpumod",
         )
-        assert "GPUMOD_MCP_HOST" not in result
-        assert "GPUMOD_MCP_PORT" not in result
+        assert "GPUMOD_MCP_TRANSPORT=streamable-http" in result
+        assert "GPUMOD_MCP_HOST=127.0.0.1" in result
+        assert "GPUMOD_MCP_PORT=8808" in result
+
+    def test_custom_transport_sse(self) -> None:
+        """Explicit transport=sse renders correctly."""
+        from gpumod.services.mcp_installer import render_mcp_unit
+
+        result = render_mcp_unit(
+            python_bin="/usr/bin/python3",
+            venv_bin="/opt/gpumod/.venv/bin",
+            working_dir="/opt/gpumod",
+            transport="sse",
+        )
+        assert "GPUMOD_MCP_TRANSPORT=sse" in result
+
+    def test_custom_host_port_override_defaults(self) -> None:
+        """Custom host/port override the template defaults."""
+        from gpumod.services.mcp_installer import render_mcp_unit
+
+        result = render_mcp_unit(
+            python_bin="/usr/bin/python3",
+            venv_bin="/opt/gpumod/.venv/bin",
+            working_dir="/opt/gpumod",
+            host="0.0.0.0",  # noqa: S104
+            port=9999,
+        )
+        assert "GPUMOD_MCP_HOST=0.0.0.0" in result
+        assert "GPUMOD_MCP_PORT=9999" in result
 
     def test_user_target(self) -> None:
         """User-level units should use default.target, not multi-user.target."""
@@ -302,3 +331,51 @@ class TestInstallServerCLI:
         content = (tmp_path / "gpumod-mcp.service").read_text()
         assert "GPUMOD_MCP_HOST=0.0.0.0" in content
         assert "GPUMOD_MCP_PORT=8808" in content
+
+    def test_install_default_transport(self, tmp_path: Path) -> None:
+        """Default install sets streamable-http transport."""
+        from typer.testing import CliRunner
+
+        from gpumod.cli import app
+
+        runner = CliRunner()
+        result = runner.invoke(
+            app,
+            ["install-server", "--unit-dir", str(tmp_path), "--no-reload"],
+        )
+        assert result.exit_code == 0
+        content = (tmp_path / "gpumod-mcp.service").read_text()
+        assert "GPUMOD_MCP_TRANSPORT=streamable-http" in content
+
+    def test_install_custom_transport_sse(self, tmp_path: Path) -> None:
+        """--transport=sse sets SSE transport in unit file."""
+        from typer.testing import CliRunner
+
+        from gpumod.cli import app
+
+        runner = CliRunner()
+        result = runner.invoke(
+            app,
+            [
+                "install-server",
+                "--unit-dir",
+                str(tmp_path),
+                "--no-reload",
+                "--transport",
+                "sse",
+            ],
+        )
+        assert result.exit_code == 0
+        content = (tmp_path / "gpumod-mcp.service").read_text()
+        assert "GPUMOD_MCP_TRANSPORT=sse" in content
+
+    def test_dry_run_shows_transport(self) -> None:
+        """--dry-run output includes GPUMOD_MCP_TRANSPORT."""
+        from typer.testing import CliRunner
+
+        from gpumod.cli import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["install-server", "--dry-run"])
+        assert result.exit_code == 0
+        assert "GPUMOD_MCP_TRANSPORT=streamable-http" in result.stdout

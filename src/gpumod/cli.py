@@ -332,6 +332,9 @@ app.add_typer(discover_app, name="discover")
 @app.command("install-server")
 def install_server(
     dry_run: bool = typer.Option(False, "--dry-run", help="Print unit file without writing."),
+    transport: str = typer.Option(
+        None, "--transport", help="MCP transport (stdio, sse, streamable-http)."
+    ),
     host: str = typer.Option(None, "--host", help="Host to bind MCP server to."),
     port: int = typer.Option(None, "--port", help="Port to bind MCP server to."),
     unit_dir: str = typer.Option(None, "--unit-dir", help="Target directory for unit file."),
@@ -352,6 +355,7 @@ def install_server(
             python_bin=paths["python_bin"],
             venv_bin=paths["venv_bin"],
             working_dir=paths["working_dir"],
+            transport=transport,
             host=host,
             port=port,
         )
@@ -363,6 +367,7 @@ def install_server(
         python_bin=paths["python_bin"],
         venv_bin=paths["venv_bin"],
         working_dir=paths["working_dir"],
+        transport=transport,
         host=host,
         port=port,
         unit_dir=target_dir,

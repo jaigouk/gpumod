@@ -54,6 +54,7 @@ def render_mcp_unit(
     python_bin: str,
     venv_bin: str,
     working_dir: str,
+    transport: str | None = None,
     host: str | None = None,
     port: int | None = None,
 ) -> str:
@@ -67,10 +68,13 @@ def render_mcp_unit(
         Absolute path to the venv bin directory.
     working_dir:
         Absolute path to the project working directory.
+    transport:
+        MCP transport protocol. Defaults to "streamable-http" via
+        the Jinja2 template default.
     host:
-        Optional host to bind to (sets GPUMOD_MCP_HOST env var).
+        Host to bind to. Defaults to "127.0.0.1" via template default.
     port:
-        Optional port to bind to (sets GPUMOD_MCP_PORT env var).
+        Port to bind to. Defaults to 8808 via template default.
 
     Returns
     -------
@@ -88,6 +92,8 @@ def render_mcp_unit(
         "venv_bin": venv_bin,
         "working_dir": working_dir,
     }
+    if transport is not None:
+        context["transport"] = transport
     if host is not None:
         context["host"] = host
     if port is not None:
@@ -96,11 +102,12 @@ def render_mcp_unit(
     return template.render(**context)
 
 
-def install_server_unit(
+def install_server_unit(  # noqa: PLR0913
     *,
     python_bin: str,
     venv_bin: str,
     working_dir: str,
+    transport: str | None = None,
     host: str | None = None,
     port: int | None = None,
     unit_dir: Path | None = None,
@@ -110,7 +117,7 @@ def install_server_unit(
 
     Parameters
     ----------
-    python_bin, venv_bin, working_dir, host, port:
+    python_bin, venv_bin, working_dir, transport, host, port:
         Forwarded to :func:`render_mcp_unit`.
     unit_dir:
         Target directory for the unit file. Defaults to
@@ -127,6 +134,7 @@ def install_server_unit(
         python_bin=python_bin,
         venv_bin=venv_bin,
         working_dir=working_dir,
+        transport=transport,
         host=host,
         port=port,
     )
