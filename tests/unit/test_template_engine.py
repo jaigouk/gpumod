@@ -93,12 +93,12 @@ class TestAvailableTemplates:
         assert "llamacpp.service.j2" in templates
         assert "fastapi.service.j2" in templates
 
-    def test_returns_exactly_three_templates(self) -> None:
+    def test_returns_exactly_four_templates(self) -> None:
         from gpumod.templates.engine import TemplateEngine
 
         engine = TemplateEngine()
         templates = engine.available_templates()
-        assert len(templates) == 3
+        assert len(templates) == 4
 
 
 # ── render_service_unit for vllm ────────────────────────────────────────
@@ -341,6 +341,109 @@ class TestRenderVllmUnit:
         engine = TemplateEngine()
         result = engine.render_service_unit(vllm_service, default_settings)
         assert "TimeoutStopSec=" in result
+
+
+# ── Crash-loop safeguard (gpumod-jb1) ─────────────────────────────────
+
+
+class TestStartLimitSafeguard:
+    """All service templates must include StartLimitBurst/StartLimitIntervalSec
+    to prevent infinite restart loops when a service fails to start (gpumod-jb1).
+
+    These directives belong in [Unit] for systemd >= 230.
+    """
+
+    def test_vllm_has_start_limit_burst(
+        self, vllm_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        result = engine.render_service_unit(vllm_service, default_settings)
+        assert "StartLimitBurst=" in result
+
+    def test_vllm_has_start_limit_interval(
+        self, vllm_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        result = engine.render_service_unit(vllm_service, default_settings)
+        assert "StartLimitIntervalSec=" in result
+
+    def test_llamacpp_has_start_limit_burst(
+        self, llamacpp_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        unit_vars = {"model_path": "/models/code.gguf"}
+        result = engine.render_service_unit(
+            llamacpp_service, default_settings, unit_vars=unit_vars
+        )
+        assert "StartLimitBurst=" in result
+
+    def test_llamacpp_has_start_limit_interval(
+        self, llamacpp_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        unit_vars = {"model_path": "/models/code.gguf"}
+        result = engine.render_service_unit(
+            llamacpp_service, default_settings, unit_vars=unit_vars
+        )
+        assert "StartLimitIntervalSec=" in result
+
+    def test_fastapi_has_start_limit_burst(
+        self, fastapi_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        result = engine.render_service_unit(fastapi_service, default_settings)
+        assert "StartLimitBurst=" in result
+
+    def test_fastapi_has_start_limit_interval(
+        self, fastapi_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        result = engine.render_service_unit(fastapi_service, default_settings)
+        assert "StartLimitIntervalSec=" in result
+
+    def test_start_limit_in_unit_section(
+        self, vllm_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        """StartLimit directives must be in [Unit] section, not [Service]."""
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        result = engine.render_service_unit(vllm_service, default_settings)
+        # Split at [Service] - StartLimit should appear before it
+        unit_section = result.split("[Service]")[0]
+        assert "StartLimitBurst=" in unit_section
+        assert "StartLimitIntervalSec=" in unit_section
+
+    def test_start_limit_values_are_reasonable(
+        self, vllm_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        """Burst should be low (prevent loops) but not too low (allow transient failures)."""
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        result = engine.render_service_unit(vllm_service, default_settings)
+        # Extract values
+        for line in result.splitlines():
+            if "StartLimitBurst=" in line:
+                burst = int(line.strip().split("=")[1])
+                assert 3 <= burst <= 10, f"StartLimitBurst={burst} outside reasonable range 3-10"
+            if "StartLimitIntervalSec=" in line:
+                interval = int(line.strip().split("=")[1])
+                assert 30 <= interval <= 300, (
+                    f"StartLimitIntervalSec={interval} outside reasonable range 30-300"
+                )
 
 
 # ── render_service_unit for llamacpp ────────────────────────────────────
