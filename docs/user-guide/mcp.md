@@ -120,7 +120,7 @@ MCP clients. Set `GPUMOD_LOG_LEVEL=DEBUG` for verbose output.
 
 ## Available MCP Tools
 
-The MCP server exposes 13 tools:
+The MCP server exposes 16 tools across three tiers:
 
 | Tool | Description | Type |
 |------|-------------|------|
@@ -136,7 +136,10 @@ The MCP server exposes 13 tools:
 | `search_hf_models` | Search HuggingFace for models by author/keyword/task/driver | Discovery |
 | `list_gguf_files` | List GGUF files in a repo with size and VRAM estimates | Discovery |
 | `list_model_files` | List model files (GGUF or Safetensors) with format detection | Discovery |
+| `fetch_model_config` | Fetch config.json from a HuggingFace repo | Discovery |
 | `generate_preset` | Generate preset YAML configuration for a GGUF model | Discovery |
+| `fetch_driver_docs` | Fetch driver documentation (llama.cpp or vLLM) | Discovery |
+| `consult` | Multi-step reasoning for complex GPU/model questions | Consulting |
 
 Mutating tools are clearly marked in their descriptions and should
 trigger confirmation prompts in MCP clients.

@@ -40,7 +40,7 @@ description: System architecture for gpumod — a GPU service manager for ML wor
 | **Linux only**   | Requires systemd for service management                   |
 | **Single GPU**   | Multi-GPU adds complexity; most local setups have one GPU |
 | **NVIDIA only**  | Relies on nvidia-smi for VRAM queries                     |
-| **Python 3.11+** | Modern async, type hints, pattern matching                |
+| **Python 3.12+** | Modern async, type hints, pattern matching                |
 
 ### Organizational Constraints
 

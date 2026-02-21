@@ -416,6 +416,24 @@ The watcher monitors `.yaml` and `.yml` files, ignoring editor temp files
 (`.swp`, `.tmp`, `~` backups). Changes are debounced to coalesce rapid saves
 from editors. Press `Ctrl+C` to stop.
 
+## gpumod preset
+
+Manage service presets.
+
+### preset sync
+
+Sync YAML preset files into the database. Compares each preset YAML
+against the DB and inserts new services or updates changed ones.
+Unchanged services are skipped.
+
+```bash
+# Sync presets using the default database
+gpumod preset sync
+
+# Use a custom database path
+gpumod preset sync --db-path /path/to/custom.db
+```
+
 ## gpumod install-server
 
 Install the gpumod MCP server as a systemd user service. Auto-detects the
