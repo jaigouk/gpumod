@@ -65,7 +65,14 @@ class TokenizerCheck:
         # Attempt to load and validate tokenizer
         try:
             from transformers import AutoTokenizer  # type: ignore[import-not-found]
+        except ImportError:
+            return CheckResult(
+                passed=True,
+                severity="warning",
+                message="Skipped: transformers library not installed",
+            )
 
+        try:
             tokenizer = AutoTokenizer.from_pretrained(service.model_id)
         except Exception as e:
             return CheckResult(

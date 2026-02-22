@@ -222,6 +222,38 @@ class TestTokenizerCheck:
         assert result.passed is True
         assert "no model" in result.message.lower() or "skipped" in result.message.lower()
 
+    @pytest.mark.asyncio
+    async def test_warns_when_transformers_not_installed(self) -> None:
+        """TokenizerCheck returns warning when transformers library is missing."""
+        from gpumod.preflight import TokenizerCheck
+
+        service = _make_service(model_id="org/model")
+
+        # Remove transformers from sys.modules to simulate ImportError
+        with patch.dict("sys.modules", {"transformers": None}):
+            check = TokenizerCheck()
+            result = await check.check(service)
+
+        assert result.passed is True
+        assert result.severity == "warning"
+        assert "transformers" in result.message.lower()
+
+    @pytest.mark.asyncio
+    async def test_transformers_import_error_does_not_block(self) -> None:
+        """TokenizerCheck doesn't block service start when transformers unavailable."""
+        from gpumod.preflight import TokenizerCheck
+
+        service = _make_service(model_id="org/model")
+
+        # Simulate ImportError by setting module to None in sys.modules
+        with patch.dict("sys.modules", {"transformers": None}):
+            check = TokenizerCheck()
+            result = await check.check(service)
+
+        # Must not be an error — this was the bug fixed in QA
+        assert result.severity != "error"
+        assert result.passed is True
+
 
 # ---------------------------------------------------------------------------
 # PreflightRunner tests
@@ -360,7 +392,32 @@ class TestPreflightIntegration:
 
         check_names = [c.name for c in runner.checks]
         assert "model_file" in check_names
+        assert "vram" in check_names
+        assert "ram" in check_names
         assert "tokenizer" in check_names
+
+    @pytest.mark.asyncio
+    async def test_default_runner_uses_settings_thresholds(self) -> None:
+        """PreflightRunner.default() reads thresholds from GpumodSettings."""
+        from gpumod.preflight import PreflightRunner
+        from gpumod.preflight.ram_check import RAMCheck
+        from gpumod.preflight.vram_check import VRAMCheck
+
+        mock_settings = MagicMock()
+        mock_settings.ram_min_free_mb = 2048
+        mock_settings.ram_warn_free_mb = 8192
+        mock_settings.vram_safety_margin_mb = 1024
+
+        with patch("gpumod.config.get_settings", return_value=mock_settings):
+            runner = PreflightRunner.default()
+
+        # Find the RAMCheck and VRAMCheck instances
+        ram_check = next(c for c in runner.checks if isinstance(c, RAMCheck))
+        vram_check = next(c for c in runner.checks if isinstance(c, VRAMCheck))
+
+        assert ram_check._min_free_mb == 2048
+        assert ram_check._warn_free_mb == 8192
+        assert vram_check._safety_margin_mb == 1024
 
     @pytest.mark.asyncio
     async def test_run_preflight_helper_function(self) -> None:

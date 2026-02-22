@@ -222,5 +222,5 @@ If inference is slow but VRAM isn't full:
 ## Related
 
 - [Presets Reference](presets.md) — YAML schema and examples
-- [Architecture](ARCHITECTURE.md) — System overview
+- [Architecture](../architecture/index.md) — System overview
 - gpumod-89z (planned): Automated VRAM validation preflight check

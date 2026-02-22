@@ -31,6 +31,7 @@ from gpumod.preflight.model_file import (
     ModelDownloader,
     ModelFileCheck,
 )
+from gpumod.preflight.ram_check import RAMCheck
 from gpumod.preflight.tokenizer import TokenizerCheck
 from gpumod.preflight.vram_check import VRAMCheck, VRAMSuggestion
 
@@ -48,6 +49,7 @@ __all__ = [
     "ModelFileCheck",
     "PreflightCheck",
     "PreflightRunner",
+    "RAMCheck",
     "TokenizerCheck",
     "VRAMCheck",
     "VRAMSuggestion",
@@ -74,12 +76,27 @@ class PreflightRunner:
     def default(cls) -> PreflightRunner:
         """Create a runner with all default checks.
 
+        Reads thresholds from :func:`~gpumod.config.get_settings`.
+
         Returns
         -------
         PreflightRunner:
             Runner configured with standard checks.
         """
-        return cls(checks=[ModelFileCheck(), VRAMCheck(), TokenizerCheck()])
+        from gpumod.config import get_settings
+
+        settings = get_settings()
+        return cls(
+            checks=[
+                ModelFileCheck(),
+                VRAMCheck(safety_margin_mb=settings.vram_safety_margin_mb),
+                RAMCheck(
+                    min_free_mb=settings.ram_min_free_mb,
+                    warn_free_mb=settings.ram_warn_free_mb,
+                ),
+                TokenizerCheck(),
+            ]
+        )
 
     async def run_all(self, service: Service) -> dict[str, CheckResult]:
         """Run all registered checks on a service.

@@ -21,7 +21,7 @@ When writing systemd templates, tests, or documentation, use generic paths like 
 - **MCP server**: `python -m gpumod.mcp_main` (FastMCP)
 - **Systemd templates**: `src/gpumod/templates/systemd/*.j2` (Jinja2)
 - **Template engine**: `src/gpumod/templates/engine.py`
-- **Service drivers**: `src/gpumod/drivers/` (vllm, llamacpp, fastapi)
+- **Service drivers**: `src/gpumod/services/drivers/` (vllm, llamacpp, fastapi, docker)
 - **Models**: `src/gpumod/models.py` (Pydantic)
 - **DB**: aiosqlite via `src/gpumod/db/`
 - **Presets**: `presets/` — YAML service definitions

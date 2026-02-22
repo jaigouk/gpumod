@@ -173,4 +173,4 @@ and environment variable sanitization.
 ## See Also
 
 - [Preset Modification Workflow](presets-workflow.md) — VRAM validation checklist
-- [Architecture](ARCHITECTURE.md) — System overview
+- [Architecture](../architecture/index.md) — System overview

@@ -92,6 +92,17 @@ def _build_mock_driver(
     return driver
 
 
+@pytest.fixture(autouse=True)
+def mock_preflight():
+    """Patch run_preflight to pass by default in all lifecycle tests."""
+    with patch(
+        "gpumod.preflight.run_preflight",
+        new_callable=AsyncMock,
+        return_value=({}, False),
+    ) as mock:
+        yield mock
+
+
 @pytest.fixture
 def mock_registry() -> AsyncMock:
     """A mock ServiceRegistry with svc-a, svc-b, svc-c configured."""
@@ -1010,3 +1021,96 @@ class TestLifecycleManagerWake:
         assert isinstance(result, WakeResult)
         assert result.latency_ms is not None
         assert result.latency_ms >= 0
+
+
+# ---------------------------------------------------------------------------
+# Test: preflight integration in start()
+# ---------------------------------------------------------------------------
+
+
+class TestPreflightLifecycle:
+    """Tests for preflight check integration in LifecycleManager.start()."""
+
+    async def test_start_calls_preflight(
+        self,
+        mock_registry: AsyncMock,
+        mock_driver: AsyncMock,
+        mock_preflight: AsyncMock,
+    ) -> None:
+        """start() calls run_preflight for each service."""
+        mock_registry.get_driver = lambda dtype: mock_driver
+        lm = LifecycleManager(mock_registry)
+        await lm.start("svc-a")
+
+        mock_preflight.assert_called_once_with(SVC_A)
+
+    async def test_start_blocks_on_preflight_error(
+        self,
+        mock_registry: AsyncMock,
+        mock_driver: AsyncMock,
+        mock_preflight: AsyncMock,
+    ) -> None:
+        """start() raises LifecycleError when preflight has errors."""
+        from gpumod.preflight import CheckResult
+
+        mock_preflight.return_value = (
+            {
+                "ram": CheckResult(
+                    passed=False,
+                    severity="error",
+                    message="System RAM critically low: 512 MB available",
+                    remediation="Close other applications",
+                ),
+            },
+            True,
+        )
+
+        mock_registry.get_driver = lambda dtype: mock_driver
+        lm = LifecycleManager(mock_registry)
+
+        with pytest.raises(LifecycleError, match="RAM"):
+            await lm.start("svc-a")
+
+        mock_driver.start.assert_not_called()
+
+    async def test_start_allows_preflight_warnings(
+        self,
+        mock_registry: AsyncMock,
+        mock_driver: AsyncMock,
+        mock_preflight: AsyncMock,
+    ) -> None:
+        """start() proceeds when preflight has warnings but no errors."""
+        from gpumod.preflight import CheckResult
+
+        mock_preflight.return_value = (
+            {
+                "ram": CheckResult(
+                    passed=True,
+                    severity="warning",
+                    message="System RAM low: 3000 MB",
+                ),
+            },
+            False,
+        )
+
+        mock_registry.get_driver = lambda dtype: mock_driver
+        lm = LifecycleManager(mock_registry)
+        await lm.start("svc-a")
+
+        mock_driver.start.assert_called_once_with(SVC_A)
+
+    async def test_start_runs_preflight_per_service_in_chain(
+        self,
+        mock_registry: AsyncMock,
+        mock_driver: AsyncMock,
+        mock_preflight: AsyncMock,
+    ) -> None:
+        """start(svc-c) runs preflight once per service in the chain."""
+        mock_registry.get_driver = lambda dtype: mock_driver
+        lm = LifecycleManager(mock_registry)
+        await lm.start("svc-c")
+
+        # Should be called 3 times: svc-a, svc-b, svc-c
+        assert mock_preflight.call_count == 3
+        called_ids = [call.args[0].id for call in mock_preflight.call_args_list]
+        assert called_ids == ["svc-a", "svc-b", "svc-c"]

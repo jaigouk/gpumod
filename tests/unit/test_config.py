@@ -451,6 +451,57 @@ class TestURLValidation:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# TestPreflightThresholds
+# ---------------------------------------------------------------------------
+
+
+class TestPreflightThresholds:
+    """Verify preflight threshold settings (RAM, VRAM)."""
+
+    @pytest.mark.usefixtures("_clean_env")
+    def test_default_ram_min_free_mb(self) -> None:
+        from gpumod.config import GpumodSettings
+
+        settings = GpumodSettings()
+        assert settings.ram_min_free_mb == 1024
+
+    @pytest.mark.usefixtures("_clean_env")
+    def test_default_ram_warn_free_mb(self) -> None:
+        from gpumod.config import GpumodSettings
+
+        settings = GpumodSettings()
+        assert settings.ram_warn_free_mb == 4096
+
+    @pytest.mark.usefixtures("_clean_env")
+    def test_default_vram_safety_margin_mb(self) -> None:
+        from gpumod.config import GpumodSettings
+
+        settings = GpumodSettings()
+        assert settings.vram_safety_margin_mb == 512
+
+    def test_ram_thresholds_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from gpumod.config import GpumodSettings
+
+        monkeypatch.setenv("GPUMOD_RAM_MIN_FREE_MB", "2048")
+        monkeypatch.setenv("GPUMOD_RAM_WARN_FREE_MB", "8192")
+        settings = GpumodSettings()
+        assert settings.ram_min_free_mb == 2048
+        assert settings.ram_warn_free_mb == 8192
+
+    def test_vram_margin_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from gpumod.config import GpumodSettings
+
+        monkeypatch.setenv("GPUMOD_VRAM_SAFETY_MARGIN_MB", "1024")
+        settings = GpumodSettings()
+        assert settings.vram_safety_margin_mb == 1024
+
+
+# ---------------------------------------------------------------------------
+# TestPathValidation
+# ---------------------------------------------------------------------------
+
+
 class TestPathValidation:
     """Tests for db_path validation (SEC-V4)."""
 

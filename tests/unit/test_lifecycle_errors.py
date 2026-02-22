@@ -9,7 +9,6 @@ import pytest
 
 from gpumod.models import DriverType, Service, ServiceState, ServiceStatus, SleepMode
 from gpumod.services.lifecycle import LifecycleError, LifecycleManager, classify_journal_error
-from gpumod.services.vram import InsufficientVRAMError
 
 # ── Journal error classification ──────────────────────────────────────
 
@@ -287,85 +286,86 @@ def _build_mock_driver(
 
 
 class TestVRAMPreflight:
-    """lifecycle.start() should raise InsufficientVRAMError when VRAM is insufficient."""
+    """lifecycle.start() uses run_preflight() to validate before starting services."""
 
     @pytest.mark.asyncio
-    async def test_raises_when_vram_insufficient(self) -> None:
+    async def test_raises_when_preflight_has_errors(self) -> None:
+        """start() raises LifecycleError when preflight detects errors."""
+        from unittest.mock import patch
+
+        from gpumod.preflight import CheckResult
+
         service = _make_service(vram_mb=22000)
         registry = _build_mock_registry(service)
         driver = _build_mock_driver()
         registry.get_driver = lambda dtype: driver
 
-        vram_tracker = AsyncMock()
-        vram_tracker.get_usage = AsyncMock(return_value=MagicMock(free_mb=15000))
+        error_results = (
+            {
+                "vram": CheckResult(
+                    passed=False,
+                    severity="error",
+                    message="VRAM insufficient: 22000 MB required exceeds 15000 MB",
+                    remediation="Reduce n_gpu_layers",
+                ),
+            },
+            True,
+        )
 
-        lifecycle = LifecycleManager(registry, vram_tracker=vram_tracker)
+        lifecycle_mgr = LifecycleManager(registry)
 
-        with pytest.raises(InsufficientVRAMError) as exc_info:
-            await lifecycle.start("vllm-chat")
+        with (
+            patch(
+                "gpumod.preflight.run_preflight",
+                new_callable=AsyncMock,
+                return_value=error_results,
+            ),
+            pytest.raises(LifecycleError, match="VRAM insufficient"),
+        ):
+            await lifecycle_mgr.start("vllm-chat")
 
-        assert exc_info.value.required_mb == 22000
-        assert exc_info.value.available_mb == 15000
         driver.start.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_proceeds_when_vram_sufficient(self) -> None:
+    async def test_proceeds_when_preflight_passes(self) -> None:
+        """start() proceeds normally when preflight passes."""
+        from unittest.mock import patch
+
         service = _make_service(vram_mb=8000)
         registry = _build_mock_registry(service)
         driver = _build_mock_driver()
         registry.get_driver = lambda dtype: driver
 
-        vram_tracker = AsyncMock()
-        vram_tracker.get_usage = AsyncMock(return_value=MagicMock(free_mb=20000))
+        lifecycle_mgr = LifecycleManager(registry)
 
-        lifecycle = LifecycleManager(registry, vram_tracker=vram_tracker)
-        await lifecycle.start("vllm-chat")
-
-        driver.start.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_skips_preflight_without_tracker(self) -> None:
-        """When no vram_tracker is provided, start should proceed normally."""
-        service = _make_service(vram_mb=22000)
-        registry = _build_mock_registry(service)
-        driver = _build_mock_driver()
-        registry.get_driver = lambda dtype: driver
-
-        lifecycle = LifecycleManager(registry)
-        await lifecycle.start("vllm-chat")
-
-        driver.start.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_skips_preflight_when_usage_unavailable(self) -> None:
-        """When vram_tracker.get_usage returns None, start should proceed."""
-        service = _make_service(vram_mb=22000)
-        registry = _build_mock_registry(service)
-        driver = _build_mock_driver()
-        registry.get_driver = lambda dtype: driver
-
-        vram_tracker = AsyncMock()
-        vram_tracker.get_usage = AsyncMock(return_value=None)
-
-        lifecycle = LifecycleManager(registry, vram_tracker=vram_tracker)
-        await lifecycle.start("vllm-chat")
+        with patch(
+            "gpumod.preflight.run_preflight",
+            new_callable=AsyncMock,
+            return_value=({}, False),
+        ):
+            await lifecycle_mgr.start("vllm-chat")
 
         driver.start.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_skips_already_running_service(self) -> None:
-        """Already-running services should not be VRAM-checked."""
+        """Already-running services should not be preflight-checked."""
+        from unittest.mock import patch
+
         service = _make_service(vram_mb=22000)
         registry = _build_mock_registry(service)
         driver = _build_mock_driver(state=ServiceState.RUNNING)
         registry.get_driver = lambda dtype: driver
 
-        vram_tracker = AsyncMock()
-        vram_tracker.get_usage = AsyncMock(return_value=MagicMock(free_mb=1000))
+        lifecycle_mgr = LifecycleManager(registry)
 
-        lifecycle = LifecycleManager(registry, vram_tracker=vram_tracker)
-        await lifecycle.start("vllm-chat")
+        with patch(
+            "gpumod.preflight.run_preflight",
+            new_callable=AsyncMock,
+            return_value=({}, False),
+        ) as mock_preflight:
+            await lifecycle_mgr.start("vllm-chat")
 
-        # Should skip, not raise
+        # Should skip — already running, no preflight or start called
         driver.start.assert_not_called()
-        vram_tracker.get_usage.assert_not_called()
+        mock_preflight.assert_not_called()

@@ -20,6 +20,9 @@ prefix. Settings are managed by [pydantic-settings](https://docs.pydantic.dev/la
 | `GPUMOD_LLM_MODEL` | `str` | `gpt-4o-mini` | LLM model identifier |
 | `GPUMOD_LLM_BASE_URL` | `str` | None | Custom base URL for the LLM API (e.g., for Ollama or proxy) |
 | `GPUMOD_MCP_RATE_LIMIT` | `int` | `10` | Maximum MCP requests per minute (must be >= 1) |
+| `GPUMOD_RAM_MIN_FREE_MB` | `int` | `1024` | Minimum free RAM (MB) — blocks service start below this |
+| `GPUMOD_RAM_WARN_FREE_MB` | `int` | `4096` | Warn threshold (MB) — logs warning below this |
+| `GPUMOD_VRAM_SAFETY_MARGIN_MB` | `int` | `512` | Extra VRAM buffer (MB) required beyond service allocation |
 
 ## Example: Using Ollama locally
 
@@ -36,6 +39,26 @@ gpumod plan suggest
 export GPUMOD_DB_PATH=/data/gpumod/services.db
 gpumod init
 ```
+
+## Example: Tuning preflight thresholds
+
+On machines with high memory pressure (e.g., ZFS caches), the default RAM
+thresholds may be too aggressive. Lower them via environment variables:
+
+```bash
+export GPUMOD_RAM_MIN_FREE_MB=512
+export GPUMOD_RAM_WARN_FREE_MB=2048
+gpumod service start my-model
+```
+
+To give large models extra VRAM headroom:
+
+```bash
+export GPUMOD_VRAM_SAFETY_MARGIN_MB=1024
+```
+
+A `.env.example` file is included in the repository root — copy it to `.env`
+and uncomment the variables you want to override.
 
 ## AI Planning
 

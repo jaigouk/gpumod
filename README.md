@@ -110,6 +110,16 @@ for complex questions like "Can I run Qwen3-235B on 24GB?".
 See [MCP Integration](docs/user-guide/mcp.md) for setup instructions for Claude Code,
 Cursor, Claude Desktop, and Antigravity.
 
+## Configuration
+
+All settings are configurable via environment variables with the `GPUMOD_`
+prefix. A `.env.example` file is included in the repository root — copy it to
+`.env` and uncomment the variables you want to override.
+
+Key settings include preflight thresholds (RAM/VRAM), LLM backend
+configuration, database path, and MCP rate limits. See
+[Configuration](docs/getting-started/configuration.md) for the full list.
+
 ## Security
 
 Input validation at every boundary, error sanitization, rate limiting,

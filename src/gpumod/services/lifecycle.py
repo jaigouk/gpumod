@@ -188,16 +188,18 @@ class LifecycleManager:
                 logger.info("Service %r already running, skipping", svc.id)
                 continue
 
-            # VRAM preflight: fail fast if not enough VRAM before starting
-            if self._vram_tracker is not None and svc.vram_mb:
-                usage = await self._vram_tracker.get_usage()
-                if usage is not None and svc.vram_mb > usage.free_mb:
-                    from gpumod.services.vram import InsufficientVRAMError
+            # Preflight checks: RAM, VRAM, tokenizer, model file
+            from gpumod.preflight import PreflightRunner, run_preflight
 
-                    raise InsufficientVRAMError(
-                        required_mb=svc.vram_mb,
-                        available_mb=usage.free_mb,
-                    )
+            results, has_errors = await run_preflight(svc)
+            if has_errors:
+                runner = PreflightRunner.default()
+                msg = runner.format_errors(results)
+                raise LifecycleError(
+                    service_id=svc.id,
+                    operation="start",
+                    reason=msg,
+                )
 
             logger.info("Starting service %r", svc.id)
             await driver.start(svc)

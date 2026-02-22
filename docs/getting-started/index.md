@@ -71,6 +71,15 @@ This creates `~/.config/gpumod/gpumod.db` with:
 - Built-in service presets loaded from `presets/`
 - Default mode definitions
 
+## Configuration
+
+gpumod is configured via environment variables with the `GPUMOD_` prefix. A
+`.env.example` file is included in the repository root — copy it to `.env` and
+uncomment the variables you want to override.
+
+See [Configuration](configuration.md) for all available settings including
+preflight thresholds, LLM backends, and database path.
+
 ## Deploying a Service
 
 gpumod auto-generates systemd unit files from presets — you never write them

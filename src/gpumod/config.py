@@ -30,6 +30,15 @@ GPUMOD_LLM_BASE_URL : str
 GPUMOD_MCP_RATE_LIMIT : int
     Maximum MCP requests per minute. Must be >= 1.
     Default: 10
+GPUMOD_RAM_MIN_FREE_MB : int
+    Minimum free RAM (MB) before blocking service start.
+    Default: 1024
+GPUMOD_RAM_WARN_FREE_MB : int
+    Free RAM warning threshold (MB). Logs warning below this.
+    Default: 4096
+GPUMOD_VRAM_SAFETY_MARGIN_MB : int
+    Extra VRAM buffer (MB) required beyond service allocation.
+    Default: 512
 """
 
 from __future__ import annotations
@@ -110,6 +119,11 @@ class GpumodSettings(BaseSettings):
 
     # MCP settings
     mcp_rate_limit: int = Field(default=10, ge=1)
+
+    # Preflight thresholds
+    ram_min_free_mb: int = Field(default=1024, ge=0)
+    ram_warn_free_mb: int = Field(default=4096, ge=0)
+    vram_safety_margin_mb: int = Field(default=512, ge=0)
 
     @field_validator("log_level", mode="before")
     @classmethod
