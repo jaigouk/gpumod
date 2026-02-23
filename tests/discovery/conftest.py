@@ -138,8 +138,8 @@ def mock_multi_gpu(mock_vram_tracker: None) -> Generator[None, None, None]:
 
 
 @pytest.fixture
-def mock_proc_meminfo() -> Generator[None, None, None]:
-    """Mock /proc/meminfo."""
+def mock_proc_meminfo(mock_vram_tracker: None) -> Generator[None, None, None]:
+    """Mock /proc/meminfo (includes GPU mock)."""
     from unittest.mock import mock_open
 
     meminfo = """MemTotal:       65536000 kB
@@ -156,8 +156,8 @@ SwapFree:        8000000 kB
 
 
 @pytest.fixture
-def mock_swap_disabled() -> Generator[None, None, None]:
-    """Mock system with swap disabled."""
+def mock_swap_disabled(mock_vram_tracker: None) -> Generator[None, None, None]:
+    """Mock system with swap disabled (includes GPU mock)."""
     from unittest.mock import mock_open
 
     meminfo = """MemTotal:       65536000 kB
