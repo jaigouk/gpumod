@@ -5,6 +5,13 @@ description: Manage vLLM, llama.cpp, FastAPI, and Docker inference services on N
 
 # gpumod
 
+<div class="slide-container" markdown>
+<iframe src="assets/gpumod-5min.html" style="width:100%; aspect-ratio:16/9; border:1px solid var(--md-default-fg-color--lightest); border-radius:8px; box-shadow:0 2px 12px rgba(0,0,0,0.08);" allowfullscreen></iframe>
+<p style="text-align:center; font-size:0.85em; color:var(--md-default-fg-color--light); margin-top:8px;">
+Use arrow keys to navigate slides. <a href="assets/gpumod-5min.html" target="_blank">Open fullscreen</a>
+</p>
+</div>
+
 GPU Service Manager for ML workloads on Linux/NVIDIA systems.
 
 gpumod manages vLLM, llama.cpp, FastAPI, and Docker-based inference services on
