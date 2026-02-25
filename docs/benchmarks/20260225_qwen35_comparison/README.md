@@ -15,7 +15,7 @@
 | Qwen3.5-35B | `qwen35-35b-multi` | Q4_K_XL | 7080 | 20 GB | 3 slots |
 
 **Architecture comparison:**
-- **27B**: Dense MoE, 27B total / 3B active params
+- **27B**: Dense model, 27B total / 27B active params
 - **35B**: Sparse MoE, 35B total / 3B active params
 
 ---
