@@ -8,7 +8,7 @@
 
 ## Motivation
 
-The [v1/v2 multi-agent benchmark](../20260214_multi_agent/) tested 5 identical
+The [v1/v2 multi-agent benchmark](../20260214_multi_agent/README.md) tested 5 identical
 agents analyzing the same bug. That doesn't reflect daily use. In practice,
 you run one heavy coding session (Claude Code delegating to a local model)
 while shorter requests (docstrings, quick tests, reviews) fire in parallel.
