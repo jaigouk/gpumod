@@ -25,8 +25,8 @@ RTX_4090_VRAM_MB = 24000
 
 EXPECTED_MODES: dict[str, dict[str, object]] = {
     "code": {
-        "services": ["vllm-embedding-code", "qwen3-coder"],
-        "description": "Coding mode with Qwen3-Coder and code embedding",
+        "services": ["vllm-embedding-code", "qwen3-coder-multi-p3"],
+        "description": "Coding mode with Qwen3-Coder (3 parallel slots) and code embedding",
     },
     "rag": {
         "services": ["vllm-embedding-code", "vllm-embedding"],
@@ -105,10 +105,10 @@ class TestModeServiceLists:
             f"{mode_id}: services {data['services']} != {expected}"
         )
 
-    def test_code_and_hacker_identical_services(self) -> None:
+    def test_code_uses_multi_slot_preset(self) -> None:
+        """Code mode should use 3-slot parallel preset."""
         code = _load_mode_yaml("code")
-        hacker = _load_mode_yaml("hacker")
-        assert code["services"] == hacker["services"]
+        assert "qwen3-coder-multi-p3" in code["services"]
 
     def test_blank_and_finetuning_identical_services(self) -> None:
         blank = _load_mode_yaml("blank")

@@ -139,6 +139,8 @@ async def send_chat(
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": 0.2,
+        # Disable thinking mode to get code output in content instead of reasoning
+        "chat_template_kwargs": {"enable_thinking": False},
     }
 
     start = time.monotonic()

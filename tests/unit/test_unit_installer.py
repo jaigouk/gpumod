@@ -253,7 +253,9 @@ class TestLifecycleIntegration:
         mock_installer.daemon_reload_if_needed = AsyncMock()
 
         lifecycle = LifecycleManager(mock_registry, unit_installer=mock_installer)
-        await lifecycle.start("vllm-chat")
+        # Mock preflight to skip VRAM check
+        with patch("gpumod.preflight.run_preflight", AsyncMock(return_value=([], False))):
+            await lifecycle.start("vllm-chat")
 
         mock_installer.ensure_unit_file.assert_called_once_with(service)
         mock_installer.daemon_reload_if_needed.assert_called_once()
@@ -276,7 +278,9 @@ class TestLifecycleIntegration:
         mock_registry.get_driver = MagicMock(return_value=mock_driver)
 
         lifecycle = LifecycleManager(mock_registry)
-        await lifecycle.start("vllm-chat")
+        # Mock preflight to skip VRAM check
+        with patch("gpumod.preflight.run_preflight", AsyncMock(return_value=([], False))):
+            await lifecycle.start("vllm-chat")
 
         # Should not raise — just skips the installer step
         mock_driver.start.assert_called_once()

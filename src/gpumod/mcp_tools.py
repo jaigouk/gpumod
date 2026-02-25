@@ -93,6 +93,34 @@ def _not_found_error(message: str) -> dict[str, str]:
     return {"error": message, "code": "NOT_FOUND"}
 
 
+# ---------------------------------------------------------------------------
+# Compatibility checker (lazy singleton)
+# ---------------------------------------------------------------------------
+
+_compatibility_checker: CompatibilityChecker | None = None
+
+
+def get_compatibility_checker() -> CompatibilityChecker | None:
+    """Get or create the compatibility checker singleton.
+
+    Returns None if checker cannot be initialized (graceful degradation).
+    """
+    global _compatibility_checker
+    if _compatibility_checker is None:
+        try:
+            from gpumod.compatibility import CompatibilityChecker
+
+            _compatibility_checker = CompatibilityChecker()
+        except Exception:
+            logger.debug("Compatibility checker unavailable", exc_info=True)
+            return None
+    return _compatibility_checker
+
+
+if TYPE_CHECKING:
+    from gpumod.compatibility import CompatibilityChecker
+
+
 def _simulation_error(message: str) -> dict[str, str]:
     """Return a standardized simulation error response."""
     return {"error": message, "code": "SIMULATION_ERROR"}
@@ -654,7 +682,7 @@ async def fetch_model_config(
         return _not_found_error(f"Repository not found: {repo_id}")
 
 
-async def generate_preset(  # noqa: PLR0911, C901
+async def generate_preset(  # noqa: PLR0911, PLR0912, C901
     repo_id: str,
     gguf_file: str,
     ctx: Context,
@@ -728,6 +756,28 @@ async def generate_preset(  # noqa: PLR0911, C901
     threads = os.cpu_count() or 8
     threads = max(4, threads // 2)
 
+    # Check compatibility (optional - fail-open)
+    compatibility_warning: str | None = None
+    checker = get_compatibility_checker()
+    if checker is not None:
+        try:
+            # Fetch model config to get architecture
+            config_result = await fetch_model_config(repo_id, ctx)
+            if "architectures" in config_result:
+                from gpumod.compatibility import get_arch_from_hf_class
+
+                hf_archs: list[str] = config_result["architectures"]
+                for hf_class in hf_archs:
+                    arch = get_arch_from_hf_class(hf_class)
+                    if arch:
+                        supported, reason = await checker.is_supported(arch)
+                        if not supported and reason:
+                            compatibility_warning = reason
+                            break
+        except Exception:
+            # Fail-open: don't block preset generation on compatibility errors
+            logger.debug("Compatibility check failed", exc_info=True)
+
     # Build preset YAML in flat PresetConfig format
     # Note: vram_mb is set to a default; user should adjust based on actual model size
     preset_yaml = f"""# Generated preset for {repo_id}
@@ -757,7 +807,10 @@ unit_vars:
   jinja: true
 """
 
-    return {"preset": preset_yaml, "service_id": service_id}
+    result: dict[str, Any] = {"preset": preset_yaml, "service_id": service_id}
+    if compatibility_warning:
+        result["compatibility_warning"] = compatibility_warning
+    return result
 
 
 # ---------------------------------------------------------------------------
