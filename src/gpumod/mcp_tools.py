@@ -663,6 +663,9 @@ async def generate_preset(  # noqa: PLR0911, C901
 ) -> dict[str, Any]:
     """Generate a preset YAML configuration for a GGUF model.
 
+    Creates a flat PresetConfig-compatible YAML that can be used with
+    `gpumod preset sync`. Output format matches docs/internal/presets.md.
+
     Args:
         repo_id: HuggingFace repo ID.
         gguf_file: GGUF filename to use.
@@ -670,9 +673,11 @@ async def generate_preset(  # noqa: PLR0911, C901
         service_id: Custom service ID (auto-generated if not provided).
 
     Returns:
-        Dict with 'preset' containing YAML string.
+        Dict with 'preset' containing YAML string that validates against PresetConfig.
     """
+    import os
     import re
+    from pathlib import Path
 
     # Validate repo_id
     error = _validate_repo_id(repo_id)
@@ -713,25 +718,43 @@ async def generate_preset(  # noqa: PLR0911, C901
         # Sanitize for terminal escapes (SEC-E3)
         service_id = sanitize_name(service_id)
 
-    # Build preset YAML
+    # Derive human-readable name from service_id
+    human_name = service_id.replace("-", " ").title()
+
+    # Get default model name (filename without extension)
+    default_model = Path(gguf_file).stem
+
+    # Determine threads (use half of available CPUs)
+    threads = os.cpu_count() or 8
+    threads = max(4, threads // 2)
+
+    # Build preset YAML in flat PresetConfig format
+    # Note: vram_mb is set to a default; user should adjust based on actual model size
     preset_yaml = f"""# Generated preset for {repo_id}
 # Model: {gguf_file}
+# Run 'gpumod preset sync' to import this preset
 
-services:
-  {service_id}:
-    driver: llamacpp
-    port: 8080
-    vram_mb: auto
-    extra_config:
-      model: hf://{repo_id}/{gguf_file}
-      context_size: {context_size}
-      n_gpu_layers: -1
-
-modes:
-  {service_id}:
-    name: "{service_id.replace("-", " ").title()}"
-    services:
-      - {service_id}
+id: {service_id}
+name: {human_name}
+driver: llamacpp
+port: 8080
+vram_mb: 8192
+context_size: {context_size}
+model_id: {repo_id}
+model_path: $HOME/models/{gguf_file}
+health_endpoint: /health
+startup_timeout: 120
+supports_sleep: true
+sleep_mode: router
+unit_vars:
+  models_dir: $HOME/models
+  models_max: 1
+  no_models_autoload: true
+  default_model: {default_model}
+  n_gpu_layers: -1
+  ctx_size: {context_size}
+  threads: {threads}
+  jinja: true
 """
 
     return {"preset": preset_yaml, "service_id": service_id}

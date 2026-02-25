@@ -615,6 +615,47 @@ class TestListModelFiles:
 class TestGeneratePreset:
     """Tests for generate_preset MCP tool (optional feature)."""
 
+    async def test_generate_output_validates_against_preset_config(self) -> None:
+        """Generated preset YAML must validate against PresetConfig schema.
+
+        Ensures output is flat PresetConfig format (not nested services:/modes:).
+        Fixed in gpumod-10v.
+        """
+        import yaml
+        from pydantic import ValidationError
+
+        from gpumod.mcp_tools import generate_preset
+        from gpumod.models import PresetConfig
+
+        result = await generate_preset(
+            repo_id="unsloth/Qwen3-Coder-Next-GGUF",
+            gguf_file="model-Q4_K_M.gguf",
+            ctx=_make_mock_ctx(),
+        )
+
+        assert "preset" in result
+        yaml_str = result["preset"]
+
+        # Parse YAML
+        parsed = yaml.safe_load(yaml_str)
+        assert parsed is not None, "YAML parsing failed"
+
+        # Validate against PresetConfig schema - should NOT have nested structure
+        assert "services" not in parsed, "Output has nested 'services:' (wrong format)"
+        assert "modes" not in parsed, "Output has nested 'modes:' (wrong format)"
+
+        # Must have required PresetConfig fields at top level
+        assert "id" in parsed, "Missing required field 'id'"
+        assert "name" in parsed, "Missing required field 'name'"
+        assert "driver" in parsed, "Missing required field 'driver'"
+        assert "vram_mb" in parsed, "Missing required field 'vram_mb'"
+
+        # Full validation against Pydantic model
+        try:
+            PresetConfig(**parsed)
+        except ValidationError as e:
+            pytest.fail(f"PresetConfig validation failed: {e}")
+
     async def test_generate_returns_yaml_string(self) -> None:
         """Generate returns valid YAML preset string."""
         from gpumod.mcp_tools import generate_preset
