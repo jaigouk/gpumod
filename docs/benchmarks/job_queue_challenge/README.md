@@ -39,15 +39,15 @@ This benchmark tests an LLM's ability to implement increasingly complex features
 ### Prerequisites
 
 ```bash
-# Ensure a single-slot model is running (--parallel 1 for best quality)
-uv run gpumod service start qwen35-35b-q3-single
+# Ensure model is running (--parallel 1 for best quality)
+uv run gpumod service start qwen35-35b-a3b-q3
 ```
 
 ### Run All Levels
 
 ```bash
 uv run python docs/benchmarks/job_queue_challenge/benchmark_runner.py \
-    --model qwen35-35b-q3-single \
+    --model qwen35-35b-a3b-q3 \
     --port 7091 \
     --output docs/benchmarks/job_queue_challenge/
 ```
@@ -57,7 +57,7 @@ uv run python docs/benchmarks/job_queue_challenge/benchmark_runner.py \
 ```bash
 # Only L1-L3
 uv run python docs/benchmarks/job_queue_challenge/benchmark_runner.py \
-    --model qwen35-35b-q3-single \
+    --model qwen35-35b-a3b-q3 \
     --port 7091 \
     --levels L1 L2 L3
 ```
@@ -126,10 +126,10 @@ To compare models fairly:
 
 ```json
 {
-  "model_id": "qwen35-27b-q3-single",
-  "model_name": "qwen35-27b-q3-single",
-  "timestamp": "2026-02-26T06:17:41.879137+00:00",
-  "total_duration_ms": 442340,
+  "model_id": "qwen35-27b-q3",
+  "model_name": "qwen35-27b-q3",
+  "timestamp": "2026-02-26T06:28:27.540064+00:00",
+  "total_duration_ms": 487251,
   "scores": {
     "L1": 25,
     "L2": 25,
@@ -153,7 +153,7 @@ To compare models fairly:
 # Benchmark runner: 1 request at a time, max_tokens=8192, temperature=0.1
 
 uv run python docs/benchmarks/job_queue_challenge/benchmark_runner.py \
-    --model qwen35-27b-q3-single \
+    --model qwen35-27b-q3 \
     --port 7093 \
     --output docs/benchmarks/job_queue_challenge/
 ```
