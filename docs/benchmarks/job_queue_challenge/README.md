@@ -2,6 +2,10 @@
 
 A graduated difficulty benchmark for evaluating LLM coding capabilities.
 
+**Judge:** Claude Code (Opus 4.6) — designed prompts, ran benchmarks, scored results via pytest
+
+----
+
 ## Overview
 
 This benchmark tests an LLM's ability to implement increasingly complex features in a task queue system. Unlike simple pass/fail tests, it produces a **percentage score** that discriminates between model capabilities.
