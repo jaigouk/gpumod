@@ -15,12 +15,12 @@ This benchmark tests an LLM's ability to implement increasingly complex features
 | Level | Task | Points | Observed Pass Rate |
 |-------|------|--------|-------------------|
 | L1 | Basic queue (add/get, FIFO) | 25 | 50% (2/4) |
-| L2 | Retry with exponential backoff | 25 | 0% (0/4)* |
-| L3 | Priority scheduling | 25 | 50% (2/4) |
-| L4 | Find & fix concurrency bug | 15 | 100% (4/4) |
+| L2 | Retry with exponential backoff | 25 | 25% (1/4)* |
+| L3 | Priority scheduling | 25 | 0% (0/4) |
+| L4 | Find & fix concurrency bug | 15 | 50% (2/4) |
 | L5 | Multi-file refactoring | 10 | 0% (0/4) |
 
-*L2 failures due to thinking models exhausting `max_tokens=8192` budget before producing code output.
+*L2 requires precise retry timing; most models exhaust `max_tokens=8192` budget thinking before producing code.
 
 **Total: 100 points**
 
@@ -126,14 +126,14 @@ To compare models fairly:
 
 ```json
 {
-  "model_id": "qwen35-35b-q3-single",
-  "model_name": "qwen35-35b-q3-single",
-  "timestamp": "2026-02-25T22:25:55.101366+00:00",
-  "total_duration_ms": 267434,
+  "model_id": "qwen35-27b-q3-single",
+  "model_name": "qwen35-27b-q3-single",
+  "timestamp": "2026-02-26T06:17:41.879137+00:00",
+  "total_duration_ms": 442340,
   "scores": {
     "L1": 25,
-    "L2": 0,
-    "L3": 25,
+    "L2": 25,
+    "L3": 0,
     "L4": 15,
     "L5": 0,
     "total": 65,
@@ -143,7 +143,7 @@ To compare models fairly:
 }
 ```
 
-## Benchmark Results (2026-02-25)
+## Benchmark Results (2026-02-26)
 
 ### Configuration
 
@@ -153,8 +153,8 @@ To compare models fairly:
 # Benchmark runner: 1 request at a time, max_tokens=8192, temperature=0.1
 
 uv run python docs/benchmarks/job_queue_challenge/benchmark_runner.py \
-    --model qwen35-35b-q3-single \
-    --port 7091 \
+    --model qwen35-27b-q3-single \
+    --port 7093 \
     --output docs/benchmarks/job_queue_challenge/
 ```
 
@@ -174,33 +174,34 @@ uv run python docs/benchmarks/job_queue_challenge/benchmark_runner.py \
 
 | Model | Total | L1 | L2 | L3 | L4 | L5 | Time |
 |-------|-------|----|----|----|----|----| -----|
-| **Qwen3.5-35B-A3B Q3** | **65%** | 25 | 0 | 25 | **15** | 0 | 267s |
-| **Qwen3.5-27B Q4** | **65%** | 25 | 0 | 25 | **15** | 0 | 622s |
-| Qwen3.5-27B Q3 | 20% | 0 | 0 | 5 | **15** | 0 | 567s |
-| Qwen3.5-35B-A3B Q4 | 15% | 0 | 0 | 0 | **15** | 0 | 225s |
+| **Qwen3.5-27B Q3** | **65%** | 25 | **25** | 0 | **15** | 0 | 443s |
+| Qwen3.5-35B-A3B Q3 | 25% | 25 | 0 | 0 | 0 | 0 | 243s |
+| Qwen3.5-27B Q4 | 15% | 0 | 0 | 0 | **15** | 0 | 778s |
+| Qwen3.5-35B-A3B Q4 | 0% | 0 | 0 | 0 | 0 | 0 | 263s |
 
 ### Key Findings
 
-1. **L4 (concurrency bug) solved by all models** — All 4 configurations correctly identified and fixed the race condition
-2. **L2 (retry logic) fails for all models** — thinking models exhaust 8192 token budget before producing code; `/no_think` prefix helps but Qwen3.5 still reasons internally
-3. **Q3 outperformed Q4 in this run** — Unexpected result, likely due to single-run variance; Q4 models had more empty responses (timeout)
-4. **MoE 35B-A3B is 2-3x faster** — 267s vs 622s for same score
-5. **Empty responses** — Some models timed out (174s for 27B Q3 L1) without producing output
+1. **27B Q3 passed L2 (retry logic)** — First model to successfully implement exponential backoff with correct timing
+2. **High variance across runs** — Results differ significantly between benchmark runs; models are sensitive to prompt/context
+3. **Dense 27B more reliable** — Dense architecture showed more consistent output vs MoE models with empty responses
+4. **MoE 35B-A3B faster but less reliable** — 243s vs 443s, but more empty responses (timeouts)
+5. **Empty responses common** — Thinking models often exhaust token budget before producing code
 
 ### Architecture Comparison
 
 | Aspect | 27B (Dense) | 35B-A3B (MoE) |
 |--------|-------------|---------------|
 | Active params | 27B | 3B |
-| L4 Bug Fix | ✅ All pass | ✅ All pass |
-| Speed | Slower (70-200s per level) | Faster (30-60s per level) |
-| Best score | 65% (Q4) | 65% (Q3) |
+| L2 Retry Logic | ✅ Q3 passes | ❌ All fail |
+| L4 Bug Fix | Q3/Q4 mixed | ❌ All fail this run |
+| Speed | Slower (80-200s per level) | Faster (30-60s per level) |
+| Best score | 65% (Q3) | 25% (Q3) |
 
 ### Variance Warning
 
 These results are from a single run. Benchmark variance is high due to:
 - Non-deterministic LLM sampling (even at temperature=0.1)
-- Timeout sensitivity (600s per level)
+- Thinking models exhausting token budget before output
 - `/no_think` effectiveness varies by prompt
 
 For reliable comparisons, run 3+ iterations and average.
