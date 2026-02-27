@@ -113,9 +113,9 @@ _KLD/PPL are reported values from [Qwen3.5-35B-A3B Q4 Quantization Comparison](h
 
 | Rank by KLD | Model     | KLD    | Coding Best |
 | ----------- | --------- | ------ | ----------- |
-| 1 (best)    | AesSedai  | 0.0240 | 50          |
+| 1 (lowest)  | AesSedai  | 0.0240 | 50          |
 | 2           | bartowski | 0.0243 | 25          |
-| 3 (worst)   | unsloth   | 0.0253 | **90**      |
+| 3 (highest) | unsloth   | 0.0253 | **90**      |
 
 The model with the highest KLD (unsloth, 0.0253) achieved the best coding score (90). The model with the lowest KLD (AesSedai, 0.0240) scored 50. No correlation observed in this test. Sample size: 3 models, 5 iterations each.
 
