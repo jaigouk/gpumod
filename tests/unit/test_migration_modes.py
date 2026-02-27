@@ -41,8 +41,8 @@ EXPECTED_MODES: dict[str, dict[str, object]] = {
         "description": "Voice mode with ASR, TTS, chat, and embedding",
     },
     "blank": {
-        "services": ["vllm-embedding-code"],
-        "description": "Minimal mode with only code embedding",
+        "services": [],
+        "description": "Empty mode with no services (for benchmarking)",
     },
     "finetuning": {
         "services": ["vllm-embedding-code"],
@@ -110,10 +110,10 @@ class TestModeServiceLists:
         code = _load_mode_yaml("code")
         assert "qwen3-coder-multi-p3" in code["services"]
 
-    def test_blank_and_finetuning_identical_services(self) -> None:
+    def test_blank_has_no_services(self) -> None:
+        """Blank mode should have no services for benchmarking."""
         blank = _load_mode_yaml("blank")
-        finetuning = _load_mode_yaml("finetuning")
-        assert blank["services"] == finetuning["services"]
+        assert blank["services"] == []
 
     def test_speak_has_4_services(self) -> None:
         speak = _load_mode_yaml("speak")
@@ -146,7 +146,7 @@ class TestModeVramFit:
         "rag": 7500,
         "hacker": 22500,
         "speak": 22000,
-        "blank": 2500,
+        "blank": 0,
         "finetuning": 2500,
     }
 
