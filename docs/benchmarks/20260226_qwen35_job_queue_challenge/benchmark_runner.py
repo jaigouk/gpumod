@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Job Queue Challenge Benchmark Runner.
+"""Qwen3.5 Job Queue Challenge Benchmark Runner.
 
 Runs the graduated difficulty benchmark against an LLM endpoint and scores results.
 
 Usage:
-    uv run python docs/benchmarks/job_queue_challenge/benchmark_runner.py \
-        --model qwen35-35b-q3-multi --port 7081 \
-        --output docs/benchmarks/job_queue_challenge/
+    uv run python docs/benchmarks/20260226_qwen35_job_queue_challenge/benchmark_runner.py \
+        --model qwen35-27b-q3 --port 7093 \
+        --output docs/benchmarks/20260226_qwen35_job_queue_challenge/
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -429,7 +429,7 @@ def run_benchmark(
         model_id=model_id,
         model_name=model_name,
         port=port,
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=datetime.now(UTC).isoformat(),
         total_duration_ms=0,
     )
 
@@ -484,6 +484,12 @@ def main() -> None:
         choices=["L1", "L2", "L3", "L4", "L5"],
         help="Run specific levels only",
     )
+    parser.add_argument(
+        "--iterations",
+        type=int,
+        default=1,
+        help="Number of iterations to run (default: 1, recommended: 5 for reliable results)",
+    )
 
     args = parser.parse_args()
 
@@ -493,62 +499,105 @@ def main() -> None:
     print(f"Model: {model_name}")
     print(f"Port: {args.port}")
     print(f"Levels: {args.levels or 'all'}")
+    print(f"Iterations: {args.iterations}")
 
-    result = run_benchmark(
-        model_id=args.model,
-        model_name=model_name,
-        port=args.port,
-        levels=args.levels,
-    )
+    # Run multiple iterations
+    all_results: list[BenchmarkResult] = []
+    all_scores: list[int] = []
+    total_start = time.perf_counter()
+
+    for iteration in range(1, args.iterations + 1):
+        print(f"\n{'#'*60}")
+        print(f"# ITERATION {iteration}/{args.iterations}")
+        print("#" * 60)
+
+        result = run_benchmark(
+            model_id=args.model,
+            model_name=model_name,
+            port=args.port,
+            levels=args.levels,
+        )
+        all_results.append(result)
+        all_scores.append(result.scores["total"])
+
+        print(f"\n  Iteration {iteration} score: {result.scores['total']}/100")
+
+    total_duration_ms = (time.perf_counter() - total_start) * 1000
+
+    # Find best result (highest score)
+    best_idx = all_scores.index(max(all_scores))
+    best_result = all_results[best_idx]
+
+    # Calculate statistics
+    avg_score = sum(all_scores) / len(all_scores)
+    min_score = min(all_scores)
+    max_score = max(all_scores)
 
     # Create artifacts directory for this model
     artifacts_dir = args.output / "artifacts" / args.model
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save generated code for each level
-    for lr in result.levels:
+    # Save generated code from BEST result only
+    for lr in best_result.levels:
         if lr.code:
             code_file = artifacts_dir / f"{lr.level}_job_queue.py"
             code_file.write_text(lr.code)
             print(f"  Artifact saved: {code_file}")
 
+    # Build aggregated results
+    aggregated = {
+        "model_id": best_result.model_id,
+        "model_name": best_result.model_name,
+        "port": best_result.port,
+        "timestamp": datetime.now(UTC).isoformat(),
+        "iterations": args.iterations,
+        "total_duration_ms": total_duration_ms,
+        "statistics": {
+            "best_score": max_score,
+            "avg_score": round(avg_score, 1),
+            "min_score": min_score,
+            "max_score": max_score,
+            "all_scores": all_scores,
+            "best_iteration": best_idx + 1,
+        },
+        "scores": best_result.scores,
+        "levels": [
+            {
+                "level": lr.level,
+                "tests_passed": lr.tests_passed,
+                "tests_total": lr.tests_total,
+                "duration_ms": lr.duration_ms,
+                "error": lr.error,
+            }
+            for lr in best_result.levels
+        ],
+    }
+
     # Save results
     output_file = args.output / f"result_{args.model}.json"
     with open(output_file, "w") as f:
-        json.dump(
-            {
-                "model_id": result.model_id,
-                "model_name": result.model_name,
-                "port": result.port,
-                "timestamp": result.timestamp,
-                "total_duration_ms": result.total_duration_ms,
-                "scores": result.scores,
-                "levels": [
-                    {
-                        "level": lr.level,
-                        "tests_passed": lr.tests_passed,
-                        "tests_total": lr.tests_total,
-                        "duration_ms": lr.duration_ms,
-                        "error": lr.error,
-                    }
-                    for lr in result.levels
-                ],
-            },
-            f,
-            indent=2,
-        )
+        json.dump(aggregated, f, indent=2)
 
     print(f"\n{'='*60}")
-    print("FINAL SCORES")
+    print("FINAL SCORES (Best of {} iterations)".format(args.iterations))
     print("=" * 60)
-    print(f"L1 (Basic Queue):     {result.scores['L1']}/25")
-    print(f"L2 (Retry Logic):     {result.scores['L2']}/25")
-    print(f"L3 (Priority Queue):  {result.scores['L3']}/25")
-    print(f"L4 (Concurrency Fix): {result.scores['L4']}/15")
-    print(f"L5 (Refactor):        {result.scores['L5']}/10")
+    print(f"L1 (Basic Queue):     {best_result.scores['L1']}/25")
+    print(f"L2 (Retry Logic):     {best_result.scores['L2']}/25")
+    print(f"L3 (Priority Queue):  {best_result.scores['L3']}/25")
+    print(f"L4 (Concurrency Fix): {best_result.scores['L4']}/15")
+    print(f"L5 (Refactor):        {best_result.scores['L5']}/10")
     print("-" * 40)
-    print(f"TOTAL:                {result.scores['total']}/100 ({result.scores['percentage']:.1f}%)")
-    print(f"\nResults saved to: {output_file}")
+    pct = best_result.scores['percentage']
+    print(f"TOTAL:                {best_result.scores['total']}/100 ({pct:.1f}%)")
+    if args.iterations > 1:
+        print(f"\nStatistics ({args.iterations} iterations):")
+        print(f"  Best:  {max_score}/100 (iteration {best_idx + 1})")
+        print(f"  Avg:   {avg_score:.1f}/100")
+        print(f"  Min:   {min_score}/100")
+        print(f"  Max:   {max_score}/100")
+        print(f"  All:   {all_scores}")
+    print(f"\nTotal time: {total_duration_ms/1000:.1f}s")
+    print(f"Results saved to: {output_file}")
 
 
 if __name__ == "__main__":

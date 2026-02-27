@@ -180,3 +180,53 @@ For factual prompts, the hallucination rate adjusts the score:
 2. Run the benchmark script with `--model <model-id>`
 3. The evaluator scores the responses
 4. Regenerate charts
+
+---
+
+## Job Queue Challenge
+
+A graduated difficulty benchmark for evaluating LLM coding capabilities.
+See [20260226_qwen35_job_queue_challenge/README.md](20260226_qwen35_job_queue_challenge/README.md) for full details.
+
+**Judge:** Claude Code (Opus 4.6) — designed prompts, ran benchmarks, scored via pytest
+
+### Quick Start
+
+```bash
+# Run single iteration (quick test)
+uv run python docs/benchmarks/20260226_qwen35_job_queue_challenge/benchmark_runner.py \
+    --model qwen35-27b-q3 --port 7093
+
+# Run 5 iterations for reliable results (recommended)
+uv run python docs/benchmarks/20260226_qwen35_job_queue_challenge/benchmark_runner.py \
+    --model qwen35-27b-q3 --port 7093 \
+    --iterations 5 \
+    --output docs/benchmarks/20260226_qwen35_job_queue_challenge/
+```
+
+### Difficulty Levels
+
+| Level | Task | Points |
+|-------|------|--------|
+| L1 | Basic queue (add/get, FIFO) | 25 |
+| L2 | Retry with exponential backoff | 25 |
+| L3 | Priority scheduling | 25 |
+| L4 | Find & fix concurrency bug | 15 |
+| L5 | Multi-file refactoring | 10 |
+
+**Total: 100 points**
+
+### Multi-Iteration Mode
+
+For reliable comparisons, run 5 iterations:
+
+```bash
+--iterations 5
+```
+
+This produces:
+- Best score (used for artifacts)
+- Average, min, max scores
+- All individual scores for variance analysis
+
+Results are saved to `result_<model>.json` with statistics.

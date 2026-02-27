@@ -1,4 +1,4 @@
-# Qwen3.5-35B Quantization Comparison
+# Qwen3.5-35B-A3B Quantization Comparison
 
 **Date:** 2026-02-25
 **Hardware:** RTX 4090 (24GB VRAM)
@@ -23,8 +23,8 @@ Does the 4GB VRAM savings justify any quality/speed degradation?
 
 | Model | Preset | Port | VRAM | Context | File |
 |-------|--------|------|------|---------|------|
-| Qwen3.5-35B Q4_K_XL | `qwen35-35b-multi` | 7080 | 22 GB | 32k | `Qwen3.5-35B-A3B-UD-Q4_K_XL.gguf` |
-| Qwen3.5-35B Q3_K_XL | `qwen35-35b-q3-multi` | 7081 | 18 GB | 40k | `Qwen3.5-35B-A3B-UD-Q3_K_XL.gguf` |
+| Qwen3.5-35B-A3B Q4_K_XL | `qwen35-35b-multi` | 7080 | 22 GB | 32k | `Qwen3.5-35B-A3B-UD-Q4_K_XL.gguf` |
+| Qwen3.5-35B-A3B Q3_K_XL | `qwen35-35b-q3-multi` | 7081 | 18 GB | 40k | `Qwen3.5-35B-A3B-UD-Q3_K_XL.gguf` |
 
 Both presets configured with `--parallel 3 --cont-batching --threads 16`.
 
@@ -232,7 +232,7 @@ uv run gpumod service start qwen35-35b-multi
 
 # Run benchmark
 uv run python docs/benchmarks/20260225_qwen35_quant_comparison/benchmark_quant.py \
-  --model "Qwen3.5-35B Q4_K_XL" \
+  --model "Qwen3.5-35B-A3B Q4_K_XL" \
   --port 7080 \
   --output docs/benchmarks/20260225_qwen35_quant_comparison/
 
@@ -242,7 +242,7 @@ uv run gpumod service start qwen35-35b-q3-multi
 
 # Run benchmark for Q3
 uv run python docs/benchmarks/20260225_qwen35_quant_comparison/benchmark_quant.py \
-  --model "Qwen3.5-35B Q3_K_XL" \
+  --model "Qwen3.5-35B-A3B Q3_K_XL" \
   --port 7081 \
   --output docs/benchmarks/20260225_qwen35_quant_comparison/
 

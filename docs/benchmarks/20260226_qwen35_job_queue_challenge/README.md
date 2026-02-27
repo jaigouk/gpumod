@@ -1,4 +1,4 @@
-# Job Queue Challenge Benchmark
+# Qwen3.5 Job Queue Challenge Benchmark
 
 A graduated difficulty benchmark for evaluating LLM coding capabilities.
 
@@ -43,20 +43,34 @@ This benchmark tests an LLM's ability to implement increasingly complex features
 uv run gpumod service start qwen35-35b-a3b-q3
 ```
 
-### Run All Levels
+### Run All Levels (Single Iteration)
 
 ```bash
-uv run python docs/benchmarks/job_queue_challenge/benchmark_runner.py \
+uv run python docs/benchmarks/20260226_qwen35_job_queue_challenge/benchmark_runner.py \
     --model qwen35-35b-a3b-q3 \
     --port 7091 \
-    --output docs/benchmarks/job_queue_challenge/
+    --output docs/benchmarks/20260226_qwen35_job_queue_challenge/
 ```
+
+### Run with Multiple Iterations (Recommended)
+
+For reliable results, run 5 iterations:
+
+```bash
+uv run python docs/benchmarks/20260226_qwen35_job_queue_challenge/benchmark_runner.py \
+    --model qwen35-35b-a3b-q3 \
+    --port 7091 \
+    --iterations 5 \
+    --output docs/benchmarks/20260226_qwen35_job_queue_challenge/
+```
+
+This produces statistics (best, avg, min, max) and saves artifacts from the best-scoring run.
 
 ### Run Specific Levels
 
 ```bash
 # Only L1-L3
-uv run python docs/benchmarks/job_queue_challenge/benchmark_runner.py \
+uv run python docs/benchmarks/20260226_qwen35_job_queue_challenge/benchmark_runner.py \
     --model qwen35-35b-a3b-q3 \
     --port 7091 \
     --levels L1 L2 L3
@@ -128,8 +142,18 @@ To compare models fairly:
 {
   "model_id": "qwen35-27b-q3",
   "model_name": "qwen35-27b-q3",
+  "port": 7093,
   "timestamp": "2026-02-26T06:28:27.540064+00:00",
-  "total_duration_ms": 487251,
+  "iterations": 5,
+  "total_duration_ms": 2436255,
+  "statistics": {
+    "best_score": 65,
+    "avg_score": 45.0,
+    "min_score": 25,
+    "max_score": 65,
+    "all_scores": [25, 40, 65, 40, 55],
+    "best_iteration": 3
+  },
   "scores": {
     "L1": 25,
     "L2": 25,
@@ -143,6 +167,8 @@ To compare models fairly:
 }
 ```
 
+The `statistics` block is always included. Artifacts are saved from the best-scoring iteration.
+
 ## Benchmark Results (2026-02-26)
 
 ### Configuration
@@ -150,12 +176,13 @@ To compare models fairly:
 ```bash
 # Single-slot mode (--parallel 1) for maximum quality per request
 # llama.cpp preset: --parallel 1 --threads 16 (no cont-batching)
-# Benchmark runner: 1 request at a time, max_tokens=8192, temperature=0.1
+# Benchmark runner: 5 iterations, max_tokens=8192, temperature=0.1
 
-uv run python docs/benchmarks/job_queue_challenge/benchmark_runner.py \
+uv run python docs/benchmarks/20260226_qwen35_job_queue_challenge/benchmark_runner.py \
     --model qwen35-27b-q3 \
     --port 7093 \
-    --output docs/benchmarks/job_queue_challenge/
+    --iterations 5 \
+    --output docs/benchmarks/20260226_qwen35_job_queue_challenge/
 ```
 
 **Hardware:** RTX 4090 (24GB VRAM)
@@ -169,42 +196,57 @@ uv run python docs/benchmarks/job_queue_challenge/benchmark_runner.py \
 - `max_tokens=8192` — Token generation limit
 - `temperature=0.1` — Low temperature for deterministic output
 - `/no_think` prefix — Disable chain-of-thought for direct code output
+- `iterations=5` — Multiple runs for statistical reliability
 
-### Summary
+### Summary (5 Iterations)
 
-| Model | Total | L1 | L2 | L3 | L4 | L5 | Time |
-|-------|-------|----|----|----|----|----| -----|
-| **Qwen3.5-27B Q3** | **65%** | 25 | **25** | 0 | **15** | 0 | 443s |
-| Qwen3.5-35B-A3B Q3 | 25% | 25 | 0 | 0 | 0 | 0 | 243s |
-| Qwen3.5-27B Q4 | 15% | 0 | 0 | 0 | **15** | 0 | 778s |
-| Qwen3.5-35B-A3B Q4 | 0% | 0 | 0 | 0 | 0 | 0 | 263s |
+| Model | Best | Avg | L1 | L2 | L3 | L4 | L5 | Scores | Time |
+|-------|------|-----|----|----|----|----|----| ------ |------|
+| **Qwen3.5-27B Q3** | **90%** | 62% | 25 | 25 | 25 | 15 | 0 | [65,45,65,90,45] | 45min |
+| Qwen3.5-27B Q4 | 65% | 45% | 25 | 25 | 0 | 15 | 0 | [65,40,40,15,65] | 60min |
+| Qwen3.5-35B-A3B Q3 | 65% | 25% | 25 | 0 | 25 | 15 | 0 | [25,0,20,65,15] | 21min |
+| Qwen3.5-35B-A3B Q4* | 65% | 42% | 25 | 0 | 25 | 15 | 0 | [20,40,65] | 13min |
+
+*Q4 MoE ran 3 iterations (benchmark stuck on L2 retry tests)
 
 ### Key Findings
 
-1. **27B Q3 passed L2 (retry logic)** — First model to successfully implement exponential backoff with correct timing
-2. **High variance across runs** — Results differ significantly between benchmark runs; models are sensitive to prompt/context
-3. **Dense 27B more reliable** — Dense architecture showed more consistent output vs MoE models with empty responses
-4. **MoE 35B-A3B faster but less reliable** — 243s vs 443s, but more empty responses (timeouts)
-5. **Empty responses common** — Thinking models often exhaust token budget before producing code
+1. **27B Q3 achieved 90% peak score** — First model to pass L1+L2+L3+L4, only missing L5 multi-file refactoring
+2. **Extreme variance** — Same model scored 45-90% across runs; 35B-A3B Q3 ranged 0-65%
+3. **Dense 27B more consistent** — 27B Q3 avg 62% vs MoE 35B-A3B avg 25% despite same best score (65%)
+4. **MoE models faster but less reliable** — 2-3x faster but higher variance and more empty responses
+5. **L5 refactoring unsolved** — No model successfully completed multi-file refactoring across any iteration
+6. **Q3 quant outperforms Q4** — 27B Q3 (90% best) > 27B Q4 (65% best) despite lower precision
 
 ### Architecture Comparison
 
 | Aspect | 27B (Dense) | 35B-A3B (MoE) |
 |--------|-------------|---------------|
 | Active params | 27B | 3B |
-| L2 Retry Logic | ✅ Q3 passes | ❌ All fail |
-| L4 Bug Fix | Q3/Q4 mixed | ❌ All fail this run |
-| Speed | Slower (80-200s per level) | Faster (30-60s per level) |
-| Best score | 65% (Q3) | 25% (Q3) |
+| Best score | 90% (Q3) | 65% (Q3/Q4) |
+| Average score | 62% Q3, 45% Q4 | 25% Q3, 42% Q4 |
+| L2 Retry Logic | ✅ Both pass | ❌ Both fail |
+| L3 Priority | Q3 passes | Both pass (best run) |
+| L4 Bug Fix | Both pass | Both pass (best run) |
+| Speed | Slower (45-60min) | Faster (13-21min) |
+| Consistency | High (45-90 range) | Low (0-65 range) |
 
-### Variance Warning
+### Variance Analysis
 
-These results are from a single run. Benchmark variance is high due to:
+Multi-iteration runs revealed significant score variance:
+
+| Model | Min | Max | Spread | Std Dev |
+|-------|-----|-----|--------|---------|
+| 27B Q3 | 45 | 90 | 45 | ~18 |
+| 27B Q4 | 15 | 65 | 50 | ~21 |
+| 35B-A3B Q3 | 0 | 65 | 65 | ~24 |
+| 35B-A3B Q4 | 20 | 65 | 45 | ~19 |
+
+**Causes:**
 - Non-deterministic LLM sampling (even at temperature=0.1)
-- Thinking models exhausting token budget before output
-- `/no_think` effectiveness varies by prompt
-
-For reliable comparisons, run 3+ iterations and average.
+- Thinking models exhaust token budget before producing code
+- `/no_think` effectiveness varies by prompt and context
+- MoE routing decisions can vary between runs
 
 ## Design Philosophy
 
