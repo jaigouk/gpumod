@@ -85,13 +85,13 @@ _KLD/PPL are reported values from [Qwen3.5-35B-A3B Q4 Quantization Comparison](h
 
 #### Score Interpretation
 
-| Score  | Interpretation                              |
-| ------ | ------------------------------------------- |
-| 0-25   | Weak: Only basic operations work            |
-| 25-50  | Average: Basic + priority or concurrency    |
-| 50-75  | Good: Multiple advanced levels passed       |
-| 75-90  | Excellent: Most levels including L4 bug fix |
-| 90-100 | Expert: Full refactoring capability         |
+| Score   | Levels Passed        | Interpretation                         |
+| ------- | -------------------- | -------------------------------------- |
+| 0–25    | L1 only              | Basic: Fundamental queue operations    |
+| 26–50   | L1 + (L2 or L3)      | Intermediate: Retry OR priority        |
+| 51–75   | L1 + L2 + L3         | Advanced: Both retry and priority      |
+| 76–90   | L1 + L2 + L3 + L4    | Expert: Includes concurrency bug fix   |
+| 91–100  | All levels           | Complete: Full multi-file refactoring  |
 
 #### Test Details
 
