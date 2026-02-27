@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from gpumod.benchmark.mode_switch import (
+from gpumod.perf.mode_switch import (
     ModeSwitchBenchmark,
     ModeSwitchResult,
     TransitionStats,

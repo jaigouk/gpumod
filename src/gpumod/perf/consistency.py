@@ -5,7 +5,7 @@ across multiple runs. If a model knows a fact, it will consistently
 produce it; if hallucinating, responses will diverge.
 
 Usage:
-    from gpumod.benchmark.consistency import ConsistencyChecker
+    from gpumod.perf.consistency import ConsistencyChecker
 
     checker = ConsistencyChecker(threshold=0.5)
 

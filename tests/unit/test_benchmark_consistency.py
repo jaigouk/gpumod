@@ -23,7 +23,7 @@ class TestConsistencyResult:
 
     def test_creates_with_required_fields(self) -> None:
         """ConsistencyResult captures runs, responses, and scores."""
-        from gpumod.benchmark.consistency import ConsistencyResult
+        from gpumod.perf.consistency import ConsistencyResult
 
         result = ConsistencyResult(
             runs=5,
@@ -46,7 +46,7 @@ class TestConsistencyResult:
 
     def test_perfect_consistency_score(self) -> None:
         """Score is 1.0 when all runs produce identical facts."""
-        from gpumod.benchmark.consistency import ConsistencyResult
+        from gpumod.perf.consistency import ConsistencyResult
 
         result = ConsistencyResult(
             runs=3,
@@ -63,7 +63,7 @@ class TestConsistencyResult:
         """ConsistencyResult can be serialized for JSON output."""
         from dataclasses import asdict
 
-        from gpumod.benchmark.consistency import ConsistencyResult
+        from gpumod.perf.consistency import ConsistencyResult
 
         result = ConsistencyResult(
             runs=3,
@@ -88,7 +88,7 @@ class TestExtractFacts:
 
     def test_extracts_simple_statements(self) -> None:
         """Extracts sentence-like facts from a response."""
-        from gpumod.benchmark.consistency import extract_facts
+        from gpumod.perf.consistency import extract_facts
 
         response = "Python was created by Guido van Rossum. It was first released in 1991."
         facts = extract_facts(response)
@@ -101,21 +101,21 @@ class TestExtractFacts:
 
     def test_handles_empty_response(self) -> None:
         """Returns empty set for empty response."""
-        from gpumod.benchmark.consistency import extract_facts
+        from gpumod.perf.consistency import extract_facts
 
         facts = extract_facts("")
         assert facts == set()
 
     def test_handles_whitespace_only(self) -> None:
         """Returns empty set for whitespace-only response."""
-        from gpumod.benchmark.consistency import extract_facts
+        from gpumod.perf.consistency import extract_facts
 
         facts = extract_facts("   \n\t  ")
         assert facts == set()
 
     def test_normalizes_facts(self) -> None:
         """Facts are normalized for comparison (lowercase, stripped)."""
-        from gpumod.benchmark.consistency import extract_facts
+        from gpumod.perf.consistency import extract_facts
 
         response1 = "Python was created by Guido."
         response2 = "python was created by guido."
@@ -128,7 +128,7 @@ class TestExtractFacts:
 
     def test_extracts_from_bullet_points(self) -> None:
         """Extracts facts from bullet-point formatted responses."""
-        from gpumod.benchmark.consistency import extract_facts
+        from gpumod.perf.consistency import extract_facts
 
         response = """Here are the facts:
 - Python was released in 1991
@@ -143,7 +143,7 @@ class TestExtractFacts:
 
     def test_extracts_numbers_as_facts(self) -> None:
         """Numbers and dates are preserved as part of facts."""
-        from gpumod.benchmark.consistency import extract_facts
+        from gpumod.perf.consistency import extract_facts
 
         response = "The population is 331,000,000. The area is 9.8 million km2."
         facts = extract_facts(response)
@@ -162,7 +162,7 @@ class TestComputeConsistency:
 
     def test_perfect_consistency(self) -> None:
         """Returns 1.0 when all responses have identical facts."""
-        from gpumod.benchmark.consistency import compute_consistency
+        from gpumod.perf.consistency import compute_consistency
 
         responses = [
             "Python was created in 1991 by Guido.",
@@ -177,7 +177,7 @@ class TestComputeConsistency:
 
     def test_partial_consistency(self) -> None:
         """Returns score < 1.0 when facts vary across responses."""
-        from gpumod.benchmark.consistency import compute_consistency
+        from gpumod.perf.consistency import compute_consistency
 
         responses = [
             "Python was created in 1991 by Guido van Rossum.",
@@ -193,7 +193,7 @@ class TestComputeConsistency:
 
     def test_zero_consistency(self) -> None:
         """Returns 0.0 when no facts are shared across responses."""
-        from gpumod.benchmark.consistency import compute_consistency
+        from gpumod.perf.consistency import compute_consistency
 
         responses = [
             "Apples are red.",
@@ -208,7 +208,7 @@ class TestComputeConsistency:
 
     def test_flags_facts_below_threshold(self) -> None:
         """Facts appearing in <50% of runs are flagged as inconsistent."""
-        from gpumod.benchmark.consistency import compute_consistency
+        from gpumod.perf.consistency import compute_consistency
 
         responses = [
             "The capital of France is Paris. The Eiffel Tower is 330m tall.",
@@ -226,7 +226,7 @@ class TestComputeConsistency:
 
     def test_handles_single_response(self) -> None:
         """Single response has perfect consistency (nothing to compare)."""
-        from gpumod.benchmark.consistency import compute_consistency
+        from gpumod.perf.consistency import compute_consistency
 
         responses = ["Single response with facts."]
 
@@ -238,7 +238,7 @@ class TestComputeConsistency:
 
     def test_handles_empty_responses(self) -> None:
         """Empty responses return zero consistency."""
-        from gpumod.benchmark.consistency import compute_consistency
+        from gpumod.perf.consistency import compute_consistency
 
         responses = ["", "", ""]
 
@@ -258,14 +258,14 @@ class TestConsistencyChecker:
 
     def test_has_default_runs(self) -> None:
         """ConsistencyChecker has a sensible default number of runs."""
-        from gpumod.benchmark.consistency import ConsistencyChecker
+        from gpumod.perf.consistency import ConsistencyChecker
 
         checker = ConsistencyChecker()
         assert checker.default_runs >= 3
 
     def test_check_returns_consistency_result(self) -> None:
         """check() method returns a ConsistencyResult."""
-        from gpumod.benchmark.consistency import ConsistencyChecker, ConsistencyResult
+        from gpumod.perf.consistency import ConsistencyChecker, ConsistencyResult
 
         # Mock the response generator
         checker = ConsistencyChecker()
@@ -291,7 +291,7 @@ class TestConsistencyChecker:
     @pytest.mark.asyncio
     async def test_check_runs_generator_n_times(self) -> None:
         """check() runs the generator the specified number of times."""
-        from gpumod.benchmark.consistency import ConsistencyChecker
+        from gpumod.perf.consistency import ConsistencyChecker
 
         call_count = 0
 
@@ -312,7 +312,7 @@ class TestConsistencyChecker:
     @pytest.mark.asyncio
     async def test_check_collects_all_responses(self) -> None:
         """check() collects all responses in the result."""
-        from gpumod.benchmark.consistency import ConsistencyChecker
+        from gpumod.perf.consistency import ConsistencyChecker
 
         responses_returned = ["First", "Second", "Third"]
         idx = 0
@@ -343,21 +343,21 @@ class TestConsistencyThreshold:
 
     def test_default_threshold_is_50_percent(self) -> None:
         """Default threshold for flagging inconsistent facts is 50%."""
-        from gpumod.benchmark.consistency import ConsistencyChecker
+        from gpumod.perf.consistency import ConsistencyChecker
 
         checker = ConsistencyChecker()
         assert checker.threshold == 0.5
 
     def test_custom_threshold(self) -> None:
         """Threshold can be customized."""
-        from gpumod.benchmark.consistency import ConsistencyChecker
+        from gpumod.perf.consistency import ConsistencyChecker
 
         checker = ConsistencyChecker(threshold=0.7)
         assert checker.threshold == 0.7
 
     def test_threshold_affects_inconsistent_facts(self) -> None:
         """Higher threshold flags more facts as inconsistent."""
-        from gpumod.benchmark.consistency import compute_consistency
+        from gpumod.perf.consistency import compute_consistency
 
         responses = [
             "Fact A. Fact B. Fact C.",

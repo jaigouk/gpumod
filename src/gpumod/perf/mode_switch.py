@@ -4,7 +4,7 @@ Provides tools to measure and compare mode switch latency,
 particularly for comparing sleep-aware vs restart-based transitions.
 
 Usage:
-    from gpumod.benchmark.mode_switch import ModeSwitchBenchmark
+    from gpumod.perf.mode_switch import ModeSwitchBenchmark
 
     benchmark = ModeSwitchBenchmark(manager=service_manager)
     results = await benchmark.run_benchmark(

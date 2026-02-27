@@ -1,12 +1,12 @@
-"""Benchmark utilities for gpumod."""
+"""Performance measurement utilities for gpumod."""
 
-from gpumod.benchmark.consistency import (
+from gpumod.perf.consistency import (
     ConsistencyChecker,
     ConsistencyResult,
     compute_consistency,
     extract_facts,
 )
-from gpumod.benchmark.mode_switch import (
+from gpumod.perf.mode_switch import (
     ModeSwitchBenchmark,
     ModeSwitchResult,
     TransitionStats,

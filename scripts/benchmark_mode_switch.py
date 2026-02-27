@@ -32,13 +32,13 @@ import json
 import sys
 from pathlib import Path
 
-from gpumod.benchmark.mode_switch import (
+from gpumod.db import Database
+from gpumod.perf.mode_switch import (
     ModeSwitchBenchmark,
     ModeSwitchResult,
     TransitionStats,
     generate_comparison_table,
 )
-from gpumod.db import Database
 from gpumod.services.lifecycle import LifecycleManager
 from gpumod.services.manager import ServiceManager
 from gpumod.services.registry import ServiceRegistry

@@ -32,7 +32,7 @@ from pathlib import Path
 
 import httpx
 
-from gpumod.benchmark.consistency import compute_consistency
+from gpumod.perf.consistency import compute_consistency
 
 # ---------------------------------------------------------------------------
 # Configuration
