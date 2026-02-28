@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import statistics
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Sequence  # noqa: TC003
+from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -23,6 +24,7 @@ class BenchmarkResult:
 
     iteration: int
     levels: list[LevelResult]
+    iteration_metrics: dict[str, Any] = field(default_factory=dict)
 
     @property
     def total_score(self) -> int:

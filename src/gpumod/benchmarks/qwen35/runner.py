@@ -26,6 +26,27 @@ class LLMClient(Protocol):
         ...
 
 
+class MetricsCollector(Protocol):
+    """Protocol for collecting performance metrics during benchmark."""
+
+    def measure_vram(self) -> int | None:
+        """Measure current VRAM usage in MB."""
+        ...
+
+    def record_generation(
+        self,
+        tokens: int,
+        duration_seconds: float,
+        ttft_seconds: float,
+    ) -> None:
+        """Record metrics for a single generation."""
+        ...
+
+    def get_iteration_metrics(self) -> dict[str, Any]:
+        """Get aggregated metrics for the iteration and reset."""
+        ...
+
+
 @dataclass
 class BenchmarkConfig:
     """Configuration for benchmark run."""
@@ -50,11 +71,16 @@ class BenchmarkLevel:
 class BenchmarkRunner:
     """Runs coding benchmarks against Qwen3.5 models."""
 
-    def __init__(self, config: BenchmarkConfig) -> None:
+    def __init__(
+        self,
+        config: BenchmarkConfig,
+        metrics_collector: MetricsCollector | None = None,
+    ) -> None:
         self.config = config
         self._client: LLMClient | None = None
         self._results: list[BenchmarkResult] = []
         self._levels = self._create_levels()
+        self.metrics_collector = metrics_collector
 
     @property
     def levels(self) -> list[BenchmarkLevel]:
@@ -119,8 +145,22 @@ class BenchmarkRunner:
         self._results = []
 
         for iteration in range(self.config.iterations):
+            # Measure VRAM before iteration
+            if self.metrics_collector:
+                self.metrics_collector.measure_vram()
+
             level_results = await self._run_iteration(iteration + 1)
-            result = BenchmarkResult(iteration=iteration + 1, levels=level_results)
+
+            # Get iteration metrics
+            iteration_metrics: dict[str, Any] = {}
+            if self.metrics_collector:
+                iteration_metrics = self.metrics_collector.get_iteration_metrics()
+
+            result = BenchmarkResult(
+                iteration=iteration + 1,
+                levels=level_results,
+                iteration_metrics=iteration_metrics,
+            )
             self._results.append(result)
 
         return self._results
@@ -128,13 +168,29 @@ class BenchmarkRunner:
     async def _run_iteration(self, iteration: int) -> list[LevelResult]:
         """Run a single benchmark iteration."""
         assert self._client is not None
+        import time
 
         level_results = []
         for level in self._levels:
+            start_time = time.perf_counter()
+
             response = await self._client.generate(
                 level.prompt,
                 **self.config.sampler.to_dict(),
             )
+
+            end_time = time.perf_counter()
+            duration = end_time - start_time
+
+            # Record generation metrics if collector available
+            if self.metrics_collector:
+                # Estimate tokens (rough: 4 chars per token)
+                tokens = len(response) // 4 if response else 0
+                self.metrics_collector.record_generation(
+                    tokens=tokens,
+                    duration_seconds=duration,
+                    ttft_seconds=duration * 0.1,  # Estimate TTFT as 10% of total
+                )
 
             passed = level.validator(response)
             points = level.points if passed else 0
@@ -154,7 +210,7 @@ class BenchmarkRunner:
         """Generate benchmark report with statistics.
 
         Returns:
-            Dict with model_id, stats, confidence_interval, and results
+            Dict with model_id, stats, confidence_interval, results, and metrics
         """
         if not self._results:
             msg = "No results. Call run() first."
@@ -164,6 +220,9 @@ class BenchmarkRunner:
         stats = calculate_stats(scores)
         ci = calculate_confidence_interval(scores)
 
+        # Aggregate metrics across iterations
+        metrics = self._aggregate_metrics()
+
         return {
             "model_id": self.config.model_id,
             "iterations": self.config.iterations,
@@ -171,6 +230,7 @@ class BenchmarkRunner:
             "sampler": self.config.sampler.to_dict(),
             "stats": stats,
             "confidence_interval": ci,
+            "metrics": metrics,
             "results": [
                 {
                     "iteration": r.iteration,
@@ -180,3 +240,26 @@ class BenchmarkRunner:
                 for r in self._results
             ],
         }
+
+    def _aggregate_metrics(self) -> dict[str, Any]:
+        """Aggregate metrics across all iterations."""
+        if not self.metrics_collector:
+            return {}
+
+        # Collect all iteration metrics
+        all_metrics: dict[str, list[float]] = {}
+        for result in self._results:
+            if result.iteration_metrics:
+                for key, value in result.iteration_metrics.items():
+                    if isinstance(value, int | float):
+                        if key not in all_metrics:
+                            all_metrics[key] = []
+                        all_metrics[key].append(float(value))
+
+        # Calculate means
+        aggregated: dict[str, Any] = {}
+        for key, values in all_metrics.items():
+            if values:
+                aggregated[key] = sum(values) / len(values)
+
+        return aggregated
