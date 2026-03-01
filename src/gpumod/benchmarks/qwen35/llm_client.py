@@ -116,3 +116,9 @@ class LlamaCppClient:
                     timing["generation_ms"] = float(value)
 
         self.last_timing = timing or None
+
+    async def close(self) -> None:
+        """Close the HTTP client."""
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None

@@ -1,0 +1,245 @@
+Here is the refactored package structure. This design ensures single responsibility, avoids circular imports by keeping data structures generic in `priority.py`, and exposes a clean API in `__init__.py`.
+
+### Directory Structure
+
+```text
+queue/
+├── __init__.py
+├── core.py
+├── priority.py
+└── retry.py
+```
+
+### 1. `queue/__init__.py`
+This file serves as the public entry point. It imports the main classes and utilities, hiding the internal module details.
+
+```python
+# queue/__init__.py
+"""
+Job Queue Package.
+Exports: Job, JobQueue, process_with_retry
+"""
+
+from .core import Job, JobQueue
+from .retry import process_with_retry
+
+__all__ = ["Job", "JobQueue", "process_with_retry"]
+```
+
+### 2. `queue/core.py`
+Contains the business data model (`Job`) and the high-level orchestration logic (`JobQueue`). It imports `PriorityQueue` from the specific module to handle the underlying heap.
+
+```python
+# queue/core.py
+"""
+Core Job Queue logic.
+Contains Job dataclass and JobQueue orchestration.
+"""
+
+from dataclasses import dataclass, field
+from typing import Any, Callable, Optional, List
+import time
+import threading
+
+from .priority import PriorityQueue
+
+
+@dataclass(order=True)
+class Job:
+    """
+    Represents a single task unit in the queue.
+    order=True allows direct comparison based on priority.
+    """
+    priority: int
+    job_id: str = field(compare=False)
+    payload: Any = field(compare=False)
+    created_at: float = field(compare=False, default_factory=time.time)
+    retry_count: int = field(compare=False, default=0)
+    max_retries: int = field(compare=False, default=3)
+    status: str = field(compare=False, default="pending")  # pending, running, completed, failed
+
+    def is_expired(self) -> bool:
+        return self.status != "pending"
+
+
+class JobQueue:
+    """
+    High-level queue managing Jobs.
+    Wraps the PriorityQueue to handle Job objects and lifecycle.
+    """
+
+    def __init__(self):
+        self._pq = PriorityQueue()
+        self._lock = threading.Lock()
+        self._counter = 0  # For stable sorting when priorities match
+
+    def enqueue(self, job: Job) -> None:
+        """Add a job to the queue."""
+        with self._lock:
+            self._counter += 1
+            # Tuple format: (priority, counter, job) ensures stable sort
+            self._pq.push((job.priority, self._counter, job))
+
+    def dequeue(self) -> Optional[Job]:
+        """Remove and return the highest priority job."""
+        with self._lock:
+            item = self._pq.pop()
+            if item is not None:
+                _, _, job = item
+                job.status = "running"
+                return job
+            return None
+
+    def peek(self) -> Optional[Job]:
+        """View the highest priority job without removing it."""
+        with self._lock:
+            item = self._pq.peek()
+            if item is not None:
+                _, _, job = item
+                return job
+            return None
+
+    def size(self) -> int:
+        return self._pq.size()
+
+    def is_empty(self) -> bool:
+        return self._pq.is_empty()
+    
+    def mark_completed(self, job: Job) -> None:
+        """Manually update job status (useful for async workers)."""
+        job.status = "completed"
+
+    def requeue_failed(self, job: Job) -> None:
+        """Increment retry count and put back in queue if allowed."""
+        with self._lock:
+            job.retry_count += 1
+            if job.retry_count < job.max_retries:
+                # Reset status and re-add
+                job.status = "pending"
+                # Re-enqueue uses the current priority (can be modified externally)
+                self.enqueue(job)
+            else:
+                job.status = "failed"
+```
+
+### 3. `queue/priority.py`
+Contains the low-level data structure implementation (`heapq`). It is kept generic (agnostic of `Job`) to avoid circular imports with `core.py`.
+
+```python
+# queue/priority.py
+"""
+Low-level Priority Queue implementation using heapq.
+"""
+
+import heapq
+from typing import Any, Optional, Tuple, List
+
+
+class PriorityQueue:
+    """
+    Thread-safe priority queue implementation using min-heap.
+    Stores items as tuples: (priority, sequence, item)
+    """
+
+    def __init__(self):
+        self._heap: List[Tuple[Any, int, Any]] = []
+        self._counter = 0
+
+    def push(self, item: Tuple[Any, Any, Any]) -> None:
+        """
+        Push an item onto the heap.
+        Expected item format: (priority, sequence, payload)
+        """
+        heapq.heappush(self._heap, item)
+
+    def pop(self) -> Optional[Tuple[Any, Any, Any]]:
+        """
+        Pop the item with the lowest priority value.
+        Returns: Tuple (priority, sequence, payload) or None
+        """
+        if not self._heap:
+            return None
+        return heapq.heappop(self._heap)
+
+    def peek(self) -> Optional[Tuple[Any, Any, Any]]:
+        """
+        Peek at the item with the lowest priority value without removing it.
+        """
+        if not self._heap:
+            return None
+        return self._heap[0]
+
+    def is_empty(self) -> bool:
+        return len(self._heap) == 0
+
+    def size(self) -> int:
+        return len(self._heap)
+```
+
+### 4. `queue/retry.py`
+Contains the retry logic utility. It is independent of the queue structure, allowing it to be used anywhere a function needs resilience.
+
+```python
+# queue/retry.py
+"""
+Retry logic with exponential backoff.
+"""
+
+import time
+from typing import Callable, Type, Tuple
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def process_with_retry(
+    func: Callable,
+    *args,
+    max_retries: int = 3,
+    backoff_factor: float = 1.0,
+    exceptions: Tuple[Type[Exception], ...] = (Exception,),
+    **kwargs
+) -> Any:
+    """
+    Execute a function with exponential backoff retry logic.
+    
+    Args:
+        func: The callable to execute.
+        max_retries: Maximum number of retry attempts.
+        backoff_factor: Base delay for backoff calculation.
+        exceptions: Tuple of exception types to catch and retry.
+        *args, **kwargs: Arguments passed to func.
+        
+    Returns:
+        The result of func if successful.
+        
+    Raises:
+        The last exception encountered if all retries fail.
+    """
+    last_exception = None
+    
+    for attempt in range(max_retries + 1):
+        try:
+            return func(*args, **kwargs)
+        except exceptions as e:
+            last_exception = e
+            logger.warning(f"Attempt {attempt + 1} failed: {e}")
+            
+            if attempt == max_retries:
+                break
+            
+            # Exponential backoff: 1.0, 2.0, 4.0...
+            delay = backoff_factor * (2 ** attempt)
+            logger.info(f"Retrying in {delay} seconds...")
+            time.sleep(delay)
+            
+    raise last_exception
+```
+
+### Key Refactoring Decisions
+
+1.  **Circular Import Prevention:** `core.py` imports `PriorityQueue` from `priority.py`. However, `priority.py` does **not** import `Job` from `core.py`. Instead, `PriorityQueue` operates on generic tuples `(priority, sequence, payload)`. `JobQueue` in `core.py` handles the conversion between `Job` objects and these tuples.
+2.  **Stable Sorting:** In `core.py`, `JobQueue` adds a sequence counter to the tuple pushed to `priority.py`. This ensures that if two jobs have the same priority, they are processed in FIFO order, preventing `heapq` from raising a `TypeError` when comparing `Job` objects directly.
+3.  **Thread Safety:** Added a `threading.Lock` in `JobQueue` to protect queue operations, which is critical for multi-threaded environments.
+4.  **Clean API:** `__init__.py` exposes only the necessary public interfaces (`Job`, `JobQueue`, `process_with_retry`), keeping internal modules (`priority`, `retry`) encapsulated.

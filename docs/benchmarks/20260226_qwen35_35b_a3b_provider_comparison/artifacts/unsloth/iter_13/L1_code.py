@@ -1,0 +1,32 @@
+from collections import deque
+from typing import Optional
+
+class JobQueue:
+    def __init__(self):
+        self._queue: deque = deque()
+        self._results: dict = {}
+
+    def add_job(self, job_id: str, data: dict) -> str:
+        job = {
+            'job_id': job_id,
+            'data': data,
+            'status': 'pending',
+            'result': None
+        }
+        self._queue.append(job)
+        self._results[job_id] = job
+        return job_id
+
+    def get_result(self, job_id: str) -> dict | None:
+        if job_id in self._results:
+            job = self._results[job_id]
+            if job['status'] == 'completed':
+                return job['result']
+        return None
+
+    def process(self):
+        while self._queue:
+            job = self._queue.popleft()
+            job['status'] = 'completed'
+            job['result'] = {'status': 'success', 'data': job['data']}
+            self._results[job['job_id']] = job

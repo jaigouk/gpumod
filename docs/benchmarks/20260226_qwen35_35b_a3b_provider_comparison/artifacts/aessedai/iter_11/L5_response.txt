@@ -1,0 +1,221 @@
+Here is the refactored package structure.
+
+### Implementation Details
+1.  **`queue/__init__.py`**: Acts as the public API, re-exporting the main classes and functions for convenient access.
+2.  **`queue/core.py`**: Contains the domain model (`Job`) and the high-level manager (`JobQueue`). It imports `PriorityQueue` for storage and `process_with_retry` for execution logic.
+3.  **`queue/priority.py`**: Handles the specific data structure logic (heap-based priority queue).
+4.  **`queue/retry.py`**: Encapsulates the retry policy and backoff logic.
+5.  **Circular Import Handling**: `core.py` defines `Job` *before* importing `process_with_retry` from `retry.py`. This ensures that when `retry.py` imports `Job` from `core`, the class is already available in memory.
+
+### File Structure
+
+```text
+queue/
+├── __init__.py
+├── core.py
+├── priority.py
+└── retry.py
+```
+
+### Code Content
+
+#### `queue/__init__.py`
+```python
+"""
+Job Queue Package.
+
+Public API exports.
+"""
+from .core import Job, JobQueue
+from .retry import process_with_retry
+
+__all__ = ["Job", "JobQueue", "process_with_retry"]
+```
+
+#### `queue/core.py`
+```python
+"""
+Core module containing Job data model and the main JobQueue manager.
+"""
+import uuid
+import time
+from datetime import datetime
+from typing import Any, Callable, Optional, List
+from dataclasses import dataclass, field
+
+# Import priority queue for storage
+from .priority import PriorityQueue
+# Import retry logic for execution
+# Note: We import this after Job definition to avoid circular import issues
+# during module initialization.
+from .retry import process_with_retry
+
+
+@dataclass
+class Job:
+    """Represents a single job to be processed."""
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    payload: Any = None
+    priority: int = 5  # Lower number = higher priority
+    status: str = "pending"
+    created_at: datetime = field(default_factory=datetime.now)
+    retry_count: int = 0
+    max_retries: int = 3
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "payload": self.payload,
+            "priority": self.priority,
+            "status": self.status,
+            "created_at": self.created_at.isoformat(),
+            "retry_count": self.retry_count,
+            "max_retries": self.max_retries,
+        }
+
+
+class JobQueue:
+    """
+    Manages the lifecycle of jobs, using a PriorityQueue for ordering.
+    """
+
+    def __init__(self):
+        self._queue: PriorityQueue = PriorityQueue()
+        self._running_jobs: List[Job] = []
+        self._handlers: dict[str, Callable] = {}
+
+    def register_handler(self, job_id: str, handler: Callable[[Any], None]):
+        """Register a function to handle specific job types."""
+        self._handlers[job_id] = handler
+
+    def enqueue(self, payload: Any, priority: int = 5) -> Job:
+        """Add a new job to the queue."""
+        job = Job(payload=payload, priority=priority)
+        self._queue.put(job)
+        return job
+
+    def dequeue(self) -> Optional[Job]:
+        """Remove and return the highest priority job."""
+        return self._queue.get()
+
+    def process(self, job: Job) -> bool:
+        """
+        Process a specific job using the registered handler and retry logic.
+        """
+        if job.id not in self._handlers:
+            raise ValueError(f"No handler registered for job ID: {job.id}")
+
+        handler = self._handlers[job.id]
+        job.status = "running"
+        self._running_jobs.append(job)
+
+        try:
+            # Execute the job with automatic retry logic
+            process_with_retry(handler, job.payload, max_retries=job.max_retries)
+            job.status = "completed"
+            return True
+        except Exception as e:
+            job.status = "failed"
+            raise e
+        finally:
+            if job in self._running_jobs:
+                self._running_jobs.remove(job)
+
+    def process_next(self) -> bool:
+        """
+        Dequeue the next job and process it.
+        """
+        job = self.dequeue()
+        if job:
+            return self.process(job)
+        return False
+
+    def size(self) -> int:
+        """Return the number of jobs in the queue."""
+        return self._queue.size()
+```
+
+#### `queue/priority.py`
+```python
+"""
+Priority Queue implementation using heapq.
+"""
+import heapq
+from typing import Any, Optional
+
+class PriorityQueue:
+    """
+    A thread-safe priority queue wrapper around heapq.
+    Lower priority values are dequeued first.
+    """
+
+    def __init__(self):
+        self._heap: list = []
+        self._counter: int = 0
+
+    def put(self, item: Any, priority: int = 0):
+        """Push an item with a given priority."""
+        # heapq in Python is a min-heap, so lower priority value = higher precedence
+        # We add a counter to ensure FIFO order for items with equal priority
+        entry = (priority, self._counter, item)
+        self._counter += 1
+        heapq.heappush(self._heap, entry)
+
+    def get(self) -> Optional[Any]:
+        """Pop and return the item with the highest priority (lowest value)."""
+        if not self._heap:
+            return None
+        priority, _, item = heapq.heappop(self._heap)
+        return item
+
+    def size(self) -> int:
+        """Return the number of items in the queue."""
+        return len(self._heap)
+
+    def is_empty(self) -> bool:
+        """Check if the queue is empty."""
+        return len(self._heap) == 0
+```
+
+#### `queue/retry.py`
+```python
+"""
+Retry logic with exponential backoff.
+"""
+import time
+import random
+from typing import Callable, Any
+from .core import Job  # Importing Job from core is safe as Job is defined first in core.py
+
+def process_with_retry(
+    func: Callable[[Any], None], 
+    payload: Any, 
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+    max_delay: float = 60.0
+) -> None:
+    """
+    Execute a function with exponential backoff on failure.
+    
+    Args:
+        func: The function to execute.
+        payload: The data to pass to the function.
+        max_retries: Maximum number of attempts.
+        base_delay: Initial delay in seconds.
+        max_delay: Maximum delay cap in seconds.
+    """
+    attempt = 0
+    while attempt <= max_retries:
+        try:
+            func(payload)
+            return  # Success
+        except Exception as e:
+            attempt += 1
+            if attempt > max_retries:
+                raise e  # Reraise the final exception
+            
+            # Calculate backoff with jitter
+            delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
+            jitter = random.uniform(0, delay * 0.1)
+            time.sleep(delay + jitter)
+```

@@ -1,0 +1,36 @@
+from typing import Callable, Dict, Any
+
+class JobQueue:
+    def __init__(self):
+        self.jobs: Dict[str, Dict[str, Any]] = {}
+
+    def add_job(self, job_id: str, data: Dict[str, Any]) -> None:
+        self.jobs[job_id] = {
+            "data": data,
+            "retry_count": 0,
+            "backoff_delays": []
+        }
+
+    def process_job(self, job_id: str, processor: Callable) -> bool:
+        if job_id not in self.jobs:
+            return False
+        
+        job = self.jobs[job_id]
+        max_retries = 3
+        backoff_sequence = [1, 2, 4]
+        
+        attempt = 0
+        while attempt <= max_retries:
+            try:
+                processor(job["data"])
+                return True
+            except Exception:
+                if attempt < max_retries:
+                    backoff = backoff_sequence[attempt]
+                    job["backoff_delays"].append(backoff)
+                    job["retry_count"] = attempt + 1
+                    attempt += 1
+                else:
+                    job["retry_count"] = max_retries + 1
+                    return False
+        return False

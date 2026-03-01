@@ -1,0 +1,48 @@
+from collections import deque
+import threading
+import time
+from typing import Dict, Optional, Any
+
+
+class JobQueue:
+    def __init__(self):
+        self._job_queue: deque = deque()
+        self._results: Dict[str, dict] = {}
+        self._lock = threading.Lock()
+        self._processing = False
+        self._worker_thread: Optional[threading.Thread] = None
+
+    def add_job(self, job_id: str, data: dict) -> str:
+        with self._lock:
+            job = {"job_id": job_id, "data": data, "status": "pending", "result": None}
+            self._job_queue.append(job)
+            self._results[job_id] = None
+            self._start_worker_if_needed()
+        return job_id
+
+    def get_result(self, job_id: str) -> Optional[dict]:
+        with self._lock:
+            return self._results.get(job_id)
+
+    def _process_jobs(self):
+        while True:
+            with self._lock:
+                if not self._job_queue:
+                    return
+                job = self._job_queue.popleft()
+                job_id = job["job_id"]
+                data = job["data"]
+
+            result = self._execute_job(job_id, data)
+            with self._lock:
+                self._results[job_id] = result
+
+    def _execute_job(self, job_id: str, data: dict) -> dict:
+        time.sleep(0.1)
+        return {"job_id": job_id, "status": "completed", "data": data}
+
+    def _start_worker_if_needed(self):
+        if not self._processing and self._worker_thread is None or not self._worker_thread.is_alive():
+            self._processing = True
+            self._worker_thread = threading.Thread(target=self._process_jobs, daemon=True)
+            self._worker_thread.start()

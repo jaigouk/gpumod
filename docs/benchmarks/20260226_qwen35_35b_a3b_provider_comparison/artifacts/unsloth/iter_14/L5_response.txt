@@ -1,0 +1,268 @@
+Here is the refactored job queue package structure, organized into a proper modular design with clear separation of responsibilities and a clean public API.
+
+---
+
+### `queue/__init__.py`
+```python
+"""
+Job Queue Package
+Provides job scheduling, priority management, and retry logic.
+"""
+
+from .core import Job, JobQueue
+from .priority import PriorityQueue
+from .retry import RetryPolicy, ExponentialBackoff, process_with_retry
+
+__all__ = [
+    "Job",
+    "JobQueue",
+    "PriorityQueue",
+    "RetryPolicy",
+    "ExponentialBackoff",
+    "process_with_retry",
+]
+```
+
+---
+
+### `queue/core.py`
+```python
+"""
+Core job queue functionality.
+Includes Job dataclass and basic queue operations.
+"""
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Callable, Optional
+from enum import Enum
+
+
+class JobStatus(Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+@dataclass
+class Job:
+    """Represents a job to be processed."""
+    id: str
+    payload: Any
+    status: JobStatus = JobStatus.PENDING
+    created_at: datetime = field(default_factory=datetime.now)
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    error: Optional[str] = None
+    priority: int = 0  # Higher number = higher priority
+    metadata: dict = field(default_factory=dict)
+
+    def start(self):
+        self.status = JobStatus.RUNNING
+        self.started_at = datetime.now()
+
+    def complete(self, error: Optional[str] = None):
+        self.status = JobStatus.COMPLETED if error is None else JobStatus.FAILED
+        self.completed_at = datetime.now()
+        self.error = error
+
+    def cancel(self):
+        self.status = JobStatus.CANCELLED
+        self.completed_at = datetime.now()
+
+    @property
+    def is_done(self) -> bool:
+        return self.status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "payload": self.payload,
+            "status": self.status.value,
+            "created_at": self.created_at.isoformat(),
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "error": self.error,
+            "priority": self.priority,
+            "metadata": self.metadata,
+        }
+
+
+class JobQueue:
+    """Basic job queue with add, remove, and retrieve operations."""
+
+    def __init__(self):
+        self._jobs: dict[str, Job] = {}
+
+    def add(self, job: Job) -> None:
+        self._jobs[job.id] = job
+
+    def get(self, job_id: str) -> Optional[Job]:
+        return self._jobs.get(job_id)
+
+    def remove(self, job_id: str) -> Optional[Job]:
+        return self._jobs.pop(job_id, None)
+
+    def all(self) -> list[Job]:
+        return list(self._jobs.values())
+
+    def get_pending(self) -> list[Job]:
+        return [job for job in self._jobs.values() if job.status == JobStatus.PENDING]
+
+    def get_by_status(self, status: JobStatus) -> list[Job]:
+        return [job for job in self._jobs.values() if job.status == status]
+```
+
+---
+
+### `queue/priority.py`
+```python
+"""
+Priority queue implementation using heapq.
+"""
+
+import heapq
+from typing import List, Optional
+from .core import Job
+
+
+class PriorityQueue:
+    """
+    Priority queue for managing jobs based on priority level.
+    Higher priority values come first.
+    """
+
+    def __init__(self):
+        self._heap: List[tuple[int, int, Job]] = []
+        self._counter = 0
+
+    def push(self, job: Job) -> None:
+        entry = (-job.priority, self._counter, job)
+        self._counter += 1
+        heapq.heappush(self._heap, entry)
+
+    def pop(self) -> Optional[Job]:
+        if not self._heap:
+            return None
+        _, _, job = heapq.heappop(self._heap)
+        return job
+
+    def peek(self) -> Optional[Job]:
+        if not self._heap:
+            return None
+        return self._heap[0][2]
+
+    def size(self) -> int:
+        return len(self._heap)
+
+    def is_empty(self) -> bool:
+        return len(self._heap) == 0
+
+    def clear(self) -> None:
+        self._heap.clear()
+        self._counter = 0
+```
+
+---
+
+### `queue/retry.py`
+```python
+"""
+Retry logic with exponential backoff support.
+"""
+
+import time
+from typing import Callable, Any, Optional
+from .core import Job, JobStatus
+
+
+class ExponentialBackoff:
+    """Exponential backoff with jitter."""
+
+    def __init__(
+        self,
+        initial_delay: float = 1.0,
+        max_delay: float = 300.0,
+        multiplier: float = 2.0,
+        max_attempts: int = 5,
+        jitter: float = 0.1,
+    ):
+        self.initial_delay = initial_delay
+        self.max_delay = max_delay
+        self.multiplier = multiplier
+        self.max_attempts = max_attempts
+        self.jitter = jitter
+
+    def get_delay(self, attempt: int) -> float:
+        delay = self.initial_delay * (self.multiplier ** attempt)
+        delay = min(delay, self.max_delay)
+        jitter = delay * self.jitter * (0.5 + (time.time() % 1))
+        return delay + jitter
+
+    def should_retry(self, attempt: int) -> bool:
+        return attempt < self.max_attempts
+
+    def calculate_next_attempt(self, attempt: int) -> int:
+        return attempt + 1
+
+
+class RetryPolicy:
+    """Retry policy for job execution."""
+
+    def __init__(self, backoff: Optional[ExponentialBackoff] = None):
+        self.backoff = backoff or ExponentialBackoff()
+
+    def execute_with_retry(
+        self,
+        job: Job,
+        func: Callable[[Any], Any],
+    ) -> tuple[bool, Any]:
+        attempt = 0
+        last_error = None
+
+        while self.backoff.should_retry(attempt):
+            try:
+                result = func(job.payload)
+                return True, result
+            except Exception as e:
+                last_error = str(e)
+                attempt += 1
+                delay = self.backoff.get_delay(attempt)
+                time.sleep(delay)
+
+        return False, last_error
+
+
+def process_with_retry(
+    job: Job,
+    func: Callable[[Any], Any],
+    backoff: Optional[ExponentialBackoff] = None,
+) -> Job:
+    """
+    Process a job with retry logic.
+    Updates job status based on outcome.
+    """
+    policy = RetryPolicy(backoff)
+    success, result = policy.execute_with_retry(job, func)
+
+    if success:
+        job.complete()
+    else:
+        job.complete(error=result)
+
+    return job
+```
+
+---
+
+### Summary of Refactoring
+
+- ✅ **Single Responsibility:** Each module handles one concern—core logic, priority queue, retry behavior.
+- ✅ **Clean Public API:** `__init__.py` exports only the essential classes and functions.
+- ✅ **Proper Imports:** Modules import from each other using relative imports within the package.
+- ✅ **Maintained Functionality:** All original features are preserved and modularized.
+- ✅ **Extensibility:** Easy to add more policies, queue types, or job handlers in the future.
+
+This structure promotes maintainability, testability, and scalability for a robust job queue system.
