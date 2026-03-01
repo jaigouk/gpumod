@@ -52,12 +52,14 @@ class DefaultMetricsCollector:
 
         tps = measure_tps(tokens, duration_seconds)
 
-        self._generations.append({
-            "tokens": tokens,
-            "tps": tps,
-            "ttft_ms": ttft_seconds * 1000,
-            "total_ms": duration_seconds * 1000,
-        })
+        self._generations.append(
+            {
+                "tokens": tokens,
+                "tps": tps,
+                "ttft_ms": ttft_seconds * 1000,
+                "total_ms": duration_seconds * 1000,
+            }
+        )
 
     def get_iteration_metrics(self) -> dict[str, Any]:
         """Get aggregated metrics for the iteration and reset.

@@ -69,15 +69,15 @@ class TestPytestValidator:
         validator = PytestValidator()
 
         # Valid code that passes tests
-        code = '''
+        code = """
 def add(a, b):
     return a + b
-'''
-        test_code = '''
+"""
+        test_code = """
 def test_add():
     from solution import add
     assert add(1, 2) == 3
-'''
+"""
         result = validator.validate(code, test_code)
 
         assert hasattr(result, "passed")
@@ -90,14 +90,14 @@ def test_add():
         validator = PytestValidator()
 
         # Code that passes some tests
-        code = '''
+        code = """
 def add(a, b):
     return a + b
 
 def subtract(a, b):
     return a  # Bug: should be a - b
-'''
-        test_code = '''
+"""
+        test_code = """
 def test_add():
     from solution import add
     assert add(1, 2) == 3
@@ -105,7 +105,7 @@ def test_add():
 def test_subtract():
     from solution import subtract
     assert subtract(5, 3) == 2
-'''
+"""
         result = validator.validate(code, test_code)
 
         # Should have partial score (1/2 tests pass = 0.5)
@@ -139,16 +139,16 @@ def test_broken():
         validator = PytestValidator(timeout_seconds=1)
 
         # Code with infinite loop
-        code = '''
+        code = """
 def infinite():
     while True:
         pass
-'''
-        test_code = '''
+"""
+        test_code = """
 def test_infinite():
     from solution import infinite
     infinite()
-'''
+"""
         result = validator.validate(code, test_code)
 
         # Should timeout and fail

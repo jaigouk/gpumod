@@ -82,9 +82,7 @@ class TestLlamaCppClientGenerate:
         client = LlamaCppClient(base_url="http://localhost:8080")
 
         mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": "response"}}]
-        }
+        mock_response.json.return_value = {"choices": [{"message": {"content": "response"}}]}
         mock_response.headers = {}
 
         client._client = AsyncMock()
@@ -112,9 +110,7 @@ class TestLlamaCppClientGenerate:
         client = LlamaCppClient(base_url="http://localhost:8080")
 
         mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": "response"}}]
-        }
+        mock_response.json.return_value = {"choices": [{"message": {"content": "response"}}]}
         mock_response.headers = {}
 
         client._client = AsyncMock()
@@ -134,9 +130,7 @@ class TestLlamaCppClientGenerate:
         client = LlamaCppClient(base_url="http://localhost:8080")
 
         mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": "response"}}]
-        }
+        mock_response.json.return_value = {"choices": [{"message": {"content": "response"}}]}
         mock_response.headers = {}
 
         client._client = AsyncMock()
@@ -170,9 +164,7 @@ class TestLlamaCppClientErrors:
         client = LlamaCppClient(base_url="http://localhost:9999")
 
         client._client = AsyncMock()
-        client._client.post = AsyncMock(
-            side_effect=httpx.ConnectError("Connection refused")
-        )
+        client._client.post = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
 
         with pytest.raises(ConnectionError) as exc_info:
             await client.generate("prompt")
@@ -204,9 +196,7 @@ class TestLlamaCppClientErrors:
         client = LlamaCppClient(base_url="http://localhost:8080")
 
         mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": ""}}]
-        }
+        mock_response.json.return_value = {"choices": [{"message": {"content": ""}}]}
         mock_response.headers = {}
 
         client._client = AsyncMock()
@@ -232,9 +222,7 @@ class TestLlamaCppClientTiming:
         client = LlamaCppClient(base_url="http://localhost:8080")
 
         mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": "response"}}]
-        }
+        mock_response.json.return_value = {"choices": [{"message": {"content": "response"}}]}
         mock_response.headers = {
             "X-Llama-Timings": "prompt_n=100;prompt_ms=50.5;predicted_n=50;predicted_ms=250.0"
         }
@@ -256,9 +244,7 @@ class TestLlamaCppClientTiming:
         client = LlamaCppClient(base_url="http://localhost:8080")
 
         mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": "response"}}]
-        }
+        mock_response.json.return_value = {"choices": [{"message": {"content": "response"}}]}
         mock_response.headers = {}
 
         client._client = AsyncMock()

@@ -475,42 +475,52 @@ def test_job_class_exported():
 
 
 # Register default levels
-register_level(LevelDefinition(
-    level=1,
-    name="Basic Queue",
-    points=25,
-    prompt=_LEVEL_1_PROMPT,
-    test_code=_LEVEL_1_TESTS,
-))
+register_level(
+    LevelDefinition(
+        level=1,
+        name="Basic Queue",
+        points=25,
+        prompt=_LEVEL_1_PROMPT,
+        test_code=_LEVEL_1_TESTS,
+    )
+)
 
-register_level(LevelDefinition(
-    level=2,
-    name="Retry with Backoff",
-    points=25,
-    prompt=_LEVEL_2_PROMPT,
-    test_code=_LEVEL_2_TESTS,
-))
+register_level(
+    LevelDefinition(
+        level=2,
+        name="Retry with Backoff",
+        points=25,
+        prompt=_LEVEL_2_PROMPT,
+        test_code=_LEVEL_2_TESTS,
+    )
+)
 
-register_level(LevelDefinition(
-    level=3,
-    name="Priority Queue",
-    points=25,
-    prompt=_LEVEL_3_PROMPT,
-    test_code=_LEVEL_3_TESTS,
-))
+register_level(
+    LevelDefinition(
+        level=3,
+        name="Priority Queue",
+        points=25,
+        prompt=_LEVEL_3_PROMPT,
+        test_code=_LEVEL_3_TESTS,
+    )
+)
 
-register_level(LevelDefinition(
-    level=4,
-    name="Concurrency Bug Fix",
-    points=15,
-    prompt=_LEVEL_4_PROMPT,
-    test_code=_LEVEL_4_TESTS,
-))
+register_level(
+    LevelDefinition(
+        level=4,
+        name="Concurrency Bug Fix",
+        points=15,
+        prompt=_LEVEL_4_PROMPT,
+        test_code=_LEVEL_4_TESTS,
+    )
+)
 
-register_level(LevelDefinition(
-    level=5,
-    name="Multi-file Refactor",
-    points=10,
-    prompt=_LEVEL_5_PROMPT,
-    test_code=_LEVEL_5_TESTS,
-))
+register_level(
+    LevelDefinition(
+        level=5,
+        name="Multi-file Refactor",
+        points=10,
+        prompt=_LEVEL_5_PROMPT,
+        test_code=_LEVEL_5_TESTS,
+    )
+)
