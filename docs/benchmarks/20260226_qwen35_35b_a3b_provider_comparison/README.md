@@ -75,6 +75,7 @@ All models are IQ4-class quantizations (~18-20GB) of the same base model (Qwen3.
 | Aspect           | v1 (2026-02-27)                | v2 (2026-03-01)                       |
 | ---------------- | ------------------------------ | ------------------------------------- |
 | **Iterations**   | 5                              | 15 (better statistical significance)  |
+| **Context size** | 40960 tokens                   | 40960 tokens (unchanged)              |
 | **Validation**   | Lambda string matching         | PytestValidator (real pytest tests)   |
 | **Sampler**      | temp=0.1, `/no_think` prefix   | temp=0.6, top_p=0.95 (THINKING_CODING)|
 | **Prompts**      | ~50 chars each                 | 500+ chars with clear requirements    |
