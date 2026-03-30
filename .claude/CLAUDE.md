@@ -23,9 +23,14 @@ When writing systemd templates, tests, or documentation, use generic paths like 
 - **Template engine**: `src/gpumod/templates/engine.py`
 - **Service drivers**: `src/gpumod/services/drivers/` (vllm, llamacpp, fastapi, docker)
 - **Models**: `src/gpumod/models.py` (Pydantic)
-- **DB**: aiosqlite via `src/gpumod/db/`
+- **DB**: aiosqlite via `src/gpumod/db.py`
 - **Presets**: `presets/` — YAML service definitions
 - **Modes**: `modes/` — YAML mode definitions
+- **Discovery**: `src/gpumod/discovery/` — GPU and model discovery
+- **Fetchers**: `src/gpumod/fetchers/` — model fetchers
+- **LLM**: `src/gpumod/llm/` — LLM integration
+- **Preflight**: `src/gpumod/preflight/` — pre-launch validation
+- **TUI**: `src/gpumod/tui.py` — terminal UI
 
 ## Task Tracking
 
@@ -36,7 +41,6 @@ bd create --title="..." --type=feature --priority=2   # types: epic, feature, ta
 bd ready                                                # find available work
 bd update <id> --status=in_progress                     # claim work
 bd close <id> --reason="..."                            # complete work
-bd sync                                                 # sync with git
 ```
 
 - Create a beads issue **before** writing code
@@ -47,19 +51,19 @@ bd sync                                                 # sync with git
 ## Testing & Quality Gates
 
 ```bash
-pytest tests/                    # full suite
-pytest tests/unit/               # unit only
-ruff check src/ tests/           # lint
-ruff format --check src/ tests/  # format check
-mypy src/ --strict               # type check
+uv run pytest tests/                    # full suite
+uv run pytest tests/unit/               # unit only
+uv run ruff check src/ tests/           # lint
+uv run ruff format --check src/ tests/  # format check
+uv run mypy src/ --strict               # type check
 ```
 
-| Gate   | Command                        | Requirement |
-|--------|--------------------------------|-------------|
-| Lint   | `ruff check src/ tests/`       | 0 errors    |
-| Format | `ruff format --check src/ tests/` | No changes |
-| Types  | `mypy src/ --strict`           | 0 errors    |
-| Tests  | `pytest tests/unit/ -q`        | All pass    |
+| Gate   | Command                                | Requirement |
+|--------|----------------------------------------|-------------|
+| Lint   | `uv run ruff check src/ tests/`        | 0 errors    |
+| Format | `uv run ruff format --check src/ tests/` | No changes |
+| Types  | `uv run mypy src/ --strict`            | 0 errors    |
+| Tests  | `uv run pytest tests/unit/ -q`         | All pass    |
 
 - All tests use pytest with pytest-asyncio
 - **TDD is mandatory**: write the failing test first, watch it fail, then write minimal code to pass
@@ -72,7 +76,7 @@ mypy src/ --strict               # type check
 
 Follow **SOLID**:
 
-- **S**ingle Responsibility: each module/class does one thing (e.g. `mcp_installer.py` separates detection, rendering, and installation)
+- **S**ingle Responsibility: each module/class does one thing (e.g. `mcp_server.py` separates tools, resources, and server lifecycle)
 - **O**pen/Closed: extend via new drivers/templates, not by modifying existing ones
 - **L**iskov Substitution: drivers are interchangeable behind the same interface
 - **I**nterface Segregation: small, focused interfaces (e.g. `TemplateEngine` vs `UnitFileInstaller`)
@@ -88,9 +92,12 @@ Follow **SOLID**:
 ## Conventions
 
 - Python 3.12+, `from __future__ import annotations`
+- Use `uv run python` or `uv run pytest` (uv + pyproject.toml)
 - Ruff for linting and formatting
 - Typer for CLI commands
+- Pydantic for models and validation
 - Jinja2 sandboxed templates for systemd unit generation
+- pytest + pytest-asyncio for testing
 - User-level systemd units (`WantedBy=default.target`, no `User=` directive)
 - All templates must include `StartLimitBurst` and `StartLimitIntervalSec` in `[Unit]`
 
