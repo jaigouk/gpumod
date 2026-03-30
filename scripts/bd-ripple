@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# bd-ripple — Event-driven ticket freshness flagging
+#
+# After closing a ticket, this script traverses the dependency graph
+# and flags open siblings/dependents with review_needed label + comment.
+#
+# Usage:
+#   bd-ripple <closed-ticket-id> [context summary]
+#
+# Examples:
+#   bd-ripple gpumod-a3f2dd "Added docker compose driver; service model changed"
+#   bd-ripple gpumod-a3f2dd   # uses close_reason as context
+#
+# What it does:
+#   1. Reads the closed ticket's close_reason (or uses provided summary)
+#   2. Finds open siblings (children of same parent)
+#   3. Finds open dependents (tickets blocked by the closed one)
+#   4. Adds review_needed label to each
+#   5. Adds a comment explaining what changed
+#   6. Prints a summary
+
+TICKET_ID="${1:-}"
+CONTEXT="${2:-}"
+
+if [[ -z "$TICKET_ID" ]]; then
+    echo "Usage: bd-ripple <closed-ticket-id> [context summary]"
+    echo ""
+    echo "Flags open siblings and dependents with review_needed after a ticket closes."
+    exit 1
+fi
+
+# Get the closed ticket info
+TICKET_JSON=$(bd show "$TICKET_ID" --json 2>/dev/null) || {
+    echo "Error: Could not read ticket $TICKET_ID"
+    exit 1
+}
+
+STATUS=$(echo "$TICKET_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['status'])")
+if [[ "$STATUS" != "closed" ]]; then
+    echo "Warning: $TICKET_ID is not closed (status: $STATUS). Ripple review is for post-close flagging."
+    echo "Continue anyway? (y/N)"
+    read -r REPLY
+    [[ "$REPLY" =~ ^[Yy]$ ]] || exit 0
+fi
+
+# Get context: use provided summary, or fall back to close_reason
+if [[ -z "$CONTEXT" ]]; then
+    CONTEXT=$(echo "$TICKET_JSON" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)[0]
+reason = data.get('close_reason', '') or ''
+print(reason)
+")
+fi
+
+# Enforce non-empty context: every ripple must have a context diff
+if [[ -z "$CONTEXT" || "$CONTEXT" == "Closed" ]]; then
+    echo "Error: Non-empty context summary required for ripple review."
+    echo ""
+    echo "Provide context as the second argument:"
+    echo "  scripts/bd-ripple $TICKET_ID \"<what this ticket produced>\""
+    echo ""
+    echo "Or close with a reason first:"
+    echo "  bd close $TICKET_ID --reason \"<what changed>\""
+    exit 1
+fi
+
+TITLE=$(echo "$TICKET_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['title'])")
+
+# Find parent to get siblings
+PARENT_ID=$(echo "$TICKET_JSON" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)[0]
+for dep in data.get('dependencies', []):
+    if dep.get('dependency_type') == 'parent-child' or dep.get('type') == 'parent-child':
+        print(dep.get('id', dep.get('depends_on_id', '')))
+        break
+" 2>/dev/null || true)
+
+# Collect tickets to flag
+declare -a TO_FLAG=()
+
+# 1. Open siblings (children of same parent, excluding self and closed tickets)
+if [[ -n "$PARENT_ID" ]]; then
+    SIBLINGS=$(bd children "$PARENT_ID" --json 2>/dev/null | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for t in data:
+    if t['id'] != '$TICKET_ID' and t['status'] in ('open', 'in_progress'):
+        print(t['id'])
+" 2>/dev/null || true)
+
+    while IFS= read -r sib; do
+        [[ -n "$sib" ]] && TO_FLAG+=("$sib")
+    done <<< "$SIBLINGS"
+fi
+
+# 2. Open dependents (tickets that this one blocks)
+DEPENDENTS=$(echo "$TICKET_JSON" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)[0]
+for dep in data.get('dependents', []):
+    dep_type = dep.get('dependency_type', dep.get('type', ''))
+    if dep_type == 'blocks' and dep.get('status', 'open') in ('open', 'in_progress'):
+        print(dep['id'])
+" 2>/dev/null || true)
+
+while IFS= read -r dep; do
+    [[ -n "$dep" ]] && TO_FLAG+=("$dep")
+done <<< "$DEPENDENTS"
+
+# 3. Open related tickets (bidirectional related_to links)
+RELATED=$(echo "$TICKET_JSON" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)[0]
+for dep in data.get('dependencies', []) + data.get('dependents', []):
+    dep_type = dep.get('dependency_type', dep.get('type', ''))
+    if dep_type == 'related' and dep.get('status', 'open') in ('open', 'in_progress'):
+        print(dep['id'])
+" 2>/dev/null || true)
+
+while IFS= read -r rel; do
+    [[ -n "$rel" ]] && TO_FLAG+=("$rel")
+done <<< "$RELATED"
+
+# Deduplicate (guard: printf on empty array emits a newline → sort -u keeps it as empty string)
+if [[ ${#TO_FLAG[@]} -gt 0 ]]; then
+    readarray -t TO_FLAG < <(printf '%s\n' "${TO_FLAG[@]}" | grep -v '^$' | sort -u)
+fi
+
+if [[ ${#TO_FLAG[@]} -eq 0 ]]; then
+    echo "No open siblings or dependents found for $TICKET_ID."
+    echo ""
+    echo "Hint: If this ticket belongs to an epic, ensure formal dependencies exist"
+    echo "      (bd dep add <dependent> $TICKET_ID) so ripple can traverse the graph."
+    exit 0
+fi
+
+# Flag each ticket
+COMMENT="**Ripple review needed** -- \`$TICKET_ID\` ($TITLE) was closed.
+
+**What changed:** $CONTEXT
+
+**Review checklist:**
+- [ ] Read the description -- does it still match the new context?
+- [ ] Check acceptance criteria -- are any obsolete, incomplete, or contradicted?
+- [ ] Verify architecture alignment -- do module boundaries still hold?
+- [ ] **Compatibility check** (MANDATORY for dependents) -- read the actual source files delivered by \`$TICKET_ID\`. Then trace the interfaces this ticket assumes:
+  - Do assumed functions/classes exist and are they accessible?
+  - Do method signatures (params + return types) match what was delivered?
+  - Are dependencies concrete (not \"magic happens here\")?
+  - Cite file:line for each verified claim. No claim without evidence.
+- [ ] Update or dismiss -- apply changes, or mark as unchanged if still valid."
+
+echo ""
+echo "=== Ripple Review: $TICKET_ID closed ==="
+echo "Context: $CONTEXT"
+echo ""
+echo "Flagging ${#TO_FLAG[@]} ticket(s):"
+echo ""
+
+FLAGGED=0
+for tid in "${TO_FLAG[@]}"; do
+    # Check if already has review_needed label
+    HAS_LABEL=$(bd label list "$tid" 2>/dev/null | grep -c "review_needed" || true)
+    if [[ "$HAS_LABEL" -gt 0 ]]; then
+        echo "  ⊘ $tid — already flagged, adding comment"
+    else
+        bd update "$tid" --add-label review_needed 2>/dev/null || {
+            echo "  ✗ $tid — failed to add label"
+            continue
+        }
+        echo "  ✓ $tid — flagged with review_needed"
+    fi
+
+    # Add comment with context
+    bd comments add "$tid" "$COMMENT" 2>/dev/null || {
+        echo "    (failed to add comment)"
+    }
+
+    FLAGGED=$((FLAGGED + 1))
+done
+
+echo ""
+echo "Done. $FLAGGED ticket(s) flagged for review."
+echo ""
+echo "To see all flagged tickets:  bd query label=review_needed"
+echo "To clear after review:       bd update <id> --remove-label review_needed"
