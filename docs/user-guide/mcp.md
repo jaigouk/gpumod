@@ -12,6 +12,14 @@ querying status, simulating VRAM, and switching modes.
 All IDE configurations below assume you cloned gpumod and installed it
 with `uv sync`. Adjust `command` paths if you used pip instead.
 
+!!! warning "OpenTelemetry stdout pollution"
+
+    gpumod depends on opentelemetry. Without `OTEL_SDK_DISABLED=true` in
+    the env block, the SDK may print a startup message to stdout on some
+    systems. This corrupts the JSON-RPC stream and causes MCP clients to
+    fail with `Failed to parse JSONRPC message from server`. Always include
+    `"OTEL_SDK_DISABLED": "true"` in your MCP server config.
+
 ## Claude Code
 
 Claude Code discovers MCP servers from `.mcp.json` in the project root.
@@ -24,7 +32,8 @@ Create this file in your project (or home directory for global access):
       "command": "uv",
       "args": ["--directory", "/path/to/gpumod", "run", "python", "-m", "gpumod.mcp_main"],
       "env": {
-        "GPUMOD_DB_PATH": "~/.config/gpumod/gpumod.db"
+        "GPUMOD_DB_PATH": "~/.config/gpumod/gpumod.db",
+        "OTEL_SDK_DISABLED": "true"
       }
     }
   }
@@ -50,7 +59,8 @@ root. Create the file:
       "command": "uv",
       "args": ["--directory", "/path/to/gpumod", "run", "python", "-m", "gpumod.mcp_main"],
       "env": {
-        "GPUMOD_DB_PATH": "~/.config/gpumod/gpumod.db"
+        "GPUMOD_DB_PATH": "~/.config/gpumod/gpumod.db",
+        "OTEL_SDK_DISABLED": "true"
       }
     }
   }
@@ -72,7 +82,8 @@ Add to `~/.config/claude/claude_desktop_config.json` (Linux) or
       "command": "uv",
       "args": ["--directory", "/path/to/gpumod", "run", "python", "-m", "gpumod.mcp_main"],
       "env": {
-        "GPUMOD_DB_PATH": "~/.config/gpumod/gpumod.db"
+        "GPUMOD_DB_PATH": "~/.config/gpumod/gpumod.db",
+        "OTEL_SDK_DISABLED": "true"
       }
     }
   }
@@ -97,7 +108,8 @@ Antigravity stores MCP config in `mcp_config.json`. To edit it:
       "command": "uv",
       "args": ["--directory", "/path/to/gpumod", "run", "python", "-m", "gpumod.mcp_main"],
       "env": {
-        "GPUMOD_DB_PATH": "~/.config/gpumod/gpumod.db"
+        "GPUMOD_DB_PATH": "~/.config/gpumod/gpumod.db",
+        "OTEL_SDK_DISABLED": "true"
       }
     }
   }

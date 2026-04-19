@@ -101,11 +101,19 @@ for complex questions like "Can I run Qwen3-235B on 24GB?".
   "mcpServers": {
     "gpumod": {
       "command": "uv",
-      "args": ["--directory", "/path/to/gpumod", "run", "python", "-m", "gpumod.mcp_main"]
+      "args": ["--directory", "/path/to/gpumod", "run", "python", "-m", "gpumod.mcp_main"],
+      "env": {
+        "OTEL_SDK_DISABLED": "true"
+      }
     }
   }
 }
 ```
+
+> **Important:** gpumod depends on opentelemetry. Without `OTEL_SDK_DISABLED=true`,
+> the SDK may print a startup message to stdout, which corrupts the JSON-RPC
+> stream and causes MCP clients (Hermes, Claude Code, etc.) to fail with
+> `Failed to parse JSONRPC message from server`.
 
 See [MCP Integration](docs/user-guide/mcp.md) for setup instructions for Claude Code,
 Cursor, Claude Desktop, and Antigravity.
