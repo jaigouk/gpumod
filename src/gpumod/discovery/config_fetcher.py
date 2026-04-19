@@ -32,6 +32,14 @@ class ConfigFetchError(Exception):
         self.repo_id = repo_id
 
 
+_ALLOWED_HOSTS: frozenset[str] = frozenset({"huggingface.co", "hf.co"})
+
+
+def _is_allowed_host(hostname: str) -> bool:
+    """Check hostname against the HuggingFace allow-list (exact or subdomain)."""
+    return any(hostname == h or hostname.endswith(f".{h}") for h in _ALLOWED_HOSTS)
+
+
 def _status_to_error(
     status_code: int, url: str, repo_id: str
 ) -> ConfigNotFoundError | ConfigFetchError:
@@ -121,6 +129,9 @@ class ConfigFetcher:
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             try:
                 response = await client.get(url)
+
+                if not _is_allowed_host(str(response.url.host)):
+                    raise ConfigFetchError(status_code=-1, url=str(response.url), repo_id=repo_id)
 
                 if response.status_code == 404:
                     # Could be repo not found or config.json not found

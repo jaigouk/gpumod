@@ -9,7 +9,10 @@ import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx as _real_httpx
 import pytest
+
+_DEFAULT_MOCK_URL = _real_httpx.URL("https://huggingface.co/test/model/raw/main/config.json")
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -130,6 +133,7 @@ class TestConfigFetcher:
 
         with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
             mock_response = MagicMock()
+            mock_response.url = _DEFAULT_MOCK_URL
             mock_response.status_code = 200
             mock_response.json.return_value = sample_config_json
             mock_response.raise_for_status = MagicMock()
@@ -156,6 +160,7 @@ class TestConfigFetcher:
 
         with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
             mock_response = MagicMock()
+            mock_response.url = _DEFAULT_MOCK_URL
             mock_response.status_code = 200
             mock_response.json.return_value = moe_config_json
             mock_response.raise_for_status = MagicMock()
@@ -181,6 +186,7 @@ class TestConfigFetcher:
 
         with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
             mock_response = MagicMock()
+            mock_response.url = _DEFAULT_MOCK_URL
             mock_response.status_code = 200
             mock_response.json.return_value = deepseek_moe_config_json
             mock_response.raise_for_status = MagicMock()
@@ -204,6 +210,7 @@ class TestConfigFetcher:
 
         with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
             mock_response = MagicMock()
+            mock_response.url = _DEFAULT_MOCK_URL
             mock_response.status_code = 200
             mock_response.json.return_value = {"architectures": ["Test"]}
             mock_response.raise_for_status = MagicMock()
@@ -238,6 +245,7 @@ class TestConfigFetcher:
             mock_httpx.TooManyRedirects = httpx.TooManyRedirects
 
             mock_response = MagicMock()
+            mock_response.url = _DEFAULT_MOCK_URL
             mock_response.status_code = 404
 
             mock_client = AsyncMock()
@@ -264,6 +272,7 @@ class TestConfigFetcher:
             mock_httpx.TooManyRedirects = httpx.TooManyRedirects
 
             mock_response = MagicMock()
+            mock_response.url = _DEFAULT_MOCK_URL
             mock_response.status_code = 404
 
             mock_client = AsyncMock()
@@ -284,6 +293,7 @@ class TestConfigFetcher:
 
         with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
             mock_response = MagicMock()
+            mock_response.url = _DEFAULT_MOCK_URL
             mock_response.status_code = 200
             mock_response.json.return_value = sample_config_json
             mock_response.raise_for_status = MagicMock()
@@ -317,6 +327,7 @@ class TestConfigFetcherCache:
 
         with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
             mock_response = MagicMock()
+            mock_response.url = _DEFAULT_MOCK_URL
             mock_response.status_code = 200
             mock_response.json.return_value = sample_config_json
             mock_response.raise_for_status = MagicMock()
@@ -346,6 +357,7 @@ class TestConfigFetcherCache:
 
         with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
             mock_response = MagicMock()
+            mock_response.url = _DEFAULT_MOCK_URL
             mock_response.status_code = 200
             mock_response.json.return_value = sample_config_json
             mock_response.raise_for_status = MagicMock()
@@ -376,6 +388,7 @@ class TestConfigFetcherCache:
 
         with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
             mock_response = MagicMock()
+            mock_response.url = _DEFAULT_MOCK_URL
             mock_response.status_code = 200
             mock_response.json.return_value = sample_config_json
             mock_response.raise_for_status = MagicMock()
@@ -422,6 +435,7 @@ class TestConfigFetcherParseLogic:
 
         with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
             mock_response = MagicMock()
+            mock_response.url = _DEFAULT_MOCK_URL
             mock_response.status_code = 200
             mock_response.json.return_value = config_json
             mock_response.raise_for_status = MagicMock()
@@ -448,6 +462,7 @@ class TestConfigFetcherParseLogic:
 
         with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
             mock_response = MagicMock()
+            mock_response.url = _DEFAULT_MOCK_URL
             mock_response.status_code = 200
             mock_response.json.return_value = config_json
             mock_response.raise_for_status = MagicMock()
@@ -474,6 +489,7 @@ class TestConfigFetcherParseLogic:
 
         with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
             mock_response = MagicMock()
+            mock_response.url = _DEFAULT_MOCK_URL
             mock_response.status_code = 200
             mock_response.json.return_value = config_json
             mock_response.raise_for_status = MagicMock()
@@ -500,6 +516,7 @@ class TestConfigFetcherParseLogic:
 
         with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
             mock_response = MagicMock()
+            mock_response.url = _DEFAULT_MOCK_URL
             mock_response.status_code = 200
             mock_response.json.return_value = config_json
             mock_response.raise_for_status = MagicMock()
@@ -527,6 +544,7 @@ class TestConfigFetcherParseLogic:
 
         with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
             mock_response = MagicMock()
+            mock_response.url = _DEFAULT_MOCK_URL
             mock_response.status_code = 200
             mock_response.json.return_value = config_json
             mock_response.raise_for_status = MagicMock()
@@ -567,6 +585,7 @@ class TestConfigFetcherErrorHandling:
 
         with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
             mock_response = MagicMock()
+            mock_response.url = _DEFAULT_MOCK_URL
             mock_response.status_code = 200
             mock_response.json.return_value = {"architectures": ["Test"]}
             mock_response.raise_for_status = MagicMock()
@@ -597,6 +616,7 @@ class TestConfigFetcherErrorHandling:
             mock_httpx.TooManyRedirects = httpx.TooManyRedirects
 
             mock_response = MagicMock()
+            mock_response.url = _DEFAULT_MOCK_URL
             mock_response.status_code = 500
             exc = _make_http_status_error(
                 500, "https://huggingface.co/test/model/raw/main/config.json"
@@ -629,6 +649,7 @@ class TestConfigFetcherErrorHandling:
             mock_httpx.TooManyRedirects = httpx.TooManyRedirects
 
             mock_response = MagicMock()
+            mock_response.url = _DEFAULT_MOCK_URL
             mock_response.status_code = 502
             exc = _make_http_status_error(
                 502, "https://huggingface.co/test/model/raw/main/config.json"
@@ -659,6 +680,7 @@ class TestConfigFetcherErrorHandling:
             mock_httpx.TooManyRedirects = httpx.TooManyRedirects
 
             mock_response = MagicMock()
+            mock_response.url = _DEFAULT_MOCK_URL
             mock_response.status_code = 401
             exc = _make_http_status_error(
                 401, "https://huggingface.co/test/gated/raw/main/config.json"
@@ -690,6 +712,7 @@ class TestConfigFetcherErrorHandling:
             mock_httpx.TooManyRedirects = httpx.TooManyRedirects
 
             mock_response = MagicMock()
+            mock_response.url = _DEFAULT_MOCK_URL
             mock_response.status_code = 403
             exc = _make_http_status_error(
                 403, "https://huggingface.co/test/gated/raw/main/config.json"
@@ -786,3 +809,170 @@ class TestConfigFetcherErrorHandling:
                 await fetcher.fetch("test/model")
             assert excinfo.value.status_code == -1
             assert excinfo.value.repo_id == "test/model"
+
+
+# ---------------------------------------------------------------------------
+# TestConfigFetcherSSRF - redirect hostname allow-list
+# ---------------------------------------------------------------------------
+
+
+class TestConfigFetcherSSRF:
+    """Tests for SSRF redirect hostname validation."""
+
+    def _make_response(
+        self, url: str, status_code: int = 200, json_data: dict[str, Any] | None = None
+    ) -> MagicMock:
+        """Build a mock response with a parsed URL."""
+        import httpx as _httpx
+
+        mock_response = MagicMock()
+        mock_response.status_code = status_code
+        mock_response.url = _httpx.URL(url)
+        mock_response.json.return_value = json_data or {"architectures": ["TestArch"]}
+        mock_response.raise_for_status = MagicMock()
+        return mock_response
+
+    async def test_fetch_rejects_redirect_to_external_host(self) -> None:
+        """Redirect landing on an external host raises ConfigFetchError."""
+        import httpx
+
+        from gpumod.discovery.config_fetcher import ConfigFetcher, ConfigFetchError
+
+        fetcher = ConfigFetcher()
+
+        with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
+            mock_httpx.HTTPStatusError = httpx.HTTPStatusError
+            mock_httpx.RequestError = httpx.RequestError
+            mock_httpx.TooManyRedirects = httpx.TooManyRedirects
+
+            mock_response = self._make_response("https://evil.com/config.json")
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_httpx.AsyncClient.return_value = mock_client
+
+            with pytest.raises(ConfigFetchError) as excinfo:
+                await fetcher.fetch("test/model")
+            assert excinfo.value.status_code == -1
+            assert "test/model" in str(excinfo.value)
+
+    async def test_fetch_rejects_redirect_to_metadata_ip(self) -> None:
+        """Redirect to cloud metadata IP raises ConfigFetchError."""
+        import httpx
+
+        from gpumod.discovery.config_fetcher import ConfigFetcher, ConfigFetchError
+
+        fetcher = ConfigFetcher()
+
+        with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
+            mock_httpx.HTTPStatusError = httpx.HTTPStatusError
+            mock_httpx.RequestError = httpx.RequestError
+            mock_httpx.TooManyRedirects = httpx.TooManyRedirects
+
+            mock_response = self._make_response("http://169.254.169.254/latest/meta-data/")
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_httpx.AsyncClient.return_value = mock_client
+
+            with pytest.raises(ConfigFetchError):
+                await fetcher.fetch("test/model")
+
+    async def test_fetch_allows_huggingface_subdomain(self) -> None:
+        """Redirect to *.huggingface.co is allowed."""
+        import httpx
+
+        from gpumod.discovery.config_fetcher import ConfigFetcher
+
+        fetcher = ConfigFetcher()
+
+        with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
+            mock_httpx.HTTPStatusError = httpx.HTTPStatusError
+            mock_httpx.RequestError = httpx.RequestError
+            mock_httpx.TooManyRedirects = httpx.TooManyRedirects
+
+            mock_response = self._make_response(
+                "https://cdn-lfs.huggingface.co/test/model/raw/main/config.json"
+            )
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_httpx.AsyncClient.return_value = mock_client
+
+            result = await fetcher.fetch("test/model")
+            assert result.repo_id == "test/model"
+
+    async def test_fetch_allows_hf_co_domain(self) -> None:
+        """Redirect to hf.co is allowed."""
+        import httpx
+
+        from gpumod.discovery.config_fetcher import ConfigFetcher
+
+        fetcher = ConfigFetcher()
+
+        with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
+            mock_httpx.HTTPStatusError = httpx.HTTPStatusError
+            mock_httpx.RequestError = httpx.RequestError
+            mock_httpx.TooManyRedirects = httpx.TooManyRedirects
+
+            mock_response = self._make_response("https://hf.co/test/model/raw/main/config.json")
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_httpx.AsyncClient.return_value = mock_client
+
+            result = await fetcher.fetch("test/model")
+            assert result.repo_id == "test/model"
+
+    async def test_fetch_rejects_subdomain_spoofing(self) -> None:
+        """huggingface.co.evil.com must NOT be allowed."""
+        import httpx
+
+        from gpumod.discovery.config_fetcher import ConfigFetcher, ConfigFetchError
+
+        fetcher = ConfigFetcher()
+
+        with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
+            mock_httpx.HTTPStatusError = httpx.HTTPStatusError
+            mock_httpx.RequestError = httpx.RequestError
+            mock_httpx.TooManyRedirects = httpx.TooManyRedirects
+
+            mock_response = self._make_response("https://huggingface.co.evil.com/config.json")
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_httpx.AsyncClient.return_value = mock_client
+
+            with pytest.raises(ConfigFetchError):
+                await fetcher.fetch("test/model")
+
+    async def test_fetch_no_redirect_unaffected(self) -> None:
+        """Normal fetch from huggingface.co works without regression."""
+        import httpx
+
+        from gpumod.discovery.config_fetcher import ConfigFetcher
+
+        fetcher = ConfigFetcher()
+
+        with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
+            mock_httpx.HTTPStatusError = httpx.HTTPStatusError
+            mock_httpx.RequestError = httpx.RequestError
+            mock_httpx.TooManyRedirects = httpx.TooManyRedirects
+
+            mock_response = self._make_response(
+                "https://huggingface.co/test/model/raw/main/config.json"
+            )
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_httpx.AsyncClient.return_value = mock_client
+
+            result = await fetcher.fetch("test/model")
+            assert result.repo_id == "test/model"
+            assert result.architectures == ["TestArch"]
