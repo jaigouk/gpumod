@@ -732,3 +732,57 @@ class TestConfigFetcherErrorHandling:
                 await fetcher.fetch("test/loop")
             assert excinfo.value.status_code == -1
             assert excinfo.value.repo_id == "test/loop"
+
+    async def test_fetch_raises_config_fetch_error_on_connect_error(self) -> None:
+        """httpx.ConnectError translates to ConfigFetchError with sentinel status."""
+        import httpx
+
+        from gpumod.discovery.config_fetcher import ConfigFetcher, ConfigFetchError
+
+        fetcher = ConfigFetcher()
+
+        with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
+            mock_httpx.HTTPStatusError = httpx.HTTPStatusError
+            mock_httpx.RequestError = httpx.RequestError
+            mock_httpx.TooManyRedirects = httpx.TooManyRedirects
+
+            request = httpx.Request(
+                "GET", "https://huggingface.co/test/model/raw/main/config.json"
+            )
+            mock_client = AsyncMock()
+            mock_client.get.side_effect = httpx.ConnectError("Connection refused", request=request)
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_httpx.AsyncClient.return_value = mock_client
+
+            with pytest.raises(ConfigFetchError) as excinfo:
+                await fetcher.fetch("test/model")
+            assert excinfo.value.status_code == -1
+            assert excinfo.value.repo_id == "test/model"
+
+    async def test_fetch_raises_config_fetch_error_on_timeout(self) -> None:
+        """httpx.ReadTimeout translates to ConfigFetchError with sentinel status."""
+        import httpx
+
+        from gpumod.discovery.config_fetcher import ConfigFetcher, ConfigFetchError
+
+        fetcher = ConfigFetcher()
+
+        with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
+            mock_httpx.HTTPStatusError = httpx.HTTPStatusError
+            mock_httpx.RequestError = httpx.RequestError
+            mock_httpx.TooManyRedirects = httpx.TooManyRedirects
+
+            request = httpx.Request(
+                "GET", "https://huggingface.co/test/model/raw/main/config.json"
+            )
+            mock_client = AsyncMock()
+            mock_client.get.side_effect = httpx.ReadTimeout("timed out", request=request)
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_httpx.AsyncClient.return_value = mock_client
+
+            with pytest.raises(ConfigFetchError) as excinfo:
+                await fetcher.fetch("test/model")
+            assert excinfo.value.status_code == -1
+            assert excinfo.value.repo_id == "test/model"

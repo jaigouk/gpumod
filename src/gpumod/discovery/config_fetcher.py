@@ -103,7 +103,7 @@ class ConfigFetcher:
 
         Raises:
             ConfigNotFoundError: If config.json doesn't exist, or the repo is gated/private.
-            ConfigFetchError: On non-2xx upstream responses (e.g., 5xx, redirect loops).
+            ConfigFetchError: On non-2xx upstream responses, redirect loops, or network errors.
             RepoNotFoundError: If the repo doesn't exist.
         """
 
@@ -136,7 +136,7 @@ class ConfigFetcher:
             except httpx.RequestError as exc:
                 if "not found" in str(exc).lower():
                     raise RepoNotFoundError(f"Repo not found: {repo_id}") from exc
-                raise
+                raise ConfigFetchError(status_code=-1, url=url, repo_id=repo_id) from exc
 
         # Parse the config
         config = self._parse_config(repo_id, raw_config)
