@@ -1651,6 +1651,30 @@ class TestFetchModelConfig:
             assert "error" in result
             assert result["code"] == "NOT_FOUND"
 
+    async def test_fetch_returns_upstream_error_on_config_fetch_error(self) -> None:
+        """ConfigFetchError from fetcher surfaces as UPSTREAM_ERROR dict."""
+        from gpumod.discovery.config_fetcher import ConfigFetchError
+        from gpumod.mcp_tools import fetch_model_config
+
+        with patch("gpumod.mcp_tools.ConfigFetcher") as fetcher_cls:
+            mock_fetcher = AsyncMock()
+            mock_fetcher.fetch.side_effect = ConfigFetchError(
+                status_code=502,
+                url="https://huggingface.co/test/model/raw/main/config.json",
+                repo_id="test/model",
+            )
+            fetcher_cls.return_value = mock_fetcher
+
+            result = await fetch_model_config(
+                repo_id="test/model",
+                ctx=_make_mock_ctx(),
+            )
+
+            assert result["code"] == "UPSTREAM_ERROR"
+            assert result["status_code"] == 502
+            assert "error" in result
+            assert "test/model" in result["error"]
+
     async def test_fetch_returns_moe_info(self) -> None:
         """MoE model config includes expert count."""
         from gpumod.discovery.config_fetcher import ModelConfig

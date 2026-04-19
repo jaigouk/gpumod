@@ -235,6 +235,7 @@ class TestConfigFetcher:
             # Preserve real exception types for catching
             mock_httpx.HTTPStatusError = httpx.HTTPStatusError
             mock_httpx.RequestError = httpx.RequestError
+            mock_httpx.TooManyRedirects = httpx.TooManyRedirects
 
             mock_response = MagicMock()
             mock_response.status_code = 404
@@ -260,6 +261,7 @@ class TestConfigFetcher:
             # Preserve real exception types for catching
             mock_httpx.HTTPStatusError = httpx.HTTPStatusError
             mock_httpx.RequestError = httpx.RequestError
+            mock_httpx.TooManyRedirects = httpx.TooManyRedirects
 
             mock_response = MagicMock()
             mock_response.status_code = 404
@@ -538,3 +540,195 @@ class TestConfigFetcherParseLogic:
             result = await fetcher.fetch("test/model")
             assert result.is_moe is False
             assert result.num_experts is None
+
+
+# ---------------------------------------------------------------------------
+# TestConfigFetcherErrorHandling - redirects, gated repos, upstream errors
+# ---------------------------------------------------------------------------
+
+
+def _make_http_status_error(status_code: int, url: str) -> Any:
+    """Build a real httpx.HTTPStatusError for a given status code."""
+    import httpx
+
+    request = httpx.Request("GET", url)
+    response = httpx.Response(status_code, request=request)
+    return httpx.HTTPStatusError(f"HTTP {status_code}", request=request, response=response)
+
+
+class TestConfigFetcherErrorHandling:
+    """Tests for redirect following and typed upstream error translation."""
+
+    async def test_fetch_follows_redirects(self) -> None:
+        """fetch() instantiates AsyncClient with follow_redirects=True."""
+        from gpumod.discovery.config_fetcher import ConfigFetcher
+
+        fetcher = ConfigFetcher()
+
+        with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {"architectures": ["Test"]}
+            mock_response.raise_for_status = MagicMock()
+
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_httpx.AsyncClient.return_value = mock_client
+
+            await fetcher.fetch("test/model")
+
+            mock_httpx.AsyncClient.assert_called_once()
+            kwargs = mock_httpx.AsyncClient.call_args.kwargs
+            assert kwargs.get("follow_redirects") is True
+
+    async def test_fetch_raises_config_fetch_error_on_500(self) -> None:
+        """500 response translates to ConfigFetchError with status_code=500."""
+        import httpx
+
+        from gpumod.discovery.config_fetcher import ConfigFetcher, ConfigFetchError
+
+        fetcher = ConfigFetcher()
+
+        with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
+            mock_httpx.HTTPStatusError = httpx.HTTPStatusError
+            mock_httpx.RequestError = httpx.RequestError
+            mock_httpx.TooManyRedirects = httpx.TooManyRedirects
+
+            mock_response = MagicMock()
+            mock_response.status_code = 500
+            exc = _make_http_status_error(
+                500, "https://huggingface.co/test/model/raw/main/config.json"
+            )
+            mock_response.raise_for_status.side_effect = exc
+
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_httpx.AsyncClient.return_value = mock_client
+
+            with pytest.raises(ConfigFetchError) as excinfo:
+                await fetcher.fetch("test/model")
+            assert excinfo.value.status_code == 500
+            assert excinfo.value.repo_id == "test/model"
+            assert "test/model" in str(excinfo.value)
+
+    async def test_fetch_raises_config_fetch_error_on_502(self) -> None:
+        """502 response translates to ConfigFetchError with status_code=502."""
+        import httpx
+
+        from gpumod.discovery.config_fetcher import ConfigFetcher, ConfigFetchError
+
+        fetcher = ConfigFetcher()
+
+        with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
+            mock_httpx.HTTPStatusError = httpx.HTTPStatusError
+            mock_httpx.RequestError = httpx.RequestError
+            mock_httpx.TooManyRedirects = httpx.TooManyRedirects
+
+            mock_response = MagicMock()
+            mock_response.status_code = 502
+            exc = _make_http_status_error(
+                502, "https://huggingface.co/test/model/raw/main/config.json"
+            )
+            mock_response.raise_for_status.side_effect = exc
+
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_httpx.AsyncClient.return_value = mock_client
+
+            with pytest.raises(ConfigFetchError) as excinfo:
+                await fetcher.fetch("test/model")
+            assert excinfo.value.status_code == 502
+
+    async def test_fetch_gated_401_raises_config_not_found(self) -> None:
+        """401 response translates to ConfigNotFoundError mentioning gated/private."""
+        import httpx
+
+        from gpumod.discovery.config_fetcher import ConfigFetcher, ConfigNotFoundError
+
+        fetcher = ConfigFetcher()
+
+        with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
+            mock_httpx.HTTPStatusError = httpx.HTTPStatusError
+            mock_httpx.RequestError = httpx.RequestError
+            mock_httpx.TooManyRedirects = httpx.TooManyRedirects
+
+            mock_response = MagicMock()
+            mock_response.status_code = 401
+            exc = _make_http_status_error(
+                401, "https://huggingface.co/test/gated/raw/main/config.json"
+            )
+            mock_response.raise_for_status.side_effect = exc
+
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_httpx.AsyncClient.return_value = mock_client
+
+            with pytest.raises(ConfigNotFoundError) as excinfo:
+                await fetcher.fetch("test/gated")
+            assert "gated or private" in str(excinfo.value)
+            assert "test/gated" in str(excinfo.value)
+
+    async def test_fetch_gated_403_raises_config_not_found(self) -> None:
+        """403 response translates to ConfigNotFoundError mentioning gated/private."""
+        import httpx
+
+        from gpumod.discovery.config_fetcher import ConfigFetcher, ConfigNotFoundError
+
+        fetcher = ConfigFetcher()
+
+        with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
+            mock_httpx.HTTPStatusError = httpx.HTTPStatusError
+            mock_httpx.RequestError = httpx.RequestError
+            mock_httpx.TooManyRedirects = httpx.TooManyRedirects
+
+            mock_response = MagicMock()
+            mock_response.status_code = 403
+            exc = _make_http_status_error(
+                403, "https://huggingface.co/test/gated/raw/main/config.json"
+            )
+            mock_response.raise_for_status.side_effect = exc
+
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_httpx.AsyncClient.return_value = mock_client
+
+            with pytest.raises(ConfigNotFoundError) as excinfo:
+                await fetcher.fetch("test/gated")
+            assert "gated or private" in str(excinfo.value)
+
+    async def test_fetch_redirect_loop_raises_config_fetch_error(self) -> None:
+        """httpx.TooManyRedirects translates to ConfigFetchError with sentinel status."""
+        import httpx
+
+        from gpumod.discovery.config_fetcher import ConfigFetcher, ConfigFetchError
+
+        fetcher = ConfigFetcher()
+
+        with patch("gpumod.discovery.config_fetcher.httpx") as mock_httpx:
+            mock_httpx.HTTPStatusError = httpx.HTTPStatusError
+            mock_httpx.RequestError = httpx.RequestError
+            mock_httpx.TooManyRedirects = httpx.TooManyRedirects
+
+            request = httpx.Request("GET", "https://huggingface.co/test/loop/raw/main/config.json")
+            mock_client = AsyncMock()
+            mock_client.get.side_effect = httpx.TooManyRedirects(
+                "Exceeded max redirects", request=request
+            )
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_httpx.AsyncClient.return_value = mock_client
+
+            with pytest.raises(ConfigFetchError) as excinfo:
+                await fetcher.fetch("test/loop")
+            assert excinfo.value.status_code == -1
+            assert excinfo.value.repo_id == "test/loop"

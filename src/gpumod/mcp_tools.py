@@ -16,7 +16,11 @@ from typing import TYPE_CHECKING, Any
 
 from fastmcp import Context  # noqa: TC002 -- runtime import needed for FastMCP DI
 
-from gpumod.discovery.config_fetcher import ConfigFetcher, ConfigNotFoundError
+from gpumod.discovery.config_fetcher import (
+    ConfigFetcher,
+    ConfigFetchError,
+    ConfigNotFoundError,
+)
 from gpumod.discovery.content_truncator import TokenTruncator
 from gpumod.discovery.docs_fetcher import DocsNotFoundError, DriverDocsFetcher
 from gpumod.discovery.gguf_metadata import GGUFMetadataFetcher, RepoNotFoundError
@@ -678,6 +682,12 @@ async def fetch_model_config(
 
     except ConfigNotFoundError:
         return _not_found_error(f"config.json not found for {repo_id}")
+    except ConfigFetchError as exc:
+        return {
+            "error": str(exc),
+            "code": "UPSTREAM_ERROR",
+            "status_code": exc.status_code,
+        }
     except RepoNotFoundError:
         return _not_found_error(f"Repository not found: {repo_id}")
 

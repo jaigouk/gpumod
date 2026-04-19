@@ -22,6 +22,27 @@ class ConfigNotFoundError(Exception):
     """Raised when config.json is not found in the repo."""
 
 
+class ConfigFetchError(Exception):
+    """Raised on non-2xx upstream responses that are not 404/401/403."""
+
+    def __init__(self, status_code: int, url: str, repo_id: str) -> None:
+        super().__init__(f"upstream HTTP {status_code} fetching config for {repo_id} ({url})")
+        self.status_code = status_code
+        self.url = url
+        self.repo_id = repo_id
+
+
+def _status_to_error(
+    status_code: int, url: str, repo_id: str
+) -> ConfigNotFoundError | ConfigFetchError:
+    """Map an upstream HTTP status to the appropriate typed exception."""
+    if status_code == 404:
+        return ConfigNotFoundError(f"config.json not found for {repo_id}")
+    if status_code in (401, 403):
+        return ConfigNotFoundError(f"gated or private: {repo_id}")
+    return ConfigFetchError(status_code=status_code, url=url, repo_id=repo_id)
+
+
 @dataclass(frozen=True)
 class ModelConfig:
     """Immutable model configuration parsed from config.json.
@@ -81,7 +102,8 @@ class ConfigFetcher:
             ModelConfig with parsed configuration data.
 
         Raises:
-            ConfigNotFoundError: If config.json doesn't exist in the repo.
+            ConfigNotFoundError: If config.json doesn't exist, or the repo is gated/private.
+            ConfigFetchError: On non-2xx upstream responses (e.g., 5xx, redirect loops).
             RepoNotFoundError: If the repo doesn't exist.
         """
 
@@ -96,7 +118,7 @@ class ConfigFetcher:
         url = self._URL_TEMPLATE.format(repo_id=repo_id)
         logger.debug("Fetching config.json from %s", url)
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             try:
                 response = await client.get(url)
 
@@ -108,9 +130,9 @@ class ConfigFetcher:
                 raw_config = response.json()
 
             except httpx.HTTPStatusError as exc:
-                if exc.response.status_code == 404:
-                    raise ConfigNotFoundError(f"config.json not found for {repo_id}") from exc
-                raise
+                raise _status_to_error(exc.response.status_code, url, repo_id) from exc
+            except httpx.TooManyRedirects as exc:
+                raise ConfigFetchError(status_code=-1, url=url, repo_id=repo_id) from exc
             except httpx.RequestError as exc:
                 if "not found" in str(exc).lower():
                     raise RepoNotFoundError(f"Repo not found: {repo_id}") from exc
