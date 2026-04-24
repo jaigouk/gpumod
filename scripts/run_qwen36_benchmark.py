@@ -74,6 +74,16 @@ MODELS: dict[str, ModelConfig] = {
         port=7101,
         service_id="qwen36-35b-a3b-q4",
     ),
+    "qwen36-35b-a3b-iq4xs": ModelConfig(
+        id="qwen36-35b-a3b-iq4xs",
+        name="Qwen3.6-35B-A3B",
+        architecture="moe-35B-A3B",
+        repo="unsloth/Qwen3.6-35B-A3B-GGUF",
+        quant="UD-IQ4_XS",
+        file="Qwen3.6-35B-A3B-UD-IQ4_XS.gguf",
+        port=7099,
+        service_id="qwen36-35b-a3b-iq4xs",
+    ),
     "gemma4-e4b": ModelConfig(
         id="gemma4-e4b",
         name="Gemma 4 E4B",
@@ -416,7 +426,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        choices=["qwen36-27b", "qwen36-35b-a3b", "gemma4-e4b", "all"],
+        choices=["qwen36-27b", "qwen36-35b-a3b", "qwen36-35b-a3b-iq4xs", "gemma4-e4b", "all"],
         required=True,
         help="Model to benchmark (or 'all' for sequential run)",
     )

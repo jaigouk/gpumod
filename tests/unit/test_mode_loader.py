@@ -220,6 +220,7 @@ class TestProductionModes:
             "blank",
             "finetuning",
             "nemotron",
+            "hermes-agent",
             "multi-agent-gpt-oss",
             "multi-agent-qwen3-coder",
             "multi-agent-qwen3-next",
