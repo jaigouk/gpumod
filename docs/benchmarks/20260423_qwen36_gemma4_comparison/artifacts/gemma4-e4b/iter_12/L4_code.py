@@ -1,0 +1,78 @@
+import threading
+
+class JobQueue:
+    def __init__(self):
+        self.jobs = {}
+        self.results = {}
+        # Initialize the lock to protect shared resources (self.jobs and self.results)
+        self._lock = threading.Lock()
+
+    def add_job(self, job_id, data):
+        """Adds a job to the queue, protected by the lock."""
+        with self._lock:
+            self.jobs[job_id] = data
+        return job_id
+
+    def process_job(self, job_id, processor):
+        """
+        Processes a job. The lock is used to atomically retrieve and remove the job,
+        but the potentially slow processor runs outside the lock to prevent blocking
+        other threads. The lock is reacquired to safely write the result.
+        """
+        data = None
+        
+        # 1. Acquire lock to safely check existence and remove the job
+        with self._lock:
+            if job_id not in self.jobs:
+                return False
+            # Use .pop() to atomically retrieve and remove the job
+            data = self.jobs.pop(job_id)
+        
+        # 2. Run the processor outside the lock (Computation phase)
+        # This prevents the lock from holding up the entire system while the job runs.
+        result = processor(data)
+
+        # 3. Acquire lock again to safely write the result
+        with self._lock:
+            self.results[job_id] = result
+            return True
+
+    def get_result(self, job_id):
+        """Retrieves a result, protected by the lock."""
+        with self._lock:
+            return self.results.get(job_id)
+
+# Example Usage (Demonstration of thread safety)
+if __name__ == '__main__':
+    queue = JobQueue()
+    
+    def job_processor(data):
+        import time
+        time.sleep(0.01) # Simulate work
+        return f"Processed_{data}"
+
+    # Add jobs
+    job1_id = queue.add_job("job1", "data1")
+    job2_id = queue.add_job("job2", "data2")
+    
+    # Simulate multiple threads processing jobs concurrently
+    def worker(job_id, processor):
+        success = queue.process_job(job_id, processor)
+        print(f"Worker attempt on {job_id}: {'Success' if success else 'Failed (Job not found)'}")
+
+    threads = []
+    threads.append(threading.Thread(target=worker, args=(job1_id, job_processor)))
+    threads.append(threading.Thread(target=worker, args=(job2_id, job_processor)))
+    # Attempt to process a non-existent job simultaneously
+    threads.append(threading.Thread(target=worker, args=("job3", job_processor))) 
+
+    for t in threads:
+        t.start()
+
+    for t in threads:
+        t.join()
+
+    print("\n--- Final Results ---")
+    print(f"Result 1: {queue.get_result(job1_id)}")
+    print(f"Result 2: {queue.get_result(job2_id)}")
+    print(f"Result 3 (missing): {queue.get_result('job3')}")

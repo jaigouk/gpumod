@@ -1,0 +1,17 @@
+from collections import deque
+from typing import Dict
+
+class JobQueue:
+    def __init__(self):
+        self._queue: deque = deque()
+        self._results: Dict[str, dict | None] = {}
+
+    def add_job(self, job_id: str, data: dict) -> str:
+        if job_id in self._results:
+            raise ValueError("Job ID already exists")
+        self._queue.append((job_id, data))
+        self._results[job_id] = None
+        return job_id
+
+    def get_result(self, job_id: str) -> dict | None:
+        return self._results.get(job_id)

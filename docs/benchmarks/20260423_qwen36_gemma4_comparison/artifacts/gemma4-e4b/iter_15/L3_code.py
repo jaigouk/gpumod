@@ -1,0 +1,81 @@
+import heapq
+from typing import Optional, Tuple, Dict, Any
+
+class JobQueue:
+    """
+    A priority-based job scheduler queue.
+    Higher priority numbers (2 > 1 > 0) are processed first.
+    Jobs with the same priority maintain FIFO order.
+    """
+    def __init__(self):
+        # Min-heap structure: (priority_negated, insertion_index, job_name, job_data)
+        # Negating priority ensures max-priority items come out first from the min-heap.
+        self._queue = []
+        self._insertion_counter = 0
+
+    def add_job(self, job_name: str, job_data: Dict[str, Any], priority: int = 0) -> None:
+        """
+        Adds a job to the queue with a specified priority.
+        """
+        # Use negative priority for max-heap behavior
+        priority_negated = -priority
+        
+        # Use the counter for FIFO tie-breaking
+        entry = (priority_negated, self._insertion_counter, job_name, job_data)
+        
+        heapq.heappush(self._queue, entry)
+        self._insertion_counter += 1
+
+    def get_next_job(self) -> Optional[Tuple[str, Dict[str, Any]]]:
+        """
+        Retrieves and removes the highest priority job.
+        Returns (job_name, job_data) or None if the queue is empty.
+        """
+        if not self._queue:
+            return None
+        
+        # Pop the smallest element (which corresponds to the highest priority)
+        _, _, job_name, job_data = heapq.heappop(self._queue)
+        return job_name, job_data
+
+    def is_empty(self) -> bool:
+        return not self._queue
+
+# Example Usage:
+if __name__ == '__main__':
+    queue = JobQueue()
+
+    # Normal jobs (Priority 0)
+    queue.add_job("normal_A", {"type": "normal"}, priority=0)
+    queue.add_job("normal_B", {"type": "normal"}, priority=0)
+
+    # High job (Priority 1)
+    queue.add_job("high_job", {"type": "high"}, priority=1)
+
+    # Critical job (Priority 2)
+    queue.add_job("critical_job", {"type": "critical"}, priority=2)
+
+    print("--- Test 1: Priority Ordering ---")
+    # Expected order: critical, high, normal_A, normal_B
+    
+    jobs_processed = []
+    while not queue.is_empty():
+        job = queue.get_next_job()
+        if job:
+            jobs_processed.append(job[0])
+            print(f"Processing: {job[0]}")
+
+    print("\n--- Test 2: FIFO Tie-breaking ---")
+    queue2 = JobQueue()
+    queue2.add_job("first_normal", {"type": "normal"}, priority=0)
+    queue2.add_job("second_normal", {"type": "normal"}, priority=0)
+    queue2.add_job("third_normal", {"type": "normal"}, priority=0)
+
+    jobs_processed = []
+    while not queue2.is_empty():
+        job = queue2.get_next_job()
+        if job:
+            jobs_processed.append(job[0])
+            print(f"Processing: {job[0]}")
+    
+    assert jobs_processed == ["first_normal", "second_normal", "third_normal"]

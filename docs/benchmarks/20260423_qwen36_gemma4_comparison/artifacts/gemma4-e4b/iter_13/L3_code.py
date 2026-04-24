@@ -1,0 +1,74 @@
+import heapq
+from typing import Optional, Tuple, Dict
+
+class JobQueue:
+    """
+    Implements a priority-based job scheduling queue.
+    Higher priority numbers (2 > 1 > 0) mean higher urgency.
+    """
+    def __init__(self):
+        # The heap stores tuples: (-priority, insertion_index, job_name, job_data)
+        # Negating priority makes it a max-heap based on priority.
+        self._queue: list[Tuple[int, int, str, Dict]] = []
+        self._counter = 0
+
+    def add_job(self, name: str, data: Dict, priority: int = 0) -> None:
+        """
+        Adds a job to the queue with a specified priority.
+        
+        :param name: Name of the job.
+        :param data: Data associated with the job.
+        :param priority: Priority level (0=Normal, 1=High, 2=Critical).
+        """
+        # Use negative priority for min-heap to function as max-heap for priority
+        neg_priority = -priority
+        
+        # Use the counter to maintain FIFO order for jobs with the same priority
+        entry = (neg_priority, self._counter, name, data)
+        heapq.heappush(self._queue, entry)
+        self._counter += 1
+
+    def get_next_job(self) -> Optional[Tuple[str, Dict]]:
+        """
+        Retrieves and removes the highest priority job from the queue.
+        
+        :return: A tuple (job_name, job_data) or None if the queue is empty.
+        """
+        if not self._queue:
+            return None
+        
+        # Pop the smallest element (which corresponds to the highest priority job)
+        neg_priority, _, job_name, job_data = heapq.heappop(self._queue)
+        
+        return job_name, job_data
+
+# Example Usage:
+if __name__ == '__main__':
+    queue = JobQueue()
+    
+    # 1. Normal (0)
+    queue.add_job("normal_1", {"type": "normal"}, priority=0)
+    
+    # 2. Critical (2)
+    queue.add_job("critical_1", {"type": "critical"}, priority=2)
+    
+    # 3. High (1)
+    queue.add_job("high_1", {"type": "high"}, priority=1)
+    
+    # 4. Normal (0) - Should come after normal_1 due to FIFO
+    queue.add_job("normal_2", {"type": "normal"}, priority=0)
+    
+    # 5. Critical (2) - Should come after critical_1 due to FIFO
+    queue.add_job("critical_2", {"type": "critical"}, priority=2)
+
+    print("--- Processing Jobs ---")
+    
+    # Expected order: critical_1, critical_2, high_1, normal_1, normal_2
+    
+    while True:
+        job = queue.get_next_job()
+        if job is None:
+            break
+        
+        name, data = job
+        print(f"Processing: {name} (Priority: {data.get('type')})")

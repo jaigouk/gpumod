@@ -75,11 +75,12 @@ class LlamaCppClient:
             msg = f"Request to {self.base_url} timed out after {self.timeout}s"
             raise TimeoutError(msg) from e
 
-        # Extract timing from headers if available
-        self._extract_timing(response.headers)
-
         # Parse response
         data: dict[str, Any] = response.json()
+
+        # Extract timing from response body (preferred) or headers (fallback)
+        self._extract_timing(data, response.headers)
+
         choices: list[dict[str, Any]] = data.get("choices", [])
         if not choices:
             return ""
@@ -88,11 +89,38 @@ class LlamaCppClient:
         content: str = message.get("content", "")
         return content
 
-    def _extract_timing(self, headers: httpx.Headers | dict[str, str]) -> None:
-        """Extract timing info from X-Llama-Timings header.
+    def _extract_timing(
+        self,
+        data: dict[str, Any],
+        headers: httpx.Headers | dict[str, str],
+    ) -> None:
+        """Extract timing from response body ``timings``/``usage`` fields.
 
-        Format: prompt_n=100;prompt_ms=50.5;predicted_n=50;predicted_ms=250.0
+        Falls back to the ``X-Llama-Timings`` header when the body
+        fields are absent (older llama.cpp builds).
         """
+        body_timings: dict[str, Any] | None = data.get("timings")
+        usage: dict[str, Any] | None = data.get("usage")
+
+        if body_timings:
+            self.last_timing = {
+                "prompt_tokens": body_timings.get("prompt_n", 0),
+                "generated_tokens": body_timings.get("predicted_n", 0),
+                "prompt_ms": body_timings.get("prompt_ms", 0.0),
+                "generation_ms": body_timings.get("predicted_ms", 0.0),
+            }
+            return
+
+        if usage:
+            self.last_timing = {
+                "prompt_tokens": usage.get("prompt_tokens", 0),
+                "generated_tokens": usage.get("completion_tokens", 0),
+                "prompt_ms": 0.0,
+                "generation_ms": 0.0,
+            }
+            return
+
+        # Legacy header fallback
         timing_header = headers.get("X-Llama-Timings")
         if not timing_header:
             self.last_timing = None
@@ -104,8 +132,6 @@ class LlamaCppClient:
                 key, value = part.split("=", 1)
                 key = key.strip()
                 value = value.strip()
-
-                # Map to friendlier names
                 if key == "prompt_n":
                     timing["prompt_tokens"] = int(value)
                 elif key == "predicted_n":

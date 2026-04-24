@@ -1,0 +1,132 @@
+import time
+from typing import Callable, Dict, Any
+
+class JobQueue:
+    """
+    A job queue implementation with retry logic and exponential backoff.
+    """
+    def __init__(self):
+        # Stores job data: {job_id: {"data": ..., "retry_count": 0}}
+        self.jobs: Dict[str, Dict[str, Any]] = {}
+
+    def add_job(self, job_id: str, data: Dict[str, Any]):
+        """Adds a new job to the queue."""
+        if job_id in self.jobs:
+            raise ValueError(f"Job ID {job_id} already exists.")
+        self.jobs[job_id] = {
+            "data": data,
+            "retry_count": 0,
+            "status": "pending"
+        }
+
+    def process_job(self, job_id: str, processor: Callable) -> bool:
+        """
+        Processes a job with retry logic and exponential backoff.
+
+        Args:
+            job_id: The ID of the job to process.
+            processor: The function that attempts to execute the job.
+
+        Returns:
+            True if the job succeeded, False otherwise.
+        """
+        if job_id not in self.jobs:
+            raise KeyError(f"Job ID {job_id} not found in the queue.")
+
+        job = self.jobs[job_id]
+        max_retries = 3
+        
+        while job["retry_count"] <= max_retries:
+            try:
+                # Attempt to process the job
+                processor(job["data"])
+                
+                # Success
+                job["status"] = "success"
+                return True
+            
+            except Exception as e:
+                # Failure occurred
+                job["retry_count"] += 1
+                
+                if job["retry_count"] > max_retries:
+                    job["status"] = "failed_permanently"
+                    # All retries exhausted
+                    return False
+                
+                # Calculate exponential backoff delay (2^n - 1)
+                # n is the current attempt number (starting from 1 for the first retry)
+                # Retry 1 (n=1): 2^1 = 2 -> delay 1s (2-1)
+                # Retry 2 (n=2): 2^2 = 4 -> delay 2s (4-2)
+                # Retry 3 (n=3): 2^3 = 8 -> delay 4s (8-4)
+                
+                # We use the current retry count (which is 1-based for the retry attempt)
+                delay = 2 ** (job["retry_count"] - 1)
+                
+                # Simulation: Print the intended delay instead of sleeping
+                print(f"Job {job_id} failed. Retrying in {delay}s. Attempt {job['retry_count']}/{max_retries}")
+                
+                # In a real application, you would use time.sleep(delay)
+                # time.sleep(delay) 
+                pass 
+
+        return False
+
+# --- Example Usage ---
+
+# Mock Request class for demonstration
+class MockResponse:
+    def __init__(self, status_code):
+        self.status_code = status_code
+
+# Global counter to simulate transient failure
+failure_count = 0
+
+def flaky_fetch_url(data: Dict[str, Any]):
+    """
+    A processor function that fails 3 times before succeeding.
+    """
+    global failure_count
+    
+    if failure_count < 3:
+        failure_count += 1
+        print(f"--- Attempting URL fetch for {data['url']}... [FAIL] (Attempt {failure_count})")
+        raise ConnectionError("Network timeout or transient server error.")
+    
+    print(f"--- Attempting URL fetch for {data['url']}... [SUCCESS]!")
+    return MockResponse(200)
+
+print("="*50)
+print("Scenario 1: Job succeeds after retries")
+print("="*50)
+
+queue1 = JobQueue()
+queue1.add_job("job1", {"url": "https://example.com"})
+
+# Reset failure counter for the test
+failure_count = 0 
+success1 = queue1.process_job("job1", flaky_fetch_url)
+
+print(f"\n[RESULT] Job 1 success status: {success1}")
+print("-" * 50)
+
+
+# --- Scenario 2: Job fails permanently ---
+
+print("\n" + "="*50)
+print("Scenario 2: Job fails permanently (exceeds 3 retries)")
+print("="*50)
+
+queue2 = JobQueue()
+queue2.add_job("job2", {"url": "https://badserver.com"})
+
+def always_fail(data):
+    """A processor that always raises an exception."""
+    raise RuntimeError("Critical permanent failure.")
+
+# Reset failure counter (though not used in this scenario)
+failure_count = 0 
+success2 = queue2.process_job("job2", always_fail)
+
+print(f"\n[RESULT] Job 2 success status: {success2}")
+print("-" * 50)

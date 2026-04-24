@@ -1,0 +1,96 @@
+import time
+from typing import Callable, Dict, Any, Optional
+
+class JobQueue:
+    """
+    A job queue implementation with retry logic and exponential backoff.
+    """
+    def __init__(self):
+        # Stores job definitions: {job_id: {"data": Any, "retries": 0}}
+        self.jobs: Dict[str, Dict[str, Any]] = {}
+        self.MAX_RETRIES = 3
+
+    def add_job(self, job_id: str, job_data: Dict[str, Any]):
+        """Adds a new job to the queue."""
+        if job_id in self.jobs:
+            raise ValueError(f"Job ID {job_id} already exists.")
+        self.jobs[job_id] = {
+            "data": job_data,
+            "retries": 0
+        }
+
+    def process_job(self, job_id: str, processor: Callable[[Dict[str, Any]], Any]) -> bool:
+        """
+        Processes a job, retrying up to MAX_RETRIES times upon failure.
+        """
+        if job_id not in self.jobs:
+            raise KeyError(f"Job ID {job_id} not found in the queue.")
+
+        job_info = self.jobs[job_id]
+        
+        while job_info["retries"] <= self.MAX_RETRIES:
+            try:
+                # Attempt to process the job
+                processor(job_info["data"])
+                
+                # Success
+                print(f"Job {job_id} succeeded on attempt {job_info['retries'] + 1}.")
+                # Optional: Remove job from queue upon success
+                del self.jobs[job_id]
+                return True
+
+            except Exception as e:
+                job_info["retries"] += 1
+                
+                if job_info["retries"] > self.MAX_RETRIES:
+                    print(f"Job {job_id} failed after {self.MAX_RETRIES + 1} attempts. Exhausted retries. Error: {e}")
+                    return False
+                
+                # Calculate exponential backoff delay (1s, 2s, 4s, ...)
+                # The retry count starts at 1 for the first failure.
+                # Delay = 2^(retry_count - 1)
+                delay = 2**(job_info["retries"] - 1)
+                
+                print(f"Job {job_id} failed on attempt {job_info['retries']}. Retrying in {delay}s... Error: {e}")
+                
+                # Simulation of waiting (we track the delay but don't sleep)
+                # time.sleep(delay) 
+                pass 
+
+        return False # Should theoretically be unreachable if logic is correct, but kept for safety
+
+# --- Example Usage ---
+
+# Mock processor that fails a specific number of times
+failure_count = 0
+MAX_FAILURES = 2 # Job will succeed on the 3rd attempt (retries=2)
+
+def flaky_fetch_url(data):
+    global failure_count
+    print(f"--- Attempting to fetch {data['url']} ---")
+    
+    if failure_count < MAX_FAILURES:
+        failure_count += 1
+        raise ConnectionError(f"Network failed (Attempt {failure_count})")
+    
+    print("--- Success! ---")
+    return True
+
+def always_fail_fetch_url(data):
+    raise ConnectionError("Permanent failure")
+
+# --- Test Case 1: Success after retries ---
+print("\n===== Running Test Case 1: Success after retries =====")
+queue1 = JobQueue()
+queue1.add_job("job1", {"url": "https://example.com/flaky"})
+success1 = queue1.process_job("job1", flaky_fetch_url)
+print(f"Job 1 Final Status: {success1}")
+print("-" * 40)
+
+# --- Test Case 2: Failure after exhausting retries ---
+print("\n===== Running Test Case 2: Exhausting retries =====")
+queue2 = JobQueue()
+queue2.add_job("job2", {"url": "https://example.com/bad"})
+success2 = queue2.process_job("job2", always_fail_fetch_url)
+print(f"Job 2 Final Status: {success2}")
+print("-" * 40)

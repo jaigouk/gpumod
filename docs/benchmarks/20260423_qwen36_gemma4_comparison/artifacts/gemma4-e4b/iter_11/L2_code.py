@@ -1,0 +1,108 @@
+from typing import Callable, Dict, Any
+import time
+
+class JobQueue:
+    """
+    A job queue implementation that handles job processing with retry logic
+    and exponential backoff.
+    """
+    MAX_RETRIES = 3  # Total attempts = 1 initial + 2 retries
+    
+    def __init__(self):
+        # Stores job metadata: {job_id: {"data": {...}, "retry_count": 0}}
+        self.jobs: Dict[str, Dict[str, Any]] = {}
+
+    def add_job(self, job_id: str, data: Dict[str, Any]):
+        """Adds a new job to the queue."""
+        if job_id in self.jobs:
+            raise ValueError(f"Job ID {job_id} already exists.")
+        
+        self.jobs[job_id] = {
+            "data": data,
+            "retry_count": 0
+        }
+
+    def process_job(self, job_id: str, processor: Callable[[Dict[str, Any]], Any]) -> bool:
+        """
+        Processes a job with retry logic and exponential backoff.
+
+        Args:
+            job_id: The identifier of the job.
+            processor: The callable function that executes the job logic.
+
+        Returns:
+            True if the job succeeded, False if all retries were exhausted.
+        """
+        if job_id not in self.jobs:
+            raise KeyError(f"Job ID {job_id} not found in the queue.")
+
+        job_state = self.jobs[job_id]
+        
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                # Attempt to process the job
+                processor(job_state["data"])
+                
+                # Success
+                print(f"[{job_id}] Successfully processed on attempt {attempt + 1}.")
+                return True
+            
+            except Exception as e:
+                # Failure occurred
+                job_state["retry_count"] += 1
+                
+                if job_state["retry_count"] >= self.MAX_RETRIES:
+                    print(f"[{job_id}] Failed after {self.MAX_RETRIES} attempts. Final error: {e}")
+                    return False
+                
+                # Calculate exponential backoff delay: 2^n seconds
+                # n is the current retry count (1st retry uses 2^0=1s, 2nd uses 2^1=2s, etc.)
+                delay = 2 ** (job_state["retry_count"] - 1)
+                
+                print(f"[{job_id}] Attempt {attempt + 1} failed. Retrying in {delay}s. Error: {e}")
+                
+                # Simulate the delay (if required, otherwise just track the delay)
+                # time.sleep(delay) 
+        
+        return False
+
+# --- Example Usage ---
+
+# 1. Setup a mock processor that fails 2 times, then succeeds
+failure_count = 0
+def flaky_fetch_url(data: Dict[str, Any]):
+    global failure_count
+    
+    if failure_count < 2:
+        failure_count += 1
+        # Simulate a transient network error
+        raise ConnectionError(f"Network timeout simulation (Attempt {failure_count})")
+    else:
+        # Success on the third attempt
+        print(f"--- SUCCESSFUL EXECUTION for {data['url']} ---")
+        return f"Data retrieved from {data['url']}"
+
+# 2. Setup a mock processor that always fails
+always_fail_count = 0
+def broken_processor(data: Dict[str, Any]):
+    global always_fail_count
+    always_fail_count += 1
+    raise ValueError("Permanent configuration error.")
+
+# 3. Test Case 1: Job succeeds after retries
+print("="*50)
+print("TEST CASE 1: Job recovers after transient errors")
+queue1 = JobQueue()
+queue1.add_job("job_recover", {"url": "https://example.com/flaky"})
+
+success1 = queue1.process_job("job_recover", flaky_fetch_url)
+print(f"Job 'job_recover' final status: {'SUCCESS' if success1 else 'FAILURE'}")
+
+# 4. Test Case 2: Job fails permanently (exhausts retries)
+print("\n" + "="*50)
+print("TEST CASE 2: Job fails permanently")
+queue2 = JobQueue()
+queue2.add_job("job_fail", {"url": "https://example.com/broken"})
+
+success2 = queue2.process_job("job_fail", broken_processor)
+print(f"Job 'job_fail' final status: {'SUCCESS' if success2 else 'FAILURE'}")

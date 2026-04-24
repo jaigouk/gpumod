@@ -1,0 +1,113 @@
+from collections import deque
+from typing import Dict, Any, Optional
+
+class JobQueue:
+    """
+    A basic FIFO job queue implementation.
+    """
+    def __init__(self):
+        # Queue of jobs waiting to be processed (FIFO)
+        # Stores tuples: (job_id, data)
+        self._pending_jobs: deque[tuple[str, dict]] = deque()
+        
+        # Storage for completed job results
+        # Stores: {job_id: result_data}
+        self._completed_results: Dict[str, dict] = {}
+
+    def add_job(self, job_id: str, data: dict) -> str:
+        """
+        Adds a job to the queue.
+
+        Args:
+            job_id: A unique identifier for the job.
+            data: The data payload for the job.
+
+        Returns:
+            The job_id.
+        """
+        if not job_id:
+            raise ValueError("Job ID cannot be empty.")
+            
+        self._pending_jobs.append((job_id, data))
+        return job_id
+
+    def process_next_job(self) -> Optional[str]:
+        """
+        Simulates the processing of the next job in the queue.
+        
+        In a real application, this would be handled by a worker thread/process.
+        
+        Returns:
+            The job_id if a job was processed, otherwise None.
+        """
+        if not self._pending_jobs:
+            return None
+
+        job_id, data = self._pending_jobs.popleft()
+        
+        # --- SIMULATION OF JOB EXECUTION ---
+        # In a real system, the job function would run here.
+        # We simulate a successful task execution.
+        print(f"--- Processing Job: {job_id} ---")
+        
+        # Simple simulated result based on input data
+        try:
+            task = data.get("task", "unknown")
+            result = {"status": "success", "processed_data": f"Result of {task} on {job_id}"}
+        except Exception as e:
+            result = {"status": "failed", "error": str(e)}
+        # ----------------------------------
+
+        # Store the result
+        self._completed_results[job_id] = result
+        print(f"--- Job {job_id} completed. ---")
+        return job_id
+
+    def get_result(self, job_id: str) -> Optional[dict]:
+        """
+        Retrieves the result of a completed job.
+
+        Args:
+            job_id: The identifier of the job.
+
+        Returns:
+            The result dictionary if found, otherwise None.
+        """
+        return self._completed_results.get(job_id)
+
+# Example Usage Demonstration:
+if __name__ == '__main__':
+    queue = JobQueue()
+
+    # 1. Add jobs
+    job_id1 = queue.add_job("job1", {"task": "process_data", "priority": 1})
+    job_id2 = queue.add_job("job2", {"task": "send_email", "recipient": "user@example.com"})
+    job_id3 = queue.add_job("job3", {"task": "cleanup_logs"})
+
+    print(f"Added jobs: {job_id1}, {job_id2}, {job_id3}\n")
+
+    # 2. Process jobs (Simulating the worker picking them up in FIFO order)
+    
+    # Process Job 1
+    queue.process_next_job()
+    
+    # Process Job 2
+    queue.process_next_job()
+
+    # Process Job 3
+    queue.process_next_job()
+
+    print("\n--- Checking Results ---")
+    
+    # 3. Retrieve results
+    result1 = queue.get_result("job1")
+    result2 = queue.get_result("job2")
+    result3 = queue.get_result("job3")
+    
+    # Check a non-existent job
+    result_none = queue.get_result("job_unknown")
+
+    print(f"Result for job1: {result1}")
+    print(f"Result for job2: {result2}")
+    print(f"Result for job3: {result3}")
+    print(f"Result for job_unknown: {result_none}")

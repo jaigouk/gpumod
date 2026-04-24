@@ -1,0 +1,139 @@
+import time
+from typing import Callable, Dict, Any, Optional
+
+class JobQueue:
+    """
+    A job queue implementation that handles job processing with retry logic
+    and exponential backoff.
+    """
+    def __init__(self):
+        # Stores job data and metadata: {job_id: {"data": ..., "attempts": 0}}
+        self._jobs: Dict[str, Dict[str, Any]] = {}
+        self.MAX_RETRIES = 3
+
+    def add_job(self, job_id: str, data: Dict[str, Any]):
+        """Adds a new job to the queue."""
+        if job_id in self._jobs:
+            raise ValueError(f"Job ID {job_id} already exists.")
+        self._jobs[job_id] = {
+            "data": data,
+            "attempts": 0,
+            "status": "pending"
+        }
+        print(f"[Queue] Job '{job_id}' added.")
+
+    def _calculate_backoff(self, attempt: int) -> float:
+        """
+        Calculates the exponential backoff delay.
+        Attempt 1 (after initial failure) -> 2^0 = 1s
+        Attempt 2 -> 2^1 = 2s
+        Attempt 3 -> 2^2 = 4s
+        """
+        # We use the attempt count (which starts at 1 after the first failure)
+        return 2 ** (attempt - 1)
+
+    def process_job(self, job_id: str, processor: Callable[[Dict[str, Any]], Any]) -> bool:
+        """
+        Processes a job, retrying upon failure using exponential backoff.
+
+        Returns True if the job succeeded, False if all retries were exhausted.
+        """
+        if job_id not in self._jobs:
+            print(f"[Error] Job ID {job_id} not found.")
+            return False
+
+        job_state = self._jobs[job_id]
+        job_data = job_state["data"]
+        
+        print(f"\n--- Starting processing for Job '{job_id}' ---")
+
+        # Total attempts = Initial attempt + MAX_RETRIES
+        for attempt in range(self.MAX_RETRIES + 1):
+            job_state["attempts"] = attempt + 1
+            
+            try:
+                # Attempt to run the processor
+                processor(job_data)
+                
+                # Success
+                job_state["status"] = "success"
+                print(f"[Success] Job '{job_id}' succeeded on attempt {attempt + 1}.")
+                return True
+            
+            except Exception as e:
+                print(f"[Failure] Job '{job_id}' failed on attempt {attempt + 1}. Error: {e}")
+
+                # Check if we have exhausted all retries
+                if attempt >= self.MAX_RETRIES:
+                    job_state["status"] = "failed"
+                    print(f"[Exhausted] Job '{job_id}' failed after {self.MAX_RETRIES + 1} attempts.")
+                    return False
+
+                # Calculate backoff and simulate waiting
+                next_attempt = attempt + 2 # Since attempt is 0-indexed
+                delay = self._calculate_backoff(next_attempt)
+                
+                print(f"[Retry] Waiting {delay}s before attempting job '{job_id}' again...")
+                # In a real system, this would be a time.sleep(delay)
+                # We simulate the delay by just printing the wait time.
+                # time.sleep(delay) 
+
+        return False # Should not be reached if logic is correct, but safe fallback
+
+# --- Example Usage ---
+
+# 1. Setup the queue
+queue = JobQueue()
+
+# 2. Define a mock processor that fails N times before succeeding
+class FailingProcessor:
+    """A mock processor that fails the first 2 times and succeeds on the 3rd."""
+    def __init__(self, fail_count: int):
+        self.fail_count = fail_count
+        self.call_count = 0
+
+    def __call__(self, data: Dict[str, Any]):
+        self.call_count += 1
+        if self.call_count <= self.fail_count:
+            print(f"  -> Processor called (Attempt {self.call_count}). Simulating network error.")
+            raise ConnectionError("Simulated Network Timeout")
+        print(f"  -> Processor called (Attempt {self.call_count}). Successfully fetched data.")
+        return True
+
+# 3. Define a processor that always fails
+class AlwaysFailingProcessor:
+    def __call__(self, data: Dict[str, Any]):
+        raise ValueError("Critical system failure")
+
+# --- Test Case 1: Successful Retry ---
+print("\n=============================================")
+print("TEST CASE 1: Job succeeds after retries (Fails 2 times)")
+print("=============================================")
+
+job1_processor = FailingProcessor(fail_count=2)
+queue.add_job("job1", {"url": "https://example.com"})
+success1 = queue.process_job("job1", job1_processor)
+print(f"\nFINAL RESULT JOB 1: Success = {success1}")
+
+
+# --- Test Case 2: Exhausted Retries ---
+print("\n\n=============================================")
+print("TEST CASE 2: Job exhausts all retries (Fails 4 times)")
+print("=============================================")
+
+# Needs 4 failures to ensure exhaustion (Initial + 3 retries)
+job2_processor = FailingProcessor(fail_count=4) 
+queue.add_job("job2", {"url": "https://bad-site.com"})
+success2 = queue.process_job("job2", job2_processor)
+print(f"\nFINAL RESULT JOB 2: Success = {success2}")
+
+
+# --- Test Case 3: Immediate Failure (Always fails) ---
+print("\n\n=============================================")
+print("TEST CASE 3: Job fails immediately and exhausts retries")
+print("=============================================")
+
+job3_processor = AlwaysFailingProcessor()
+queue.add_job("job3", {"url": "https://error.com"})
+success3 = queue.process_job("job3", job3_processor)
+print(f"\nFINAL RESULT JOB 3: Success = {success3}")

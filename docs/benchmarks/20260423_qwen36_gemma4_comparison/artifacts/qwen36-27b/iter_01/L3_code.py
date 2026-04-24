@@ -1,0 +1,16 @@
+import heapq
+
+class JobQueue:
+    def __init__(self):
+        self._heap = []
+        self._counter = 0
+
+    def add_job(self, job_id: str, data: dict, priority: int = 0) -> None:
+        heapq.heappush(self._heap, (-priority, self._counter, job_id, data))
+        self._counter += 1
+
+    def get_next_job(self) -> tuple[str, dict] | None:
+        if self._heap:
+            _, _, job_id, data = heapq.heappop(self._heap)
+            return job_id, data
+        return None

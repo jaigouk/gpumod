@@ -1,0 +1,30 @@
+from typing import Callable, Any
+
+class JobQueue:
+    def __init__(self):
+        self.jobs: dict[str, dict[str, Any]] = {}
+
+    def add_job(self, job_id: str, data: Any) -> None:
+        self.jobs[job_id] = {
+            "data": data,
+            "retry_count": 0,
+            "backoff_delays": []
+        }
+
+    def process_job(self, job_id: str, processor: Callable) -> bool:
+        if job_id not in self.jobs:
+            raise KeyError(f"Job {job_id} not found")
+
+        job = self.jobs[job_id]
+        max_retries = 3
+
+        for attempt in range(max_retries + 1):
+            try:
+                processor(job["data"])
+                return True
+            except Exception:
+                job["retry_count"] += 1
+                if attempt < max_retries:
+                    job["backoff_delays"].append(2 ** attempt)
+                else:
+                    return False
