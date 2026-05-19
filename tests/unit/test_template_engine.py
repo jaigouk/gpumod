@@ -580,6 +580,95 @@ class TestPreflightExecStartPreAcrossDrivers:
         assert "ExecStartPre" not in result
 
 
+class TestDoctorVenvExecStartPreAcrossDrivers:
+    """ExecStartPre for `gpumod doctor venv` renders when service.compat is set (gpumod-l20).
+
+    Independent of preflight_required (gpumod-ecr). Tests the 4-cell
+    matrix per driver template: neither, preflight-only, compat-only,
+    both.
+    """
+
+    _DRIVERS = [
+        ("vllm", {}),
+        ("llamacpp", {"model_path": "/models/x.gguf"}),
+        ("fastapi", {"app_module": "main:app", "working_dir": "/opt"}),
+    ]
+    _COMPAT = {"vllm": ">=0.11.0,<0.12", "transformers": "<5.0"}
+
+    @staticmethod
+    def _make_service(
+        driver_str: str,
+        *,
+        preflight_required: bool,
+        compat: dict[str, str] | None,
+    ):
+        from gpumod.models import DriverType, Service
+
+        return Service(
+            id=f"{driver_str}-svc",
+            name=f"Test {driver_str}",
+            driver=DriverType(driver_str),
+            port=8000,
+            vram_mb=10000,
+            model_id="org/model",
+            preflight_required=preflight_required,
+            compat=compat,
+        )
+
+    @pytest.mark.parametrize(("driver_str", "unit_vars"), _DRIVERS)
+    def test_compat_only_emits_doctor_line(
+        self, driver_str: str, unit_vars: dict[str, Any], default_settings: dict[str, str]
+    ) -> None:
+        """compat set, preflight_required=False → ONLY doctor venv line."""
+        from gpumod.templates.engine import TemplateEngine
+
+        service = self._make_service(driver_str, preflight_required=False, compat=self._COMPAT)
+        settings = {**default_settings, "gpumod_bin": "/usr/local/bin/gpumod"}
+        result = TemplateEngine().render_service_unit(service, settings, unit_vars=unit_vars)
+        assert (
+            f"ExecStartPre=/usr/local/bin/gpumod doctor venv --service-id {driver_str}-svc"
+            in result
+        )
+        # No preflight ram ExecStartPre because preflight_required is False
+        # (the comment above the doctor line mentions "preflight ram", so we
+        # need to check for the directive specifically, not the substring)
+        assert "ExecStartPre=/usr/local/bin/gpumod preflight ram" not in result
+
+    @pytest.mark.parametrize(("driver_str", "unit_vars"), _DRIVERS)
+    def test_both_flags_emit_both_lines_doctor_first(
+        self, driver_str: str, unit_vars: dict[str, Any], default_settings: dict[str, str]
+    ) -> None:
+        """compat AND preflight_required → both ExecStartPre lines, doctor first."""
+        from gpumod.templates.engine import TemplateEngine
+
+        service = self._make_service(driver_str, preflight_required=True, compat=self._COMPAT)
+        settings = {**default_settings, "gpumod_bin": "/usr/local/bin/gpumod"}
+        result = TemplateEngine().render_service_unit(service, settings, unit_vars=unit_vars)
+        # Both present
+        assert "doctor venv" in result
+        assert "preflight ram" in result
+        # Doctor line BEFORE ram line (cheaper check fails faster)
+        doctor_pos = result.find("doctor venv")
+        ram_pos = result.find("preflight ram")
+        assert doctor_pos < ram_pos, (
+            f"doctor venv should come before preflight ram; got doctor@{doctor_pos}, ram@{ram_pos}"
+        )
+
+    @pytest.mark.parametrize(("driver_str", "unit_vars"), _DRIVERS)
+    def test_compat_none_omits_doctor_line(
+        self, driver_str: str, unit_vars: dict[str, Any], default_settings: dict[str, str]
+    ) -> None:
+        """compat=None (default) → no doctor venv line, regardless of preflight_required."""
+        from gpumod.templates.engine import TemplateEngine
+
+        service = self._make_service(driver_str, preflight_required=True, compat=None)
+        settings = {**default_settings, "gpumod_bin": "/usr/local/bin/gpumod"}
+        result = TemplateEngine().render_service_unit(service, settings, unit_vars=unit_vars)
+        assert "doctor venv" not in result
+        # preflight_required is True, so ram line should still be there
+        assert "preflight ram" in result
+
+
 class TestRenderLlamacppUnit:
     def test_contains_llamacpp_exec(
         self, llamacpp_service: Service, default_settings: dict[str, str]
