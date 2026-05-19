@@ -125,6 +125,16 @@ class VRAMUsage(BaseModel):
     free_mb: int
 
 
+class RAMUsage(BaseModel):
+    """Current system RAM usage parsed from /proc/meminfo."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    total_mb: int
+    available_mb: int
+    free_mb: int
+
+
 class ServiceInfo(BaseModel):
     """Combined service definition and runtime status."""
 

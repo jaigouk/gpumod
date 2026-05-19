@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import TYPE_CHECKING
 
 from gpumod.models import (
@@ -19,6 +20,7 @@ from gpumod.models import (
     SystemStatus,
 )
 from gpumod.services.health import HealthMonitor
+from gpumod.services.ram import InsufficientRAMError, RAMTracker
 from gpumod.services.vram import NvidiaSmiError
 
 if TYPE_CHECKING:
@@ -30,6 +32,17 @@ if TYPE_CHECKING:
     from gpumod.services.vram import VRAMTracker
 
 logger = logging.getLogger(__name__)
+
+# RAM safeguard tunables. A large-VRAM llama.cpp service typically pulls
+# RAM proportional to its VRAM footprint (model weights staged + pinned
+# transfer buffers + Python heap). The defaults reject the dangerous case
+# where MemAvailable looks fine but pages are too fragmented for a
+# contiguous CUDA pinned allocation.
+RAM_HEADROOM_RATIO = 0.3  # require avail >= sum(vram) * ratio + absolute
+RAM_ABSOLUTE_HEADROOM_MB = 5_000
+RAM_HARD_FLOOR_MB = 6_000  # never start a service if avail < this
+DEFAULT_SETTLE_SECONDS = 15.0  # pause between outgoing-stop and incoming-start
+SETTLE_ENV_VAR = "GPUMOD_SETTLE_SECONDS"
 
 
 class ServiceManager:
@@ -65,16 +78,74 @@ class ServiceManager:
         vram: VRAMTracker,
         sleep: SleepController,
         health: HealthMonitor | None = None,
+        ram: RAMTracker | None = None,
     ) -> None:
         self._db = db
         self._registry = registry
         self._lifecycle = lifecycle
         self._vram = vram
         self._sleep = sleep
+        self._ram = ram or RAMTracker()
         self._health = health or HealthMonitor(
             registry=registry,
             on_state_change=self._on_health_change,
         )
+
+    # ------------------------------------------------------------------
+    # RAM safeguard helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _required_ram_mb(incoming_vram_mb: int) -> int:
+        """Estimate RAM needed to safely start services with given VRAM."""
+        return int(incoming_vram_mb * RAM_HEADROOM_RATIO) + RAM_ABSOLUTE_HEADROOM_MB
+
+    @staticmethod
+    def _settle_seconds() -> float:
+        """Read settle period from env, falling back to default."""
+        raw = os.environ.get(SETTLE_ENV_VAR)
+        if raw is None or raw == "":
+            return DEFAULT_SETTLE_SECONDS
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            logger.warning(
+                "Invalid %s=%r, using default %.1fs",
+                SETTLE_ENV_VAR,
+                raw,
+                DEFAULT_SETTLE_SECONDS,
+            )
+            return DEFAULT_SETTLE_SECONDS
+
+    async def _check_ram_safeguard(self, incoming_vram_mb: int) -> str | None:
+        """Return None if safe to start, else an error message.
+
+        Two-tier check:
+          1. Hard floor — refuse if MemAvailable < RAM_HARD_FLOOR_MB
+             regardless of service size.
+          2. Headroom check — refuse if MemAvailable < required estimate
+             for the incoming workload.
+        """
+        usage = await self._ram.get_usage()
+        if usage.available_mb < RAM_HARD_FLOOR_MB:
+            return (
+                f"RAM safeguard: only {usage.available_mb} MB available, "
+                f"hard floor is {RAM_HARD_FLOOR_MB} MB. Refusing to start "
+                "to avoid CUDA pinned-memory freeze. Stop other workloads "
+                "and retry."
+            )
+
+        if incoming_vram_mb > 0:
+            required = self._required_ram_mb(incoming_vram_mb)
+            if usage.available_mb < required:
+                return (
+                    f"RAM safeguard: incoming services need ~{required} MB "
+                    f"available ({incoming_vram_mb} MB VRAM * "
+                    f"{RAM_HEADROOM_RATIO} + {RAM_ABSOLUTE_HEADROOM_MB} MB "
+                    f"headroom), but only {usage.available_mb} MB free. "
+                    "Refusing to start to avoid CUDA pinned-memory freeze."
+                )
+        return None
 
     async def _on_health_change(self, service_id: str, healthy: bool) -> None:
         """React to health state changes reported by HealthMonitor."""
@@ -87,7 +158,7 @@ class ServiceManager:
     # Mode switching
     # ------------------------------------------------------------------
 
-    async def switch_mode(self, target_mode_id: str) -> ModeResult:
+    async def switch_mode(self, target_mode_id: str) -> ModeResult:  # noqa: C901
         """Switch to the target mode, managing service lifecycle and VRAM.
 
         Steps:
@@ -190,9 +261,11 @@ class ServiceManager:
         if to_start:
             # Find the largest VRAM requirement among incoming services
             max_incoming_vram = 0
+            total_incoming_vram = 0
             for svc_id in to_start:
                 svc = await self._registry.get(svc_id)
                 max_incoming_vram = max(max_incoming_vram, svc.vram_mb)
+                total_incoming_vram += svc.vram_mb
 
             if max_incoming_vram > 0:
                 logger.info(
@@ -218,6 +291,29 @@ class ServiceManager:
                             "Previous service may still hold GPU memory."
                         ],
                     )
+
+            # 5.6 Settle period: give the kernel time to consolidate freed
+            # pages between teardown and CUDA pinned allocations. Skip if
+            # nothing was actually stopped/slept.
+            if slept_ids or stopped_ids:
+                settle = self._settle_seconds()
+                if settle > 0:
+                    logger.info(
+                        "Settle period: waiting %.1fs for kernel to consolidate freed pages",
+                        settle,
+                    )
+                    await asyncio.sleep(settle)
+
+            # 5.7 RAM safeguard — pre-flight check for the CUDA pinned-memory
+            # contiguous-allocation freeze pattern.
+            error_msg = await self._check_ram_safeguard(total_incoming_vram)
+            if error_msg:
+                logger.error("Mode switch blocked by RAM safeguard: %s", error_msg)
+                return ModeResult(
+                    success=False,
+                    mode_id=target_mode_id,
+                    errors=[error_msg],
+                )
 
         # 6. Handle incoming services
         woken_ids, started_ids = await self._handle_incoming_services(to_start)
@@ -370,11 +466,32 @@ class ServiceManager:
     async def start_service(self, service_id: str) -> None:
         """Start a service via the lifecycle manager.
 
+        Pre-flight RAM safeguard runs before any allocation to avoid the
+        CUDA pinned-memory contiguous-allocation freeze pattern.
+
         Parameters
         ----------
         service_id:
             The ID of the service to start.
+
+        Raises
+        ------
+        InsufficientRAMError
+            If MemAvailable is below the hard floor or the headroom
+            estimate for this service.
         """
+        service = await self._registry.get(service_id)
+        error_msg = await self._check_ram_safeguard(service.vram_mb)
+        if error_msg:
+            usage = await self._ram.get_usage()
+            required = self._required_ram_mb(service.vram_mb)
+            logger.error("start_service %r blocked: %s", service_id, error_msg)
+            raise InsufficientRAMError(
+                required_mb=required,
+                available_mb=usage.available_mb,
+                message=error_msg,
+            )
+
         logger.info("Starting service %r", service_id)
         await self._lifecycle.start(service_id)
 

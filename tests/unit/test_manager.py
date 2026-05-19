@@ -174,6 +174,24 @@ def _build_mock_sleep() -> AsyncMock:
     return AsyncMock()
 
 
+def _build_mock_ram(available_mb: int = 28_000) -> AsyncMock:
+    """Build a mock RAMTracker with comfortable defaults.
+
+    Defaults emulate a healthy 30 GB machine with 28 GB available so
+    the RAM safeguard passes for all standard test cases. Tests that
+    exercise the safeguard itself should build their own mock with the
+    desired ``available_mb``.
+    """
+    from gpumod.models import RAMUsage
+
+    ram = AsyncMock()
+    ram.get_usage = AsyncMock(
+        return_value=RAMUsage(total_mb=30_000, available_mb=available_mb, free_mb=5_000)
+    )
+    ram.wait_for_ram_release = AsyncMock(return_value=True)
+    return ram
+
+
 @pytest.fixture
 def mock_db() -> AsyncMock:
     return _build_mock_db(current_mode="code")
@@ -200,12 +218,24 @@ def mock_sleep() -> AsyncMock:
 
 
 @pytest.fixture
+def mock_ram() -> AsyncMock:
+    return _build_mock_ram()
+
+
+@pytest.fixture(autouse=True)
+def _disable_settle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip the kernel-page settle period in unit tests."""
+    monkeypatch.setenv("GPUMOD_SETTLE_SECONDS", "0")
+
+
+@pytest.fixture
 def manager(
     mock_db: AsyncMock,
     mock_registry: AsyncMock,
     mock_lifecycle: AsyncMock,
     mock_vram: AsyncMock,
     mock_sleep: AsyncMock,
+    mock_ram: AsyncMock,
 ) -> ServiceManager:
     return ServiceManager(
         db=mock_db,
@@ -213,6 +243,7 @@ def manager(
         lifecycle=mock_lifecycle,
         vram=mock_vram,
         sleep=mock_sleep,
+        ram=mock_ram,
     )
 
 
@@ -1656,3 +1687,135 @@ class TestOrphanEdgeCases:
         stopped_ids = {c.args[0] for c in lifecycle.stop.call_args_list}
         slept_ids = {c.args[0] for c in lifecycle.sleep.call_args_list}
         assert "svc-orphan" in (stopped_ids | slept_ids)
+
+
+# ---------------------------------------------------------------------------
+# RAM safeguard tests (CUDA pinned-memory freeze prevention)
+# ---------------------------------------------------------------------------
+
+
+class TestRamSafeguardBlocksOnHardFloor:
+    """When MemAvailable is below the hard floor, switch_mode must refuse."""
+
+    async def test_blocks_when_available_under_6gb(
+        self,
+        mock_db: AsyncMock,
+        mock_registry: AsyncMock,
+        mock_lifecycle: AsyncMock,
+        mock_vram: AsyncMock,
+        mock_sleep: AsyncMock,
+    ) -> None:
+        from gpumod.models import RAMUsage
+
+        starved_ram = AsyncMock()
+        starved_ram.get_usage = AsyncMock(
+            return_value=RAMUsage(total_mb=30_000, available_mb=4_000, free_mb=500)
+        )
+        mgr = ServiceManager(
+            db=mock_db,
+            registry=mock_registry,
+            lifecycle=mock_lifecycle,
+            vram=mock_vram,
+            sleep=mock_sleep,
+            ram=starved_ram,
+        )
+        result = await mgr.switch_mode("rag")
+        assert result.success is False
+        assert any("RAM safeguard" in e for e in result.errors)
+        assert any("4000" in e for e in result.errors)
+        # Critically: no incoming service was started
+        mock_lifecycle.start.assert_not_called()
+
+
+class TestRamSafeguardBlocksOnHeadroom:
+    """When MemAvailable is above hard floor but below headroom estimate."""
+
+    async def test_blocks_when_below_headroom(
+        self,
+        mock_db: AsyncMock,
+        mock_registry: AsyncMock,
+        mock_lifecycle: AsyncMock,
+        mock_vram: AsyncMock,
+        mock_sleep: AsyncMock,
+    ) -> None:
+        from gpumod.models import RAMUsage
+
+        # rag mode services in this fixture: svc-rag-llm (vram_mb=2500) +
+        # svc-reranker (vram_mb=2500) = 5000 MB total VRAM.
+        # Required = 5000 * 0.3 + 5000 = 6500 MB. Give only 6300 MB to fail.
+        tight_ram = AsyncMock()
+        tight_ram.get_usage = AsyncMock(
+            return_value=RAMUsage(total_mb=30_000, available_mb=6_300, free_mb=1_000)
+        )
+        mgr = ServiceManager(
+            db=mock_db,
+            registry=mock_registry,
+            lifecycle=mock_lifecycle,
+            vram=mock_vram,
+            sleep=mock_sleep,
+            ram=tight_ram,
+        )
+        result = await mgr.switch_mode("rag")
+        assert result.success is False
+        assert any("RAM safeguard" in e for e in result.errors)
+        mock_lifecycle.start.assert_not_called()
+
+
+class TestRamSafeguardAllowsWhenComfortable:
+    """Sanity: comfortable RAM does not block."""
+
+    async def test_allows_when_plenty_of_ram(self, manager: ServiceManager) -> None:
+        # default mock_ram has 28 GB available
+        result = await manager.switch_mode("rag")
+        assert result.success is True
+
+
+class TestStartServiceRamSafeguard:
+    """start_service must also pre-check RAM."""
+
+    async def test_raises_insufficient_ram_error(
+        self,
+        mock_db: AsyncMock,
+        mock_registry: AsyncMock,
+        mock_lifecycle: AsyncMock,
+        mock_vram: AsyncMock,
+        mock_sleep: AsyncMock,
+    ) -> None:
+        from gpumod.models import RAMUsage
+        from gpumod.services.ram import InsufficientRAMError
+
+        starved_ram = AsyncMock()
+        starved_ram.get_usage = AsyncMock(
+            return_value=RAMUsage(total_mb=30_000, available_mb=3_000, free_mb=200)
+        )
+        mgr = ServiceManager(
+            db=mock_db,
+            registry=mock_registry,
+            lifecycle=mock_lifecycle,
+            vram=mock_vram,
+            sleep=mock_sleep,
+            ram=starved_ram,
+        )
+        with pytest.raises(InsufficientRAMError):
+            await mgr.start_service("svc-embed")
+        mock_lifecycle.start.assert_not_called()
+
+
+class TestSettleSecondsEnvVar:
+    """_settle_seconds reads GPUMOD_SETTLE_SECONDS from environment."""
+
+    def test_default_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GPUMOD_SETTLE_SECONDS", raising=False)
+        assert ServiceManager._settle_seconds() == 15.0
+
+    def test_reads_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GPUMOD_SETTLE_SECONDS", "3.5")
+        assert ServiceManager._settle_seconds() == 3.5
+
+    def test_zero_is_valid(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GPUMOD_SETTLE_SECONDS", "0")
+        assert ServiceManager._settle_seconds() == 0.0
+
+    def test_invalid_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GPUMOD_SETTLE_SECONDS", "not-a-number")
+        assert ServiceManager._settle_seconds() == 15.0
