@@ -39,6 +39,8 @@ def _make_service(
     depends_on: list[str] | None = None,
     startup_timeout: int = 60,
     extra_config: dict[str, object] | None = None,
+    preflight_required: bool = False,
+    compat: dict[str, str] | None = None,
 ) -> Service:
     return Service(
         id=id,
@@ -53,6 +55,8 @@ def _make_service(
         depends_on=depends_on or [],
         startup_timeout=startup_timeout,
         extra_config=extra_config or {},
+        preflight_required=preflight_required,
+        compat=compat,
     )
 
 
@@ -311,6 +315,41 @@ class TestUpdateService:
             assert got is not None
             assert got.depends_on == ["svc-a", "svc-b"]
             assert got.extra_config == {"unit_vars": {"gpu_mem_util": 0.3}}
+
+    async def test_insert_and_update_persist_compat_and_preflight(
+        self, tmp_path: Path
+    ) -> None:
+        """Regression for gpumod-032: round-trip compat + preflight_required.
+
+        Before the schema v3 migration, the Service model carried these fields
+        but insert_service / update_service / _row_to_service silently dropped
+        them, leaving systemd safeguards inert on synced services.
+        """
+        async with Database(tmp_path / "test.db") as db:
+            svc = _make_service(
+                id="rt-compat",
+                preflight_required=True,
+                compat={"vllm": ">=0.11.0,<0.12", "transformers": "<5.0"},
+            )
+            await db.insert_service(svc)
+
+            got = await db.get_service("rt-compat")
+            assert got is not None
+            assert got.preflight_required is True
+            assert got.compat == {"vllm": ">=0.11.0,<0.12", "transformers": "<5.0"}
+
+            # Update both fields and verify they re-persist
+            updated = _make_service(
+                id="rt-compat",
+                preflight_required=False,
+                compat=None,
+            )
+            await db.update_service(updated)
+
+            got = await db.get_service("rt-compat")
+            assert got is not None
+            assert got.preflight_required is False
+            assert got.compat is None
 
     async def test_update_service_validates_vram(self, tmp_path: Path) -> None:
         """update_service() must validate VRAM like insert_service() does."""
@@ -652,21 +691,81 @@ def _make_model_info(
 
 
 # ---------------------------------------------------------------------------
-# Schema v2 verification
+# Schema v3 verification
 # ---------------------------------------------------------------------------
 
 
 class TestSchemaV2:
-    """Tests for schema version 2 tables."""
+    """Tests for schema-v2-introduced tables (kept; class name preserved)."""
 
-    async def test_schema_version_is_2(self, tmp_path: Path) -> None:
-        """Schema version should be 2 after connect."""
+    async def test_schema_version_is_3(self, tmp_path: Path) -> None:
+        """Schema version should be 3 after connect (bumped for compat + preflight_required)."""
         async with Database(tmp_path / "test.db") as db:
             conn = db._ensure_conn()
             cursor = await conn.execute("SELECT version FROM schema_version")
             row = await cursor.fetchone()
             assert row is not None
-            assert row[0] == 2
+            assert row[0] == 3
+
+
+class TestSchemaV3Migration:
+    """Tests for gpumod-032: migration from a pre-v3 services table."""
+
+    async def test_alter_adds_columns_when_missing(self, tmp_path: Path) -> None:
+        """Connect against a v2 DB and verify the columns are added in place."""
+        import aiosqlite
+
+        db_path = tmp_path / "legacy.db"
+        # Create a v2-shaped services table by hand (no preflight_required, no compat).
+        async with aiosqlite.connect(db_path) as raw:
+            await raw.executescript(
+                """
+                CREATE TABLE schema_version (version INTEGER NOT NULL);
+                INSERT INTO schema_version (version) VALUES (2);
+                CREATE TABLE services (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    driver TEXT NOT NULL,
+                    port INTEGER,
+                    vram_mb INTEGER NOT NULL,
+                    sleep_mode TEXT NOT NULL DEFAULT 'none',
+                    health_endpoint TEXT DEFAULT '/health',
+                    model_id TEXT,
+                    unit_name TEXT,
+                    depends_on TEXT NOT NULL DEFAULT '[]',
+                    startup_timeout INTEGER NOT NULL DEFAULT 120,
+                    extra_config TEXT NOT NULL DEFAULT '{}',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                INSERT INTO services (id, name, driver, vram_mb)
+                VALUES ('legacy', 'Legacy', 'vllm', 1000);
+                """,
+            )
+            await raw.commit()
+
+        # Connect via the real Database: migration must run.
+        async with Database(db_path) as db:
+            conn = db._ensure_conn()
+            cursor = await conn.execute("PRAGMA table_info(services)")
+            columns = {row["name"] for row in await cursor.fetchall()}
+            assert "preflight_required" in columns
+            assert "compat" in columns
+
+            got = await db.get_service("legacy")
+            assert got is not None
+            assert got.preflight_required is False  # default
+            assert got.compat is None
+
+    async def test_migration_is_idempotent(self, tmp_path: Path) -> None:
+        """Running connect twice on the same DB must not error."""
+        db_path = tmp_path / "idem.db"
+        async with Database(db_path) as db:
+            await db.insert_service(_make_service(id="x", preflight_required=True))
+        # Second connect: migration should detect existing columns and no-op.
+        async with Database(db_path) as db:
+            got = await db.get_service("x")
+            assert got is not None
+            assert got.preflight_required is True
 
     async def test_service_templates_table_exists(self, tmp_path: Path) -> None:
         """service_templates table should be created on connect."""

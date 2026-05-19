@@ -400,6 +400,68 @@ class TestSyncEdgeCases:
             assert got is not None
             assert got.sleep_mode == SleepMode.ROUTER
 
+    async def test_compat_field_change_updates(self, tmp_path: Path) -> None:
+        """Adding/changing a `compat:` block in YAML must propagate to the DB.
+
+        Regression for gpumod-032: without this assertion, `_service_differs`
+        silently treats compat edits as no-ops and the systemd ExecStartPre
+        doctor-venv safeguard never fires for the affected service.
+        """
+        preset_dir = tmp_path / "presets"
+        preset_dir.mkdir()
+        _write_preset(preset_dir, "svc.yaml", _minimal_preset(id="svc"))
+
+        loader = PresetLoader(preset_dirs=[preset_dir])
+        async with Database(tmp_path / "test.db") as db:
+            await sync_presets(db, loader)
+            got = await db.get_service("svc")
+            assert got is not None
+            assert got.compat is None
+
+            _write_preset(
+                preset_dir,
+                "svc.yaml",
+                _minimal_preset(id="svc", compat={"vllm": ">=0.11.0,<0.12"}),
+            )
+            loader2 = PresetLoader(preset_dirs=[preset_dir])
+            result = await sync_presets(db, loader2)
+            assert result.updated == 1
+
+            got = await db.get_service("svc")
+            assert got is not None
+            assert got.compat == {"vllm": ">=0.11.0,<0.12"}
+
+    async def test_preflight_required_change_updates(self, tmp_path: Path) -> None:
+        """Toggling `preflight_required:` must propagate to the DB.
+
+        Regression for gpumod-032: without this assertion, presets that gain
+        the preflight flag never receive the systemd ExecStartPre RAM-safeguard
+        on re-sync.
+        """
+        preset_dir = tmp_path / "presets"
+        preset_dir.mkdir()
+        _write_preset(preset_dir, "svc.yaml", _minimal_preset(id="svc"))
+
+        loader = PresetLoader(preset_dirs=[preset_dir])
+        async with Database(tmp_path / "test.db") as db:
+            await sync_presets(db, loader)
+            got = await db.get_service("svc")
+            assert got is not None
+            assert got.preflight_required is False
+
+            _write_preset(
+                preset_dir,
+                "svc.yaml",
+                _minimal_preset(id="svc", preflight_required=True),
+            )
+            loader2 = PresetLoader(preset_dirs=[preset_dir])
+            result = await sync_presets(db, loader2)
+            assert result.updated == 1
+
+            got = await db.get_service("svc")
+            assert got is not None
+            assert got.preflight_required is True
+
     async def test_sync_with_empty_db_and_no_presets(self, tmp_path: Path) -> None:
         """Sync with empty DB and no presets should be a no-op."""
         preset_dir = tmp_path / "presets"

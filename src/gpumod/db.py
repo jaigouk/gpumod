@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 _CREATE_TABLES = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS services (
     depends_on TEXT NOT NULL DEFAULT '[]',
     startup_timeout INTEGER NOT NULL DEFAULT 120,
     extra_config TEXT NOT NULL DEFAULT '{}',
+    preflight_required INTEGER NOT NULL DEFAULT 0,
+    compat TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -114,6 +116,11 @@ class Database:
 
         await self._conn.executescript(_CREATE_TABLES)
 
+        # Migrations for databases created on an older schema. CREATE TABLE
+        # IF NOT EXISTS above leaves pre-existing tables untouched, so any
+        # column added after the initial release needs an ALTER here.
+        await self._migrate_services_v3()
+
         # Manage schema version: insert if empty, update if outdated.
         cursor = await self._conn.execute("SELECT COUNT(*) FROM schema_version")
         row = await cursor.fetchone()
@@ -126,6 +133,22 @@ class Database:
             await self._conn.execute("UPDATE schema_version SET version = ?", (_SCHEMA_VERSION,))
         await self._conn.commit()
         logger.debug("Database connected (schema v%d)", _SCHEMA_VERSION)
+
+    async def _migrate_services_v3(self) -> None:
+        """Add preflight_required + compat columns when missing (v2 → v3).
+
+        Safe to run on any version: existing columns are detected via
+        PRAGMA table_info and skipped, so re-running on a v3 DB is a no-op.
+        """
+        assert self._conn is not None
+        cursor = await self._conn.execute("PRAGMA table_info(services)")
+        columns = {row["name"] for row in await cursor.fetchall()}
+        if "preflight_required" not in columns:
+            await self._conn.execute(
+                "ALTER TABLE services ADD COLUMN preflight_required INTEGER NOT NULL DEFAULT 0",
+            )
+        if "compat" not in columns:
+            await self._conn.execute("ALTER TABLE services ADD COLUMN compat TEXT")
 
     async def close(self) -> None:
         """Close the database connection."""
@@ -153,6 +176,7 @@ class Database:
 
     @staticmethod
     def _row_to_service(row: Any) -> Service:
+        compat_raw = row["compat"]
         return Service(
             id=row["id"],
             name=row["name"],
@@ -166,6 +190,8 @@ class Database:
             depends_on=json.loads(row["depends_on"]),
             startup_timeout=row["startup_timeout"],
             extra_config=json.loads(row["extra_config"]),
+            preflight_required=bool(row["preflight_required"]),
+            compat=json.loads(compat_raw) if compat_raw else None,
         )
 
     @staticmethod
@@ -233,8 +259,9 @@ class Database:
             """
             INSERT INTO services
                 (id, name, driver, port, vram_mb, sleep_mode, health_endpoint,
-                 model_id, unit_name, depends_on, startup_timeout, extra_config)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 model_id, unit_name, depends_on, startup_timeout, extra_config,
+                 preflight_required, compat)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 service.id,
@@ -249,6 +276,8 @@ class Database:
                 json.dumps(service.depends_on),
                 service.startup_timeout,
                 json.dumps(service.extra_config),
+                int(service.preflight_required),
+                json.dumps(service.compat) if service.compat is not None else None,
             ),
         )
         await conn.commit()
@@ -285,7 +314,9 @@ class Database:
                 unit_name = ?,
                 depends_on = ?,
                 startup_timeout = ?,
-                extra_config = ?
+                extra_config = ?,
+                preflight_required = ?,
+                compat = ?
             WHERE id = ?
             """,
             (
@@ -300,6 +331,8 @@ class Database:
                 json.dumps(service.depends_on),
                 service.startup_timeout,
                 json.dumps(service.extra_config),
+                int(service.preflight_required),
+                json.dumps(service.compat) if service.compat is not None else None,
                 service.id,
             ),
         )

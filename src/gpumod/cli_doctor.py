@@ -56,6 +56,7 @@ def venv_command(
 ) -> None:
     """Validate the installed packages in a service's driver venv."""
     from gpumod.cli import cli_context, run_async
+    from gpumod.services.unit_installer import _build_settings
 
     async def _cmd() -> None:
         async with cli_context(no_sync=True) as ctx:
@@ -70,7 +71,12 @@ def venv_command(
                 # No contract — no-op success
                 raise typer.Exit(code=0)
 
-            venv = find_venv_root(service, settings={})
+            # Load settings from DB so settings.vllm_bin (operator-set, points
+            # at the dedicated venv) participates in the resolution order.
+            # Without this, find_venv_root falls through to shutil.which() and
+            # checks the wrong venv — turning the safeguard into a false alarm.
+            settings = await _build_settings(ctx.db)
+            venv = find_venv_root(service, settings=settings)
             if venv is None:
                 sys.stderr.write(
                     f"doctor venv: could not resolve venv root for "

@@ -183,3 +183,38 @@ class TestDoctorVenvProfileOverride:
         )
         assert result.exit_code == 1
         assert "transformers" in (result.stderr or "")
+
+
+class TestDoctorVenvLoadsSettingsFromDB:
+    """Regression for gpumod-032: cli_doctor previously passed settings={}.
+
+    That made `find_venv_root` skip the DB-stored ``vllm_bin`` and fall
+    through to ``shutil.which("vllm")``, which on a misconfigured host
+    returns a different (broken) interpreter than the one the systemd
+    unit actually launches — turning the safeguard into a false alarm.
+    """
+
+    def test_finds_venv_via_db_setting_when_no_unit_var(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        stub_registry_factory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Synthetic venv with vllm 0.11 satisfying the compat block.
+        venv = _make_synthetic_venv(tmp_path, {"vllm": "0.11.0"})
+        # Service has NO unit_vars.vllm_bin — resolution must use settings.
+        service = _make_service(compat={"vllm": ">=0.11.0,<0.12"}, vllm_bin=None)
+        stub_registry_factory({"vllm-test": service})
+
+        # Stub the DB-settings loader so it returns our synthetic venv path.
+        async def fake_build_settings(_db: object) -> dict[str, str]:
+            return {"vllm_bin": str(venv / "bin" / "vllm")}
+
+        monkeypatch.setattr(
+            "gpumod.services.unit_installer._build_settings",
+            fake_build_settings,
+        )
+
+        result = runner.invoke(app, ["doctor", "venv", "--service-id", "vllm-test"])
+        assert result.exit_code == 0, result.stdout + (result.stderr or "")

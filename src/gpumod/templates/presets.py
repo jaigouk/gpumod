@@ -99,6 +99,8 @@ def _service_differs(existing: Service, new: Service) -> bool:
         or existing.depends_on != new.depends_on
         or existing.startup_timeout != new.startup_timeout
         or existing.extra_config != new.extra_config
+        or existing.preflight_required != new.preflight_required
+        or existing.compat != new.compat
     )
 
 
