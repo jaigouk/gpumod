@@ -180,6 +180,46 @@ class TestRenderVllmUnit:
         assert "0.85" in result
         assert "8192" in result
 
+    def test_unit_vars_vllm_bin_overrides_settings(
+        self, vllm_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        """unit_vars.vllm_bin takes precedence over settings.vllm_bin (per-service venv isolation).
+
+        See gpumod-pv4: a service may need to run vllm from a dedicated venv
+        (e.g. ~/.venvs/vllm/bin/vllm) when the global Python env has
+        conflicting transitive dependencies.
+        """
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        settings = {**default_settings, "vllm_bin": "/usr/local/bin/vllm"}
+        unit_vars: dict[str, Any] = {"vllm_bin": "/home/operator/.venvs/vllm/bin/vllm"}
+        result = engine.render_service_unit(vllm_service, settings, unit_vars=unit_vars)
+        assert "ExecStart=/home/operator/.venvs/vllm/bin/vllm" in result
+        assert "ExecStart=/usr/local/bin/vllm" not in result
+
+    def test_falls_back_to_settings_vllm_bin_when_unit_vars_absent(
+        self, vllm_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        """When no per-service override, fall back to the global settings.vllm_bin."""
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        settings = {**default_settings, "vllm_bin": "/usr/local/bin/vllm"}
+        result = engine.render_service_unit(vllm_service, settings)
+        assert "ExecStart=/usr/local/bin/vllm" in result
+
+    def test_falls_back_to_path_lookup_when_neither_provided(
+        self, vllm_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        """No unit_vars + no settings.vllm_bin → render bare `vllm` (PATH lookup at start)."""
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        # default_settings doesn't include vllm_bin
+        result = engine.render_service_unit(vllm_service, default_settings)
+        assert "ExecStart=vllm serve" in result
+
     def test_extra_env_variables(
         self, vllm_service: Service, default_settings: dict[str, str]
     ) -> None:
