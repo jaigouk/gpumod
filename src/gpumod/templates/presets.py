@@ -226,6 +226,7 @@ class PresetLoader:
             startup_timeout=preset.startup_timeout,
             extra_config=extra_config,
             preflight_required=preset.preflight_required,
+            compat=preset.compat,
         )
 
     def discover_presets(self) -> list[PresetConfig]:

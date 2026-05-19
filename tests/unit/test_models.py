@@ -109,6 +109,28 @@ class TestServiceModel:
         )
         assert svc.preflight_required is True
 
+    def test_compat_defaults_to_none(self) -> None:
+        """compat defaults to None — no version contract declared (gpumod-ng7)."""
+        svc = Service(id="svc1", name="Test", driver=DriverType.VLLM, vram_mb=4096)
+        assert svc.compat is None
+
+    def test_compat_dict_parses(self) -> None:
+        """compat is a dict[str, str] of PEP 440 specifiers."""
+        svc = Service(
+            id="vllm-embedding",
+            name="Embedding",
+            driver=DriverType.VLLM,
+            vram_mb=2500,
+            compat={
+                "vllm": ">=0.11.0,<0.12",
+                "transformers": ">=4.55.2,<5.0",
+                "huggingface-hub": ">=0.34.0,<1.0",
+            },
+        )
+        assert svc.compat is not None
+        assert svc.compat["vllm"] == ">=0.11.0,<0.12"
+        assert svc.compat["transformers"] == ">=4.55.2,<5.0"
+
     def test_all_fields_populated(self) -> None:
         svc = Service(
             id="vllm-chat",

@@ -83,6 +83,11 @@ class Service(BaseModel):
     # systemctl start / Restart=on-failure / autostart paths get the same
     # safeguard as the gpumod Python API.
     preflight_required: bool = False
+    # gpumod-ng7: optional version-range contract for the service's driver
+    # venv. When set, `gpumod doctor venv --service-id <id>` validates the
+    # installed packages against these PEP 440 specifiers. None = no
+    # contract declared, doctor venv is a no-op success.
+    compat: dict[str, str] | None = None
 
 
 class Mode(BaseModel):
@@ -210,6 +215,9 @@ class PresetConfig(BaseModel):
     # service unit that invokes `gpumod preflight ram` as a freeze
     # safeguard. Default off; turn on for services with vram_mb >= 10000.
     preflight_required: bool = False
+    # gpumod-ng7: optional version-range contract for the driver venv.
+    # See Service.compat in this file for details.
+    compat: dict[str, str] | None = None
     unit_template: str | None = None
     unit_vars: dict[str, Any] = {}
 
