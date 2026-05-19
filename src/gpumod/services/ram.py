@@ -34,6 +34,75 @@ logger = logging.getLogger(__name__)
 _MEMINFO_PATH = Path("/proc/meminfo")
 _KB_PER_MB = 1024
 
+# RAM safeguard tunables. A large-VRAM llama.cpp/vllm service typically pulls
+# RAM proportional to its VRAM footprint (model weights staged + pinned
+# transfer buffers + Python heap). The defaults reject the dangerous case
+# where MemAvailable looks fine but pages are too fragmented for a
+# contiguous CUDA pinned allocation.
+#
+# Source-of-truth lives here so both ServiceManager (Python API) and the
+# `gpumod preflight ram` CLI subcommand share one implementation.
+RAM_HEADROOM_RATIO = 0.3  # require avail >= sum(vram) * ratio + absolute
+RAM_ABSOLUTE_HEADROOM_MB = 5_000
+RAM_HARD_FLOOR_MB = 6_000  # never start a service if avail < this
+
+
+def required_ram_mb(incoming_vram_mb: int) -> int:
+    """Estimate RAM needed to safely start services with given VRAM."""
+    return int(incoming_vram_mb * RAM_HEADROOM_RATIO) + RAM_ABSOLUTE_HEADROOM_MB
+
+
+async def check_ram_safeguard(
+    incoming_vram_mb: int,
+    ram: RAMTracker,
+    *,
+    hard_floor_mb: int | None = None,
+) -> str | None:
+    """Return None if safe to start, else a single-line error message.
+
+    Two-tier check:
+      1. Hard floor — refuse if MemAvailable < ``hard_floor_mb``
+         (defaults to ``RAM_HARD_FLOOR_MB``) regardless of service size.
+      2. Headroom check — refuse if MemAvailable < required estimate
+         for the incoming workload (``vram * RATIO + ABSOLUTE``).
+
+    Parameters
+    ----------
+    incoming_vram_mb:
+        Sum of declared ``vram_mb`` for the services about to start.
+        Pass 0 to check only the hard floor (e.g. when starting nothing
+        directly but still validating the kernel state).
+    ram:
+        :class:`RAMTracker` instance — typically reads /proc/meminfo.
+        Injectable for testability.
+    hard_floor_mb:
+        Optional override of ``RAM_HARD_FLOOR_MB`` (e.g. ``gpumod
+        preflight ram --hard-floor 8000``). When ``None``, the module
+        default applies. The override IS the floor — a lower value
+        does loosen the check.
+    """
+    floor = RAM_HARD_FLOOR_MB if hard_floor_mb is None else hard_floor_mb
+    usage = await ram.get_usage()
+    if usage.available_mb < floor:
+        return (
+            f"RAM safeguard: only {usage.available_mb} MB available, "
+            f"hard floor is {floor} MB. Refusing to start "
+            "to avoid CUDA pinned-memory freeze. Stop other workloads "
+            "and retry."
+        )
+
+    if incoming_vram_mb > 0:
+        required = required_ram_mb(incoming_vram_mb)
+        if usage.available_mb < required:
+            return (
+                f"RAM safeguard: incoming services need ~{required} MB "
+                f"available ({incoming_vram_mb} MB VRAM * "
+                f"{RAM_HEADROOM_RATIO} + {RAM_ABSOLUTE_HEADROOM_MB} MB "
+                f"headroom), but only {usage.available_mb} MB free. "
+                "Refusing to start to avoid CUDA pinned-memory freeze."
+            )
+    return None
+
 
 class InsufficientRAMError(Exception):
     """Raised when starting a service would risk a memory-pressure freeze.
@@ -65,8 +134,11 @@ class RAMTracker:
     convert to megabytes to match the rest of gpumod's units.
     """
 
-    def __init__(self, meminfo_path: Path = _MEMINFO_PATH) -> None:
-        self._path = meminfo_path
+    def __init__(self, meminfo_path: Path | None = None) -> None:
+        # Lazily resolve the module-level default so tests that monkey-patch
+        # `_MEMINFO_PATH` at runtime take effect for new instances. Binding
+        # the default at definition time would make patching silently no-op.
+        self._path = meminfo_path if meminfo_path is not None else _MEMINFO_PATH
 
     async def get_usage(self) -> RAMUsage:
         """Read /proc/meminfo and return MemTotal/MemAvailable/MemFree in MB."""

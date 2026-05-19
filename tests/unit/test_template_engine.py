@@ -240,6 +240,35 @@ class TestRenderVllmUnit:
         result = engine.render_service_unit(vllm_service, default_settings)
         assert "HF_HOME=/data/.cache/huggingface" in result
 
+    def test_preflight_required_emits_exec_start_pre(
+        self, default_settings: dict[str, str]
+    ) -> None:
+        """When service.preflight_required=True, render ExecStartPre."""
+        from gpumod.models import DriverType, Service
+        from gpumod.templates.engine import TemplateEngine
+
+        service = Service(
+            id="vllm-chat",
+            name="vLLM Chat Service",
+            driver=DriverType.VLLM,
+            port=8000,
+            vram_mb=8000,
+            model_id="mistralai/Devstral-Small-2505",
+            preflight_required=True,
+        )
+        settings = {**default_settings, "gpumod_bin": "/usr/local/bin/gpumod"}
+        result = TemplateEngine().render_service_unit(service, settings)
+        assert "ExecStartPre=/usr/local/bin/gpumod preflight ram --service-id vllm-chat" in result
+
+    def test_preflight_required_false_omits_exec_start_pre(
+        self, vllm_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        """Default preflight_required=False → no ExecStartPre line."""
+        from gpumod.templates.engine import TemplateEngine
+
+        result = TemplateEngine().render_service_unit(vllm_service, default_settings)
+        assert "ExecStartPre" not in result
+
     def test_dtype_rendered(self, vllm_service: Service, default_settings: dict[str, str]) -> None:
         from gpumod.templates.engine import TemplateEngine
 
@@ -487,6 +516,68 @@ class TestStartLimitSafeguard:
 
 
 # ── render_service_unit for llamacpp ────────────────────────────────────
+
+
+class TestPreflightExecStartPreAcrossDrivers:
+    """ExecStartPre conditional renders for every driver template (gpumod-ecr)."""
+
+    @pytest.mark.parametrize(
+        ("driver_str", "unit_vars"),
+        [
+            ("vllm", {}),
+            ("llamacpp", {"model_path": "/models/x.gguf"}),
+            ("fastapi", {"app_module": "main:app", "working_dir": "/opt"}),
+        ],
+    )
+    def test_preflight_required_emits_exec_start_pre(
+        self, driver_str: str, unit_vars: dict[str, Any], default_settings: dict[str, str]
+    ) -> None:
+        from gpumod.models import DriverType, Service
+        from gpumod.templates.engine import TemplateEngine
+
+        service = Service(
+            id=f"{driver_str}-svc",
+            name=f"Test {driver_str}",
+            driver=DriverType(driver_str),
+            port=8000,
+            vram_mb=10000,
+            model_id="org/model",
+            preflight_required=True,
+        )
+        settings = {**default_settings, "gpumod_bin": "/usr/local/bin/gpumod"}
+        result = TemplateEngine().render_service_unit(service, settings, unit_vars=unit_vars)
+        assert (
+            f"ExecStartPre=/usr/local/bin/gpumod preflight ram --service-id {driver_str}-svc"
+            in result
+        )
+
+    @pytest.mark.parametrize(
+        ("driver_str", "unit_vars"),
+        [
+            ("vllm", {}),
+            ("llamacpp", {"model_path": "/models/x.gguf"}),
+            ("fastapi", {"app_module": "main:app", "working_dir": "/opt"}),
+        ],
+    )
+    def test_preflight_required_false_omits_exec_start_pre(
+        self, driver_str: str, unit_vars: dict[str, Any], default_settings: dict[str, str]
+    ) -> None:
+        from gpumod.models import DriverType, Service
+        from gpumod.templates.engine import TemplateEngine
+
+        service = Service(
+            id=f"{driver_str}-svc",
+            name=f"Test {driver_str}",
+            driver=DriverType(driver_str),
+            port=8000,
+            vram_mb=10000,
+            model_id="org/model",
+            # preflight_required defaults to False
+        )
+        result = TemplateEngine().render_service_unit(
+            service, default_settings, unit_vars=unit_vars
+        )
+        assert "ExecStartPre" not in result
 
 
 class TestRenderLlamacppUnit:

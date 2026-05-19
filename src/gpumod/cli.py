@@ -25,6 +25,7 @@ from gpumod.cli_discover import discover_app
 from gpumod.cli_mode import mode_app
 from gpumod.cli_model import model_app
 from gpumod.cli_plan import plan_app
+from gpumod.cli_preflight import preflight_app
 from gpumod.cli_preset import preset_app
 from gpumod.cli_service import service_app
 from gpumod.cli_simulate import simulate_app
@@ -322,6 +323,7 @@ app.add_typer(preset_app, name="preset")
 app.add_typer(simulate_app, name="simulate")
 app.add_typer(plan_app, name="plan")
 app.add_typer(discover_app, name="discover")
+app.add_typer(preflight_app, name="preflight")
 
 
 # ---------------------------------------------------------------------------

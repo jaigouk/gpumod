@@ -225,6 +225,7 @@ class PresetLoader:
             unit_name=f"{preset.id}.service",
             startup_timeout=preset.startup_timeout,
             extra_config=extra_config,
+            preflight_required=preset.preflight_required,
         )
 
     def discover_presets(self) -> list[PresetConfig]:

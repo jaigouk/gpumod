@@ -77,6 +77,12 @@ class Service(BaseModel):
     depends_on: list[str] = []
     startup_timeout: int = 120
     extra_config: dict[str, Any] = {}
+    # gpumod-ecr: opt-in flag for the systemd ExecStartPre RAM safeguard.
+    # When True, the systemd unit template emits an ExecStartPre= line
+    # invoking `gpumod preflight ram --service-id <id>` so that direct
+    # systemctl start / Restart=on-failure / autostart paths get the same
+    # safeguard as the gpumod Python API.
+    preflight_required: bool = False
 
 
 class Mode(BaseModel):
@@ -200,6 +206,10 @@ class PresetConfig(BaseModel):
     startup_timeout: int = 60
     supports_sleep: bool = False
     sleep_mode: SleepMode = SleepMode.NONE
+    # gpumod-ecr: when true, gpumod renders an ExecStartPre= line in the
+    # service unit that invokes `gpumod preflight ram` as a freeze
+    # safeguard. Default off; turn on for services with vram_mb >= 10000.
+    preflight_required: bool = False
     unit_template: str | None = None
     unit_vars: dict[str, Any] = {}
 

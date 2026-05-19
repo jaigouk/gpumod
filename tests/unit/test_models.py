@@ -96,6 +96,18 @@ class TestServiceModel:
         assert svc.depends_on == []
         assert svc.startup_timeout == 120
         assert svc.extra_config == {}
+        assert svc.preflight_required is False  # gpumod-ecr opt-in flag
+
+    def test_preflight_required_true(self) -> None:
+        """preflight_required can be opted-in per service preset."""
+        svc = Service(
+            id="qwen36",
+            name="Qwen 3.6",
+            driver=DriverType.LLAMACPP,
+            vram_mb=22000,
+            preflight_required=True,
+        )
+        assert svc.preflight_required is True
 
     def test_all_fields_populated(self) -> None:
         svc = Service(

@@ -40,6 +40,9 @@ async def _build_settings(db: Database) -> dict[str, str]:
         "vllm_bin": "vllm",
         "llamacpp_bin": "llama-server",
         "uvicorn_bin": "uvicorn",
+        # gpumod-ecr: needed by systemd ExecStartPre hooks to call back into
+        # `gpumod preflight ram --service-id <id>` for direct-start safety.
+        "gpumod_bin": "gpumod",
     }
     for setting_key, binary_name in _binary_keys.items():
         val = await db.get_setting(setting_key)

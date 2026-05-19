@@ -1,11 +1,18 @@
-"""Tests for RAMTracker and InsufficientRAMError."""
+"""Tests for RAMTracker, InsufficientRAMError, and check_ram_safeguard."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 from gpumod.models import RAMUsage
-from gpumod.services.ram import InsufficientRAMError, RAMTracker
+from gpumod.services.ram import (
+    RAM_ABSOLUTE_HEADROOM_MB,
+    RAM_HARD_FLOOR_MB,
+    RAM_HEADROOM_RATIO,
+    InsufficientRAMError,
+    RAMTracker,
+    check_ram_safeguard,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -98,3 +105,82 @@ class TestInsufficientRAMError:
     def test_custom_message_overrides_default(self) -> None:
         err = InsufficientRAMError(required_mb=1, available_mb=2, message="custom warning")
         assert str(err) == "custom warning"
+
+
+def _tracker_with_avail_mb(tmp_path: Path, avail_mb: int) -> RAMTracker:
+    """Build a RAMTracker that reports a controlled MemAvailable in MB."""
+    f = tmp_path / "meminfo"
+    avail_kb = avail_mb * 1024
+    f.write_text(
+        f"MemTotal:       30000000 kB\nMemFree:           20000 kB\nMemAvailable:  {avail_kb} kB\n"
+    )
+    return RAMTracker(meminfo_path=f)
+
+
+class TestCheckRamSafeguard:
+    """Freeze-aware RAM safeguard — extracted from ServiceManager (gpumod-ecr).
+
+    Same contract: returns None if safe, else an error message string.
+    """
+
+    async def test_returns_none_when_ram_is_comfortable(self, tmp_path: Path) -> None:
+        # 28 GB available, asking for a 22 GB-VRAM service: required ~= 11.6 GB
+        tracker = _tracker_with_avail_mb(tmp_path, 28_000)
+        result = await check_ram_safeguard(incoming_vram_mb=22_000, ram=tracker)
+        assert result is None
+
+    async def test_returns_error_when_under_hard_floor(self, tmp_path: Path) -> None:
+        # 4 GB available, below the 6 GB hard floor → always refuse
+        tracker = _tracker_with_avail_mb(tmp_path, 4_000)
+        result = await check_ram_safeguard(incoming_vram_mb=22_000, ram=tracker)
+        assert result is not None
+        assert "hard floor" in result.lower()
+        assert "4000" in result
+        assert str(RAM_HARD_FLOOR_MB) in result
+
+    async def test_returns_error_when_under_headroom_estimate(self, tmp_path: Path) -> None:
+        # Above hard floor (6 GB) but below 22 GB * 0.3 + 5000 = 11.6 GB headroom
+        tracker = _tracker_with_avail_mb(tmp_path, 8_000)
+        result = await check_ram_safeguard(incoming_vram_mb=22_000, ram=tracker)
+        assert result is not None
+        assert "headroom" in result.lower() or "available" in result.lower()
+        assert "8000" in result
+
+    async def test_zero_vram_only_checks_hard_floor(self, tmp_path: Path) -> None:
+        # vram_mb=0 means no incoming service; should only check hard floor
+        # Above floor: pass.
+        tracker_ok = _tracker_with_avail_mb(tmp_path, 8_000)
+        assert await check_ram_safeguard(incoming_vram_mb=0, ram=tracker_ok) is None
+        # Below floor: still fail.
+        tmp2 = tmp_path / "low"
+        tmp2.mkdir()
+        tracker_low = _tracker_with_avail_mb(tmp2, 3_000)
+        result = await check_ram_safeguard(incoming_vram_mb=0, ram=tracker_low)
+        assert result is not None
+        assert "hard floor" in result.lower()
+
+    async def test_constants_are_exported(self) -> None:
+        """Constants must be re-importable from gpumod.services.ram."""
+        # If these have moved or were renamed, tests fail to import.
+        assert RAM_HEADROOM_RATIO == 0.3
+        assert RAM_ABSOLUTE_HEADROOM_MB == 5_000
+        assert RAM_HARD_FLOOR_MB == 6_000
+
+    async def test_hard_floor_mb_override_raises_threshold(self, tmp_path: Path) -> None:
+        """Caller can pass a higher hard_floor_mb (e.g. via CLI --hard-floor)."""
+        # 8 GB available, default hard floor is 6 GB → passes
+        tracker = _tracker_with_avail_mb(tmp_path, 8_000)
+        assert await check_ram_safeguard(incoming_vram_mb=0, ram=tracker) is None
+        # Override hard floor to 10 GB → 8 GB now fails
+        result = await check_ram_safeguard(incoming_vram_mb=0, ram=tracker, hard_floor_mb=10_000)
+        assert result is not None
+        assert "10000" in result
+        assert "hard floor" in result.lower()
+
+    async def test_hard_floor_mb_override_lower_value_ignored(self, tmp_path: Path) -> None:
+        """An override BELOW the default still applies — the override IS the floor."""
+        # 4 GB available, default hard floor 6 GB would refuse
+        tracker = _tracker_with_avail_mb(tmp_path, 4_000)
+        # Override to 2 GB allows 4 GB through (no headroom check since vram=0)
+        result = await check_ram_safeguard(incoming_vram_mb=0, ram=tracker, hard_floor_mb=2_000)
+        assert result is None

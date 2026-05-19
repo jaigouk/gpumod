@@ -20,7 +20,12 @@ from gpumod.models import (
     SystemStatus,
 )
 from gpumod.services.health import HealthMonitor
-from gpumod.services.ram import InsufficientRAMError, RAMTracker
+from gpumod.services.ram import (
+    InsufficientRAMError,
+    RAMTracker,
+    check_ram_safeguard,
+    required_ram_mb,
+)
 from gpumod.services.vram import NvidiaSmiError
 
 if TYPE_CHECKING:
@@ -33,14 +38,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# RAM safeguard tunables. A large-VRAM llama.cpp service typically pulls
-# RAM proportional to its VRAM footprint (model weights staged + pinned
-# transfer buffers + Python heap). The defaults reject the dangerous case
-# where MemAvailable looks fine but pages are too fragmented for a
-# contiguous CUDA pinned allocation.
-RAM_HEADROOM_RATIO = 0.3  # require avail >= sum(vram) * ratio + absolute
-RAM_ABSOLUTE_HEADROOM_MB = 5_000
-RAM_HARD_FLOOR_MB = 6_000  # never start a service if avail < this
+# RAM safeguard tunables now live in gpumod.services.ram (single source of
+# truth shared between the Python API path and the `gpumod preflight ram`
+# CLI subcommand). Imported via check_ram_safeguard / required_ram_mb above.
 DEFAULT_SETTLE_SECONDS = 15.0  # pause between outgoing-stop and incoming-start
 SETTLE_ENV_VAR = "GPUMOD_SETTLE_SECONDS"
 
@@ -97,8 +97,13 @@ class ServiceManager:
 
     @staticmethod
     def _required_ram_mb(incoming_vram_mb: int) -> int:
-        """Estimate RAM needed to safely start services with given VRAM."""
-        return int(incoming_vram_mb * RAM_HEADROOM_RATIO) + RAM_ABSOLUTE_HEADROOM_MB
+        """Estimate RAM needed to safely start services with given VRAM.
+
+        Thin delegate to :func:`gpumod.services.ram.required_ram_mb` —
+        retained as a static method on ServiceManager for back-compat with
+        callers and tests that already reference it.
+        """
+        return required_ram_mb(incoming_vram_mb)
 
     @staticmethod
     def _settle_seconds() -> float:
@@ -120,32 +125,12 @@ class ServiceManager:
     async def _check_ram_safeguard(self, incoming_vram_mb: int) -> str | None:
         """Return None if safe to start, else an error message.
 
-        Two-tier check:
-          1. Hard floor — refuse if MemAvailable < RAM_HARD_FLOOR_MB
-             regardless of service size.
-          2. Headroom check — refuse if MemAvailable < required estimate
-             for the incoming workload.
+        Thin delegate to :func:`gpumod.services.ram.check_ram_safeguard`
+        — kept as an instance method so existing call sites
+        (``switch_mode``, ``start_service``) and their tests continue to
+        work unchanged.
         """
-        usage = await self._ram.get_usage()
-        if usage.available_mb < RAM_HARD_FLOOR_MB:
-            return (
-                f"RAM safeguard: only {usage.available_mb} MB available, "
-                f"hard floor is {RAM_HARD_FLOOR_MB} MB. Refusing to start "
-                "to avoid CUDA pinned-memory freeze. Stop other workloads "
-                "and retry."
-            )
-
-        if incoming_vram_mb > 0:
-            required = self._required_ram_mb(incoming_vram_mb)
-            if usage.available_mb < required:
-                return (
-                    f"RAM safeguard: incoming services need ~{required} MB "
-                    f"available ({incoming_vram_mb} MB VRAM * "
-                    f"{RAM_HEADROOM_RATIO} + {RAM_ABSOLUTE_HEADROOM_MB} MB "
-                    f"headroom), but only {usage.available_mb} MB free. "
-                    "Refusing to start to avoid CUDA pinned-memory freeze."
-                )
-        return None
+        return await check_ram_safeguard(incoming_vram_mb, self._ram)
 
     async def _on_health_change(self, service_id: str, healthy: bool) -> None:
         """React to health state changes reported by HealthMonitor."""
