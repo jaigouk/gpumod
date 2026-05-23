@@ -297,3 +297,62 @@ class TestDefaultMetricsCollector:
 
         # Mean should be (200 + 100) / 2 = 150
         assert abs(metrics["mean_tps"] - 150.0) < 0.1
+
+    def test_get_iteration_metrics_omits_mtp_aggregates_when_absent(self) -> None:
+        # gpumod-76l.3: non-MTP runs do not pass draft_n / draft_n_accepted.
+        # Output must NOT carry MTP keys so README tables for non-MTP models
+        # stay clean.
+        from gpumod.benchmarks.qwen35.metrics_collector import DefaultMetricsCollector
+
+        collector = DefaultMetricsCollector()
+        collector.record_generation(tokens=100, duration_seconds=0.5, ttft_seconds=0.1)
+
+        metrics = collector.get_iteration_metrics()
+
+        assert "mean_draft_acceptance" not in metrics
+        assert "total_draft_n" not in metrics
+        assert "total_draft_accepted" not in metrics
+
+    def test_get_iteration_metrics_includes_mtp_aggregates_when_present(self) -> None:
+        # MTP runs pass draft_n + draft_n_accepted. Output exposes:
+        # - total_draft_n (sum across generations)
+        # - total_draft_accepted (sum across generations)
+        # - mean_draft_acceptance (mean of per-call acceptance ratio)
+        from gpumod.benchmarks.qwen35.metrics_collector import DefaultMetricsCollector
+
+        collector = DefaultMetricsCollector()
+        # Gen 1: 44 drafted, 41 accepted => 93.2%
+        collector.record_generation(
+            tokens=64, duration_seconds=8.0, ttft_seconds=0.1,
+            draft_n=44, draft_n_accepted=41,
+        )
+        # Gen 2: 100 drafted, 80 accepted => 80.0%
+        collector.record_generation(
+            tokens=80, duration_seconds=10.0, ttft_seconds=0.1,
+            draft_n=100, draft_n_accepted=80,
+        )
+
+        metrics = collector.get_iteration_metrics()
+
+        assert metrics["total_draft_n"] == 144
+        assert metrics["total_draft_accepted"] == 121
+        # Mean of per-call ratios: (41/44 + 80/100) / 2 = (0.9318 + 0.8) / 2 = 0.8659
+        assert abs(metrics["mean_draft_acceptance"] - 0.8659) < 0.001
+
+    def test_record_generation_accepts_zero_draft_n_without_division_error(self) -> None:
+        # Edge case: MTP can emit a request where no drafts were generated
+        # (e.g. very short response). Acceptance ratio for that call is
+        # treated as 0.0 so it cannot raise ZeroDivisionError.
+        from gpumod.benchmarks.qwen35.metrics_collector import DefaultMetricsCollector
+
+        collector = DefaultMetricsCollector()
+        collector.record_generation(
+            tokens=2, duration_seconds=0.2, ttft_seconds=0.05,
+            draft_n=0, draft_n_accepted=0,
+        )
+
+        metrics = collector.get_iteration_metrics()
+
+        assert metrics["total_draft_n"] == 0
+        assert metrics["total_draft_accepted"] == 0
+        assert metrics["mean_draft_acceptance"] == 0.0

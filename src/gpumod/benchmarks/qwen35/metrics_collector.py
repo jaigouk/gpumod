@@ -39,6 +39,8 @@ class DefaultMetricsCollector:
         tokens: int,
         duration_seconds: float,
         ttft_seconds: float,
+        draft_n: int | None = None,
+        draft_n_accepted: int | None = None,
     ) -> None:
         """Record metrics for a single generation.
 
@@ -46,20 +48,31 @@ class DefaultMetricsCollector:
             tokens: Number of tokens generated
             duration_seconds: Total generation time in seconds
             ttft_seconds: Time to first token in seconds
+            draft_n: Drafted token count from MTP speculative decoding,
+                or None for non-MTP runs.
+            draft_n_accepted: Drafted tokens accepted by the target model,
+                or None for non-MTP runs.
         """
         if duration_seconds <= 0:
             return
 
         tps = measure_tps(tokens, duration_seconds)
 
-        self._generations.append(
-            {
-                "tokens": tokens,
-                "tps": tps,
-                "ttft_ms": ttft_seconds * 1000,
-                "total_ms": duration_seconds * 1000,
-            }
-        )
+        record: dict[str, float] = {
+            "tokens": tokens,
+            "tps": tps,
+            "ttft_ms": ttft_seconds * 1000,
+            "total_ms": duration_seconds * 1000,
+        }
+        if draft_n is not None and draft_n_accepted is not None:
+            record["draft_n"] = draft_n
+            record["draft_n_accepted"] = draft_n_accepted
+            # Per-call acceptance ratio; 0.0 when no drafts were generated.
+            record["draft_acceptance"] = (
+                draft_n_accepted / draft_n if draft_n > 0 else 0.0
+            )
+
+        self._generations.append(record)
 
     def get_iteration_metrics(self) -> dict[str, Any]:
         """Get aggregated metrics for the iteration and reset.
@@ -87,6 +100,15 @@ class DefaultMetricsCollector:
             result["vram_idle_mb"] = self._vram_idle
         if self._vram_peak is not None:
             result["vram_peak_mb"] = self._vram_peak
+
+        mtp_generations = [g for g in self._generations if "draft_n" in g]
+        if mtp_generations:
+            result["total_draft_n"] = sum(int(g["draft_n"]) for g in mtp_generations)
+            result["total_draft_accepted"] = sum(
+                int(g["draft_n_accepted"]) for g in mtp_generations
+            )
+            acceptances = [g["draft_acceptance"] for g in mtp_generations]
+            result["mean_draft_acceptance"] = sum(acceptances) / len(acceptances)
 
         self._reset()
         return result

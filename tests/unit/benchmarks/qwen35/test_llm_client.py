@@ -254,6 +254,69 @@ class TestLlamaCppClientTiming:
 
         assert client.last_timing is None
 
+    @pytest.mark.asyncio
+    async def test_extracts_mtp_draft_fields_from_body(self) -> None:
+        # gpumod-76l.3: MTP (Multi-Token Prediction) variants report
+        # `draft_n` and `draft_n_accepted` in the response body's `timings`
+        # block. The runner needs these to compute acceptance rate per
+        # request without scraping the journal.
+        from gpumod.benchmarks.qwen35.llm_client import LlamaCppClient
+
+        client = LlamaCppClient(base_url="http://localhost:8080")
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "response"}}],
+            "timings": {
+                "prompt_n": 21,
+                "predicted_n": 64,
+                "prompt_ms": 100.0,
+                "predicted_ms": 8000.0,
+                "draft_n": 44,
+                "draft_n_accepted": 41,
+            },
+        }
+        mock_response.headers = {}
+
+        client._client = AsyncMock()
+        client._client.post = AsyncMock(return_value=mock_response)
+
+        await client.generate("prompt")
+
+        assert client.last_timing is not None
+        assert client.last_timing.get("draft_n") == 44
+        assert client.last_timing.get("draft_n_accepted") == 41
+
+    @pytest.mark.asyncio
+    async def test_mtp_draft_fields_are_none_for_non_mtp_runs(self) -> None:
+        # Non-MTP runs omit draft_n / draft_n_accepted from timings. The
+        # extractor must surface them as None (NOT zero) so downstream
+        # metrics distinguish "no MTP" from "MTP with zero acceptance".
+        from gpumod.benchmarks.qwen35.llm_client import LlamaCppClient
+
+        client = LlamaCppClient(base_url="http://localhost:8080")
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "response"}}],
+            "timings": {
+                "prompt_n": 21,
+                "predicted_n": 64,
+                "prompt_ms": 100.0,
+                "predicted_ms": 8000.0,
+            },
+        }
+        mock_response.headers = {}
+
+        client._client = AsyncMock()
+        client._client.post = AsyncMock(return_value=mock_response)
+
+        await client.generate("prompt")
+
+        assert client.last_timing is not None
+        assert client.last_timing.get("draft_n") is None
+        assert client.last_timing.get("draft_n_accepted") is None
+
 
 # ---------------------------------------------------------------------------
 # LlamaCppClient protocol compliance tests

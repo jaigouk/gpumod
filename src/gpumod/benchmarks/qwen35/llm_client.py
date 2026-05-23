@@ -103,11 +103,16 @@ class LlamaCppClient:
         usage: dict[str, Any] | None = data.get("usage")
 
         if body_timings:
+            # MTP (Multi-Token Prediction) variants emit `draft_n` and
+            # `draft_n_accepted` in the timings block. Surface them as None
+            # for non-MTP runs so callers can distinguish absence from zero.
             self.last_timing = {
                 "prompt_tokens": body_timings.get("prompt_n", 0),
                 "generated_tokens": body_timings.get("predicted_n", 0),
                 "prompt_ms": body_timings.get("prompt_ms", 0.0),
                 "generation_ms": body_timings.get("predicted_ms", 0.0),
+                "draft_n": body_timings.get("draft_n"),
+                "draft_n_accepted": body_timings.get("draft_n_accepted"),
             }
             return
 

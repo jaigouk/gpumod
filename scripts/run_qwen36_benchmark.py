@@ -84,6 +84,16 @@ MODELS: dict[str, ModelConfig] = {
         port=7099,
         service_id="qwen36-35b-a3b-iq4xs",
     ),
+    "qwen36-27b-mtp-q4": ModelConfig(
+        id="qwen36-27b-mtp-q4",
+        name="Qwen3.6-27B MTP",
+        architecture="dense-27B+mtp",
+        repo="unsloth/Qwen3.6-27B-MTP-GGUF",
+        quant="UD-Q4_K_XL",
+        file="Qwen3.6-27B-MTP-UD-Q4_K_XL.gguf",
+        port=7102,
+        service_id="qwen36-27b-mtp-q4",
+    ),
     "gemma4-e4b": ModelConfig(
         id="gemma4-e4b",
         name="Gemma 4 E4B",
@@ -237,11 +247,15 @@ class ArchitectureBenchmark:
             end_time = time.perf_counter()
             duration = end_time - start_time
 
+            draft_n: int | None = None
+            draft_n_accepted: int | None = None
             if self.client.last_timing:
                 tokens = self.client.last_timing.get("generated_tokens", 0)
                 gen_ms = self.client.last_timing.get("generation_ms", 0.0)
                 ttft = self.client.last_timing.get("prompt_ms", 0) / 1000
                 gen_duration = gen_ms / 1000 if gen_ms > 0 else duration
+                draft_n = self.client.last_timing.get("draft_n")
+                draft_n_accepted = self.client.last_timing.get("draft_n_accepted")
             else:
                 tokens = len(response) // 4 if response else 0
                 ttft = duration * 0.1
@@ -251,6 +265,8 @@ class ArchitectureBenchmark:
                 tokens=tokens,
                 duration_seconds=gen_duration,
                 ttft_seconds=ttft,
+                draft_n=draft_n,
+                draft_n_accepted=draft_n_accepted,
             )
 
             code = self._extract_code(response)
@@ -426,7 +442,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        choices=["qwen36-27b", "qwen36-35b-a3b", "qwen36-35b-a3b-iq4xs", "gemma4-e4b", "all"],
+        choices=[
+            "qwen36-27b",
+            "qwen36-35b-a3b",
+            "qwen36-35b-a3b-iq4xs",
+            "qwen36-27b-mtp-q4",
+            "gemma4-e4b",
+            "all",
+        ],
         required=True,
         help="Model to benchmark (or 'all' for sequential run)",
     )
