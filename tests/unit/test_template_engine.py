@@ -708,9 +708,12 @@ class TestRenderLlamacppUnit:
         )
         assert "--n-gpu-layers -1" in result
 
-    def test_flash_attn_enabled(
+    def test_flash_attn_enabled_renders_on_value(
         self, llamacpp_service: Service, default_settings: dict[str, str]
     ) -> None:
+        # gpumod-py6: llama.cpp b9297+ requires --flash-attn to take a value
+        # (on|off|auto). Boolean `true` must render `--flash-attn on`, not the
+        # bare flag (which crashes llama-server by consuming the next token).
         from gpumod.templates.engine import TemplateEngine
 
         engine = TemplateEngine()
@@ -721,7 +724,23 @@ class TestRenderLlamacppUnit:
         result = engine.render_service_unit(
             llamacpp_service, default_settings, unit_vars=unit_vars
         )
-        assert "--flash-attn" in result
+        assert "--flash-attn on" in result
+
+    def test_flash_attn_string_value_passed_through(
+        self, llamacpp_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        # Operators can pin `flash_attn: auto` (or `off`) explicitly.
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        unit_vars: dict[str, Any] = {
+            "model_path": "/models/code.gguf",
+            "flash_attn": "auto",
+        }
+        result = engine.render_service_unit(
+            llamacpp_service, default_settings, unit_vars=unit_vars
+        )
+        assert "--flash-attn auto" in result
 
     def test_flash_attn_disabled_by_default(
         self, llamacpp_service: Service, default_settings: dict[str, str]
@@ -730,6 +749,21 @@ class TestRenderLlamacppUnit:
 
         engine = TemplateEngine()
         unit_vars: dict[str, Any] = {"model_path": "/models/code.gguf"}
+        result = engine.render_service_unit(
+            llamacpp_service, default_settings, unit_vars=unit_vars
+        )
+        assert "--flash-attn" not in result
+
+    def test_flash_attn_explicit_false_does_not_render(
+        self, llamacpp_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        unit_vars: dict[str, Any] = {
+            "model_path": "/models/code.gguf",
+            "flash_attn": False,
+        }
         result = engine.render_service_unit(
             llamacpp_service, default_settings, unit_vars=unit_vars
         )
