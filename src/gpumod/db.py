@@ -643,6 +643,59 @@ class Database:
         await conn.commit()
         logger.debug("Inserted model %r", model.id)
 
+    async def update_model(self, model: ModelInfo) -> bool:
+        """Update an existing model in the database.
+
+        All columns except ``id`` are overwritten.
+
+        Returns
+        -------
+        bool
+            True if a row was updated, False if no model with that ID exists.
+        """
+        validate_model_id(model.id)
+        conn = self._ensure_conn()
+        cursor = await conn.execute(
+            """
+            UPDATE models SET
+                source = ?,
+                parameters_b = ?,
+                architecture = ?,
+                base_vram_mb = ?,
+                kv_cache_per_1k_tokens_mb = ?,
+                kv_cache_profile = ?,
+                quantizations = ?,
+                capabilities = ?,
+                fetched_at = ?,
+                notes = ?
+            WHERE id = ?
+            """,
+            (
+                model.source.value,
+                model.parameters_b,
+                model.architecture,
+                model.base_vram_mb,
+                model.kv_cache_per_1k_tokens_mb,
+                (
+                    model.kv_cache_profile.model_dump_json()
+                    if model.kv_cache_profile is not None
+                    else None
+                ),
+                json.dumps(model.quantizations),
+                json.dumps(model.capabilities),
+                model.fetched_at,
+                model.notes,
+                model.id,
+            ),
+        )
+        await conn.commit()
+        updated = cursor.rowcount > 0
+        if updated:
+            logger.debug("Updated model %r", model.id)
+        else:
+            logger.debug("No model found with id=%r to update", model.id)
+        return updated
+
     async def delete_model(self, model_id: str) -> None:
         """Delete a model by ID."""
         conn = self._ensure_conn()

@@ -209,6 +209,74 @@ def model_info(
     run_async(_cmd())
 
 
+def _print_refresh_result(
+    model_id: str,
+    changed: bool,
+    *,
+    dry_run: bool,
+) -> None:
+    """Print the result of refreshing a single model's kv_cache_profile."""
+    if dry_run:
+        if changed:
+            _console.print(f"[yellow]{model_id}[/yellow]: kv_cache_profile would change")
+        else:
+            _console.print(f"[dim]{model_id}[/dim]: no change")
+    elif changed:
+        _console.print(f"[green]{model_id}[/green]: kv_cache_profile updated")
+    else:
+        _console.print(f"[dim]{model_id}[/dim]: no change")
+
+
+@model_app.command("refresh")
+def refresh_command(
+    model_id: str | None = typer.Argument(
+        None, help="Specific model to refresh; omit with --all for batch."
+    ),
+    all_models: bool = typer.Option(False, "--all", help="Refresh every registered model."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would change."),
+) -> None:
+    """Refresh model metadata (kv_cache_profile) from HuggingFace."""
+    from gpumod.cli import cli_context, run_async
+    from gpumod.fetchers.huggingface import HuggingFaceFetcher
+
+    if not model_id and not all_models:
+        raise typer.BadParameter("Pass <model_id> or --all")
+
+    async def _cmd() -> None:
+        async with cli_context(no_sync=True) as ctx:
+            fetcher = HuggingFaceFetcher()
+
+            if all_models:
+                models_to_refresh = await ctx.db.list_models()
+            else:
+                assert model_id is not None
+                m = await ctx.db.get_model(model_id)
+                if m is None:
+                    _console.print(f"[red]Model not found: {model_id!r}[/red]")
+                    raise typer.Exit(code=2)
+                models_to_refresh = [m]
+
+            errors: list[str] = []
+            for m in models_to_refresh:
+                try:
+                    fresh = await fetcher.fetch(m.id)
+                except Exception as exc:
+                    errors.append(f"{m.id}: {exc}")
+                    _console.print(f"[red]Failed to fetch {m.id}: {exc}[/red]")
+                    continue
+
+                changed = m.kv_cache_profile != fresh.kv_cache_profile
+                if not dry_run:
+                    m.kv_cache_profile = fresh.kv_cache_profile
+                    await ctx.db.update_model(m)
+                _print_refresh_result(m.id, changed, dry_run=dry_run)
+
+            if errors:
+                raise typer.Exit(code=1)
+
+    run_async(_cmd())
+
+
 @model_app.command("register")
 def register_model(
     model_id: str = typer.Argument(help="Model ID to register."),

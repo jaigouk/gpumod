@@ -1,4 +1,4 @@
-"""Tests for gpumod.cli_model — Model CLI commands (list, info, register, remove)."""
+"""Tests for gpumod.cli_model — Model CLI commands (list, info, register, remove, refresh)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import typer.testing
 
 from gpumod.cli import app
-from gpumod.models import ModelInfo, ModelSource
+from gpumod.models import KVCacheProfile, ModelInfo, ModelSource
 
 runner = typer.testing.CliRunner()
 
@@ -334,3 +334,170 @@ class TestModelRemove:
 
         assert result.exit_code == 0  # error_handler catches it
         assert "error" in result.output.lower() or "not found" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# model refresh tests (gpumod-0x19)
+# ---------------------------------------------------------------------------
+
+
+def _make_model_with_profile(
+    *,
+    id: str = "org/model",
+    kv_cache_profile: KVCacheProfile | None = None,
+    **kwargs: object,
+) -> ModelInfo:
+    """Helper that wraps _make_model and adds kv_cache_profile support."""
+    defaults: dict[str, object] = {
+        "id": id,
+        "source": ModelSource.HUGGINGFACE,
+        "parameters_b": 8.0,
+        "architecture": "LlamaForCausalLM",
+        "base_vram_mb": 16000,
+        "kv_cache_per_1k_tokens_mb": 64,
+        "quantizations": [],
+        "capabilities": [],
+        "fetched_at": "2024-01-01T00:00:00+00:00",
+        "notes": None,
+        "kv_cache_profile": kv_cache_profile,
+    }
+    defaults.update(kwargs)
+    return ModelInfo(**defaults)  # type: ignore[arg-type]
+
+
+class TestModelRefresh:
+    """Tests for `gpumod model refresh` command — gpumod-0x19."""
+
+    def test_refresh_single_model(self) -> None:
+        """Refresh a single model and update its kv_cache_profile."""
+        profile = KVCacheProfile(
+            num_sliding_layers=28,
+            num_global_layers=7,
+            head_dim=256,
+            num_kv_heads=2,
+        )
+        existing = _make_model_with_profile(id="org/model-a", kv_cache_profile=None)
+        fresh = _make_model_with_profile(id="org/model-a", kv_cache_profile=profile)
+
+        mock_ctx = _make_mock_context()
+        mock_ctx.db.get_model = AsyncMock(return_value=existing)
+        mock_ctx.db.update_model = AsyncMock(return_value=True)
+
+        mock_fetcher = MagicMock()
+        mock_fetcher.fetch = AsyncMock(return_value=fresh)
+
+        with (
+            patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)),
+            patch(
+                "gpumod.fetchers.huggingface.HuggingFaceFetcher",
+                return_value=mock_fetcher,
+            ),
+        ):
+            result = runner.invoke(app, ["model", "refresh", "org/model-a"])
+
+        assert result.exit_code == 0
+        mock_ctx.db.update_model.assert_awaited_once()
+        updated_model = mock_ctx.db.update_model.call_args[0][0]
+        assert updated_model.kv_cache_profile == profile
+
+    def test_refresh_all_models(self) -> None:
+        """Refresh all registered models with --all."""
+        profile_a = KVCacheProfile(num_global_layers=32, head_dim=128, num_kv_heads=8)
+        profile_b = KVCacheProfile(num_global_layers=64, head_dim=128, num_kv_heads=8)
+
+        model_a = _make_model_with_profile(id="org/model-a", kv_cache_profile=None)
+        model_b = _make_model_with_profile(id="org/model-b", kv_cache_profile=None)
+        fresh_a = _make_model_with_profile(id="org/model-a", kv_cache_profile=profile_a)
+        fresh_b = _make_model_with_profile(id="org/model-b", kv_cache_profile=profile_b)
+
+        mock_ctx = _make_mock_context()
+        mock_ctx.db.list_models = AsyncMock(return_value=[model_a, model_b])
+        mock_ctx.db.update_model = AsyncMock(return_value=True)
+
+        mock_fetcher = MagicMock()
+        mock_fetcher.fetch = AsyncMock(side_effect=[fresh_a, fresh_b])
+
+        with (
+            patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)),
+            patch(
+                "gpumod.fetchers.huggingface.HuggingFaceFetcher",
+                return_value=mock_fetcher,
+            ),
+        ):
+            result = runner.invoke(app, ["model", "refresh", "--all"])
+
+        assert result.exit_code == 0
+        assert mock_ctx.db.update_model.await_count == 2
+
+    def test_refresh_dry_run(self) -> None:
+        """--dry-run prints changes but doesn't write to DB."""
+        profile = KVCacheProfile(num_global_layers=32, head_dim=128, num_kv_heads=8)
+        existing = _make_model_with_profile(id="org/model-a", kv_cache_profile=None)
+        fresh = _make_model_with_profile(id="org/model-a", kv_cache_profile=profile)
+
+        mock_ctx = _make_mock_context()
+        mock_ctx.db.get_model = AsyncMock(return_value=existing)
+        mock_ctx.db.update_model = AsyncMock(return_value=True)
+
+        mock_fetcher = MagicMock()
+        mock_fetcher.fetch = AsyncMock(return_value=fresh)
+
+        with (
+            patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)),
+            patch(
+                "gpumod.fetchers.huggingface.HuggingFaceFetcher",
+                return_value=mock_fetcher,
+            ),
+        ):
+            result = runner.invoke(app, ["model", "refresh", "org/model-a", "--dry-run"])
+
+        assert result.exit_code == 0
+        mock_ctx.db.update_model.assert_not_awaited()
+        # Should show what would change
+        assert "org/model-a" in result.output
+
+    def test_refresh_unknown_model(self) -> None:
+        """Refreshing a model not in the DB exits with code 2."""
+        mock_ctx = _make_mock_context()
+        mock_ctx.db.get_model = AsyncMock(return_value=None)
+
+        with patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)):
+            result = runner.invoke(app, ["model", "refresh", "nonexistent/model"])
+
+        assert result.exit_code == 2
+
+    def test_refresh_network_failure_mid_batch(self) -> None:
+        """One model fails to fetch, others succeed, exit code 1."""
+        profile = KVCacheProfile(num_global_layers=32, head_dim=128, num_kv_heads=8)
+        model_a = _make_model_with_profile(id="org/model-a", kv_cache_profile=None)
+        model_b = _make_model_with_profile(id="org/model-b", kv_cache_profile=None)
+        fresh_b = _make_model_with_profile(id="org/model-b", kv_cache_profile=profile)
+
+        mock_ctx = _make_mock_context()
+        mock_ctx.db.list_models = AsyncMock(return_value=[model_a, model_b])
+        mock_ctx.db.update_model = AsyncMock(return_value=True)
+
+        mock_fetcher = MagicMock()
+        mock_fetcher.fetch = AsyncMock(side_effect=[RuntimeError("Network error"), fresh_b])
+
+        with (
+            patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)),
+            patch(
+                "gpumod.fetchers.huggingface.HuggingFaceFetcher",
+                return_value=mock_fetcher,
+            ),
+        ):
+            result = runner.invoke(app, ["model", "refresh", "--all"])
+
+        assert result.exit_code == 1
+        # model-b should still have been updated
+        assert mock_ctx.db.update_model.await_count == 1
+
+    def test_refresh_no_args_shows_error(self) -> None:
+        """Neither model_id nor --all should fail."""
+        mock_ctx = _make_mock_context()
+
+        with patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)):
+            result = runner.invoke(app, ["model", "refresh"])
+
+        assert result.exit_code != 0

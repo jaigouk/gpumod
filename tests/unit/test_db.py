@@ -1511,3 +1511,117 @@ class TestModelsCRUDWithProfile:
             assert got.kv_cache_profile.attention_k_eq_v is True
             assert got.kv_cache_profile.triattn_budget == 4096
             assert got.kv_cache_profile.kv_per_1k_at_inf == 300
+
+
+# ---------------------------------------------------------------------------
+# update_model (gpumod-0x19)
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateModel:
+    """Tests for Database.update_model() — gpumod-0x19."""
+
+    async def test_update_model_roundtrip(self, tmp_path: Path) -> None:
+        """Insert a model, update its kv_cache_profile, get it back."""
+        profile = KVCacheProfile(
+            num_sliding_layers=28,
+            num_global_layers=7,
+            head_dim=256,
+            num_kv_heads=2,
+        )
+        async with Database(tmp_path / "test.db") as db:
+            model = _make_model_info(
+                id="google/gemma-3n-E4B-it",
+                kv_cache_profile=None,
+            )
+            await db.insert_model(model)
+
+            # Update with a profile
+            model.kv_cache_profile = profile
+            result = await db.update_model(model)
+            assert result is True
+
+            got = await db.get_model("google/gemma-3n-E4B-it")
+            assert got is not None
+            assert got.kv_cache_profile is not None
+            assert got.kv_cache_profile == profile
+
+    async def test_update_nonexistent_model_returns_false(self, tmp_path: Path) -> None:
+        """update_model() returns False when the model ID doesn't exist."""
+        async with Database(tmp_path / "test.db") as db:
+            model = _make_model_info(id="nonexistent/model")
+            result = await db.update_model(model)
+            assert result is False
+
+    async def test_update_model_preserves_id(self, tmp_path: Path) -> None:
+        """update_model() should preserve the model ID."""
+        async with Database(tmp_path / "test.db") as db:
+            model = _make_model_info(id="org/preserve-id", notes="old")
+            await db.insert_model(model)
+
+            model.notes = "new"
+            await db.update_model(model)
+
+            got = await db.get_model("org/preserve-id")
+            assert got is not None
+            assert got.id == "org/preserve-id"
+            assert got.notes == "new"
+
+    async def test_update_model_changes_all_mutable_fields(self, tmp_path: Path) -> None:
+        """update_model() should update all columns except id."""
+        profile = KVCacheProfile(
+            num_sliding_layers=10,
+            num_global_layers=20,
+            head_dim=128,
+            num_kv_heads=8,
+        )
+        async with Database(tmp_path / "test.db") as db:
+            original = _make_model_info(
+                id="org/update-all",
+                source=ModelSource.HUGGINGFACE,
+                parameters_b=8.0,
+                architecture="llama",
+                base_vram_mb=16000,
+                kv_cache_per_1k_tokens_mb=64,
+                kv_cache_profile=None,
+                quantizations=["fp16"],
+                capabilities=["chat"],
+                fetched_at="2025-01-01T00:00:00Z",
+                notes="original",
+            )
+            await db.insert_model(original)
+
+            updated = ModelInfo(
+                id="org/update-all",
+                source=ModelSource.GGUF,
+                parameters_b=7.0,
+                architecture="mistral",
+                base_vram_mb=14000,
+                kv_cache_per_1k_tokens_mb=48,
+                kv_cache_profile=profile,
+                quantizations=["q4_k_m", "q5_k_m"],
+                capabilities=["chat", "code"],
+                fetched_at="2025-06-01T00:00:00Z",
+                notes="updated",
+            )
+            await db.update_model(updated)
+
+            got = await db.get_model("org/update-all")
+            assert got is not None
+            assert got.source == ModelSource.GGUF
+            assert got.parameters_b == 7.0
+            assert got.architecture == "mistral"
+            assert got.base_vram_mb == 14000
+            assert got.kv_cache_per_1k_tokens_mb == 48
+            assert got.kv_cache_profile == profile
+            assert got.quantizations == ["q4_k_m", "q5_k_m"]
+            assert got.capabilities == ["chat", "code"]
+            assert got.fetched_at == "2025-06-01T00:00:00Z"
+            assert got.notes == "updated"
+
+    async def test_update_model_validates_id(self, tmp_path: Path) -> None:
+        """update_model() must reject invalid model IDs."""
+        async with Database(tmp_path / "test.db") as db:
+            model = ModelInfo(id="../evil", source=ModelSource.LOCAL)
+            with pytest.raises(ValueError, match="Invalid model_id"):
+                await db.update_model(model)
