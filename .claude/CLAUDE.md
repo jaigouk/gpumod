@@ -72,6 +72,44 @@ uv run mypy src/ --strict               # type check
 - Verify with fresh test/lint runs before claiming completion
 - **Pre-commit hook** (`scripts/pre-commit-check.sh`) enforces all gates automatically
 
+## Running Long Benchmarks
+
+Benchmarks under `scripts/run_*_benchmark.py` and `docs/benchmarks/**/*.py` typically run for hours. Always run them inside `tmux` and use a **separate tmux session** for live monitoring so an SSH disconnect or terminal crash does not lose a multi-hour run, and so OOM / VRAM pressure can be caught early.
+
+**Launch pattern:**
+
+```bash
+# Session 1: the actual benchmark
+tmux new -s bench
+uv run python scripts/run_qwen36_benchmark.py --model <id> --output-dir docs/benchmarks/<DATE>_<NAME>/ \
+    2>&1 | tee docs/benchmarks/<DATE>_<NAME>/run.log
+# detach: Ctrl-b d
+```
+
+```bash
+# Session 2: live monitor (separate session, not just another pane)
+tmux new -s monitor
+# Split into 3 panes (Ctrl-b ", Ctrl-b %), one each:
+nvidia-smi -l 5                                              # VRAM + utilization
+journalctl --user -u <service-id>.service -f                 # llama-server / vllm logs
+watch -n 5 'free -h && echo --- && dmesg | tail -3'          # RAM + kernel OOM signals
+```
+
+**Why two sessions, not panes of one:**
+- A panicked `tmux kill-session bench` from the wrong session aborts only the monitor, not the run
+- Different attach lifetimes — you can leave the bench session detached for hours while frequently re-attaching the monitor
+
+**When to intervene:**
+
+| Signal | Action |
+|--------|--------|
+| `nvidia-smi` shows `<500 MiB free` for >30 s | Stop benchmark; you are about to OOM mid-iteration. Identify the co-tenant service, stop it, restart benchmark from clean VRAM |
+| `dmesg` shows `Out of memory: Killed process` | Restart from a clean state; the killed process may have been a benchmark dependency (CUDA driver, the service, etc.) |
+| Service `/health` returns non-200 for >60 s | Service crashed mid-benchmark; runner will keep firing requests at a dead port. Stop benchmark, restart service, restart benchmark |
+| `free -h` shows MemAvailable < 2 GiB | Build a longer cushion before starting; concurrent compiles or other heavy commands will OOM-kill at random |
+
+**VRAM isolation for benchmarks:** stop ALL other GPU-resident services before launching (`gpumod service stop <id>` for each). Co-tenant services contaminate TPS measurements via PCIe contention and shrink the headroom for model activations. See feedback memory `feedback_benchmark_vram_isolation.md`.
+
 ## Design Principles
 
 Follow **SOLID**:

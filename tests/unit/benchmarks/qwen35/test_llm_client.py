@@ -317,6 +317,95 @@ class TestLlamaCppClientTiming:
         assert client.last_timing.get("draft_n") is None
         assert client.last_timing.get("draft_n_accepted") is None
 
+    @pytest.mark.asyncio
+    async def test_captures_reasoning_content_when_present(self) -> None:
+        # gpumod-76l.3: Qwen3.6 thinking mode emits the chain-of-thought in
+        # `message.reasoning_content`. The runner needs this exposed so it
+        # can extract code that the model writes inside <think> blocks.
+        from gpumod.benchmarks.qwen35.llm_client import LlamaCppClient
+
+        client = LlamaCppClient(base_url="http://localhost:8080")
+
+        thinking = "<think>I should think about this carefully...</think>"
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "final answer",
+                        "reasoning_content": thinking,
+                    }
+                }
+            ]
+        }
+        mock_response.headers = {}
+
+        client._client = AsyncMock()
+        client._client.post = AsyncMock(return_value=mock_response)
+
+        result = await client.generate("prompt")
+
+        assert result == "final answer"
+        assert client.last_reasoning_content == thinking
+
+    @pytest.mark.asyncio
+    async def test_reasoning_content_defaults_to_empty_when_absent(self) -> None:
+        # Non-thinking responses omit reasoning_content. The attribute must
+        # be safe to read (empty string, not None) so runners can always
+        # concatenate without a None check.
+        from gpumod.benchmarks.qwen35.llm_client import LlamaCppClient
+
+        client = LlamaCppClient(base_url="http://localhost:8080")
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "direct answer"}}]
+        }
+        mock_response.headers = {}
+
+        client._client = AsyncMock()
+        client._client.post = AsyncMock(return_value=mock_response)
+
+        await client.generate("prompt")
+
+        assert client.last_reasoning_content == ""
+
+    @pytest.mark.asyncio
+    async def test_reasoning_content_resets_between_calls(self) -> None:
+        # State must reset per call so a thinking response followed by a
+        # non-thinking response does not carry stale reasoning forward.
+        from gpumod.benchmarks.qwen35.llm_client import LlamaCppClient
+
+        client = LlamaCppClient(base_url="http://localhost:8080")
+
+        # First call: thinking response
+        thinking_response = MagicMock()
+        thinking_response.json.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "reasoning_content": "stale thinking",
+                    }
+                }
+            ]
+        }
+        thinking_response.headers = {}
+        client._client = AsyncMock()
+        client._client.post = AsyncMock(return_value=thinking_response)
+        await client.generate("first prompt")
+        assert client.last_reasoning_content == "stale thinking"
+
+        # Second call: non-thinking response — reasoning must reset
+        plain_response = MagicMock()
+        plain_response.json.return_value = {
+            "choices": [{"message": {"content": "direct"}}]
+        }
+        plain_response.headers = {}
+        client._client.post = AsyncMock(return_value=plain_response)
+        await client.generate("second prompt")
+        assert client.last_reasoning_content == ""
+
 
 # ---------------------------------------------------------------------------
 # LlamaCppClient protocol compliance tests

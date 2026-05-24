@@ -33,6 +33,9 @@ class LlamaCppClient:
         self.timeout = timeout
         self._client: httpx.AsyncClient | None = None
         self.last_timing: dict[str, Any] | None = None
+        # Thinking-mode models (Qwen3.6) emit chain-of-thought in
+        # `message.reasoning_content`. Resets per call.
+        self.last_reasoning_content: str = ""
 
     async def generate(self, prompt: str, **kwargs: Any) -> str:
         """Generate text from prompt.
@@ -83,10 +86,12 @@ class LlamaCppClient:
 
         choices: list[dict[str, Any]] = data.get("choices", [])
         if not choices:
+            self.last_reasoning_content = ""
             return ""
 
         message: dict[str, Any] = choices[0].get("message", {})
-        content: str = message.get("content", "")
+        content: str = message.get("content", "") or ""
+        self.last_reasoning_content = message.get("reasoning_content", "") or ""
         return content
 
     def _extract_timing(

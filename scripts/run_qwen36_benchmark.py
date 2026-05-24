@@ -156,7 +156,15 @@ class ArchitectureBenchmark:
         self.output_dir = output_dir or DEFAULT_OUTPUT_DIR
         self.validator = PytestValidator(timeout_seconds=30)
         self.client: LlamaCppClient | None = None
-        self.client_timeout = 300.0
+        # gpumod-76l.3: 900s (was 300s) to give MTP/thinking-mode runs
+        # enough budget to finish on L4/L5. At ~10 t/s observed for MTP,
+        # 300s only buys ~3000 tokens — easily truncated by long
+        # <think> blocks, producing SyntaxError in extracted code.
+        self.client_timeout = 900.0
+        # gpumod-76l.3: Unsloth recommends 32768 max output tokens for
+        # Qwen3.6 general queries. Without this, thinking-mode models can
+        # consume the entire ctx-size (40960) and never emit code.
+        self.max_tokens = 32768
         self.metrics_collector = DefaultMetricsCollector()
 
     async def run(self) -> BenchmarkRun:
@@ -239,10 +247,19 @@ class ArchitectureBenchmark:
             try:
                 response = await self.client.generate(
                     level_def.prompt,
+                    max_tokens=self.max_tokens,
                     **THINKING_CODING.to_dict(),
                 )
             except Exception as e:
                 response = f"ERROR: {e}"
+            # gpumod-76l.3: Qwen3.6 thinking mode often emits code INSIDE
+            # the <think> block (reasoning_content) and leaves `content`
+            # short or empty. Combine both so _extract_code can find code
+            # regardless of which field the model put it in.
+            reasoning = self.client.last_reasoning_content
+            combined_for_extract = (
+                reasoning + "\n\n" + response if reasoning else response
+            )
 
             end_time = time.perf_counter()
             duration = end_time - start_time
@@ -269,7 +286,7 @@ class ArchitectureBenchmark:
                 draft_n_accepted=draft_n_accepted,
             )
 
-            code = self._extract_code(response)
+            code = self._extract_code(combined_for_extract)
             validation_result = self.validator.validate(code, level_def.test_code)
             passed = validation_result.passed
             points = level_def.points if passed else 0
@@ -281,12 +298,17 @@ class ArchitectureBenchmark:
             else:
                 print(f"FAIL ({validation_result.error or 'failed'})")
 
+            # gpumod-76l.3: store the combined (reasoning + content) text
+            # in the artifact so post-hoc re-extraction matches what the
+            # validator actually saw. Reasoning often contains code the
+            # model later refined or rejected; keeping it is fine because
+            # _extract_code picks the first ```python block.
             artifact = LevelArtifact(
                 level=level_num,
                 name=level_def.name,
                 points_possible=level_def.points,
                 prompt=level_def.prompt,
-                response=response,
+                response=combined_for_extract,
                 validation={
                     "passed": validation_result.passed,
                     "pass_rate": validation_result.pass_rate,
