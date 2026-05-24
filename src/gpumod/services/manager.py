@@ -91,6 +91,7 @@ class ServiceManager:
             registry=registry,
             on_state_change=self._on_health_change,
         )
+        self._mode_switch_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # RAM safeguard helpers
@@ -147,6 +148,9 @@ class ServiceManager:
     async def switch_mode(self, target_mode_id: str) -> ModeResult:  # noqa: C901, PLR0912, PLR0915
         """Switch to the target mode, managing service lifecycle and VRAM.
 
+        Concurrent calls are serialized via an asyncio.Lock to prevent
+        race conditions between overlapping mode switches.
+
         Steps:
         1. Validate target mode exists.
         2. Get current and target service sets.
@@ -166,205 +170,208 @@ class ServiceManager:
         ModeResult
             The result of the switch operation.
         """
-        logger.info("Switching to mode %r", target_mode_id)
+        async with self._mode_switch_lock:
+            logger.info("Switching to mode %r", target_mode_id)
 
-        # 1. Validate target mode exists
-        target_mode = await self._db.get_mode(target_mode_id)
-        if target_mode is None:
-            logger.warning("Mode not found: %r", target_mode_id)
-            return ModeResult(
-                success=False,
-                mode_id=target_mode_id,
-                errors=[f"Mode not found: {target_mode_id}"],
-            )
-
-        # 2. Get current and target service sets
-        current_mode_id = await self._db.get_current_mode()
-
-        current_service_ids: set[str] = set()
-        if current_mode_id is not None:
-            current_services = await self._db.get_mode_services(current_mode_id)
-            current_service_ids = {s.id for s in current_services}
-
-        target_services = await self._db.get_mode_services(target_mode_id)
-        target_service_ids = {s.id for s in target_services}
-
-        # 3. Compute diff (include orphan services from prior modes)
-        # Get ALL services currently running or sleeping on the system
-        running_services = await self._registry.list_running()
-        running_service_ids = {s.id for s in running_services}
-
-        logger.debug(
-            "Mode switch state: current_mode=%r, target_mode=%r, "
-            "current_mode_services=%s, target_services=%s, running_services=%s",
-            current_mode_id,
-            target_mode_id,
-            sorted(current_service_ids),
-            sorted(target_service_ids),
-            sorted(running_service_ids),
-        )
-
-        # to_stop includes:
-        # 1. Services defined in current mode but not in target mode
-        # 2. Services actually running/sleeping that aren't in target mode (orphans)
-        to_stop = (current_service_ids | running_service_ids) - target_service_ids
-        to_start = target_service_ids - current_service_ids
-
-        # Log orphan detection
-        orphan_services = running_service_ids - current_service_ids - target_service_ids
-        if orphan_services:
-            logger.info(
-                "Detected orphan services from prior modes: %s",
-                sorted(orphan_services),
-            )
-
-        # 4. VRAM pre-flight check
-        gpu_info = await self._vram.get_gpu_info()
-        total_target_vram = 0
-        for svc in target_services:
-            total_target_vram += await self._vram.estimate_service_vram(svc)
-
-        if total_target_vram > gpu_info.vram_total_mb:
-            logger.warning(
-                "VRAM exceeded for mode %r: requires %dMB, available %dMB",
-                target_mode_id,
-                total_target_vram,
-                gpu_info.vram_total_mb,
-            )
-            return ModeResult(
-                success=False,
-                mode_id=target_mode_id,
-                errors=[
-                    f"VRAM exceeded: target mode requires {total_target_vram}MB "
-                    f"but GPU only has {gpu_info.vram_total_mb}MB"
-                ],
-            )
-
-        # 5. Handle outgoing services (free VRAM first)
-        slept_ids, stopped_ids = await self._handle_outgoing_services(to_stop)
-
-        # 5.5 Wait for VRAM to be released before starting incoming services
-        if to_start:
-            # Find the largest VRAM requirement among incoming services
-            max_incoming_vram = 0
-            total_incoming_vram = 0
-            for svc_id in to_start:
-                svc = await self._registry.get(svc_id)
-                max_incoming_vram = max(max_incoming_vram, svc.vram_mb)
-                total_incoming_vram += svc.vram_mb
-
-            if max_incoming_vram > 0:
-                logger.info(
-                    "Waiting for VRAM release before starting services (need %d MB)",
-                    max_incoming_vram,
-                )
-                vram_released = await self._vram.wait_for_vram_release(
-                    required_mb=max_incoming_vram,
-                    timeout_s=120.0,
-                    poll_interval_s=0.5,
-                    safety_margin_mb=512,
-                )
-                if not vram_released:
-                    logger.error(
-                        "VRAM not released within timeout. "
-                        "Previous service may still hold GPU memory."
-                    )
-                    return ModeResult(
-                        success=False,
-                        mode_id=target_mode_id,
-                        errors=[
-                            "VRAM not released within timeout. "
-                            "Previous service may still hold GPU memory."
-                        ],
-                    )
-
-            # 5.6 Settle period: give the kernel time to consolidate freed
-            # pages between teardown and CUDA pinned allocations. Skip if
-            # nothing was actually stopped/slept.
-            if slept_ids or stopped_ids:
-                settle = self._settle_seconds()
-                if settle > 0:
-                    logger.info(
-                        "Settle period: waiting %.1fs for kernel to consolidate freed pages",
-                        settle,
-                    )
-                    await asyncio.sleep(settle)
-
-            # 5.7 RAM safeguard — pre-flight check for the CUDA pinned-memory
-            # contiguous-allocation freeze pattern.
-            error_msg = await self._check_ram_safeguard(total_incoming_vram)
-            if error_msg:
-                logger.error("Mode switch blocked by RAM safeguard: %s", error_msg)
+            # 1. Validate target mode exists
+            target_mode = await self._db.get_mode(target_mode_id)
+            if target_mode is None:
+                logger.warning("Mode not found: %r", target_mode_id)
                 return ModeResult(
                     success=False,
                     mode_id=target_mode_id,
-                    errors=[error_msg],
+                    errors=[f"Mode not found: {target_mode_id}"],
                 )
 
-        # 6. Handle incoming services (with rollback on failure)
-        woken_ids: list[str] = []
-        started_ids: list[str] = []
+            # 2. Get current and target service sets
+            current_mode_id = await self._db.get_current_mode()
 
-        try:
-            await self._handle_incoming_services(to_start, woken_ids, started_ids)
-        except LifecycleError as exc:
-            logger.error(
-                "Incoming service failed during mode switch to %r: %s",
+            current_service_ids: set[str] = set()
+            if current_mode_id is not None:
+                current_services = await self._db.get_mode_services(current_mode_id)
+                current_service_ids = {s.id for s in current_services}
+
+            target_services = await self._db.get_mode_services(target_mode_id)
+            target_service_ids = {s.id for s in target_services}
+
+            # 3. Compute diff (include orphan services from prior modes)
+            # Get ALL services currently running or sleeping on the system
+            running_services = await self._registry.list_running()
+            running_service_ids = {s.id for s in running_services}
+
+            logger.debug(
+                "Mode switch state: current_mode=%r, target_mode=%r, "
+                "current_mode_services=%s, target_services=%s, running_services=%s",
+                current_mode_id,
                 target_mode_id,
-                exc,
+                sorted(current_service_ids),
+                sorted(target_service_ids),
+                sorted(running_service_ids),
             )
-            errors: list[str] = [f"[original] {exc}"]
 
-            # Rollback: stop partially-started incoming services (reverse order)
-            for svc_id in reversed(started_ids + woken_ids):
-                try:
-                    await self._lifecycle.stop(svc_id)
-                except LifecycleError as rollback_exc:
-                    logger.error(
-                        "Rollback: failed to stop partially-started %r: %s",
-                        svc_id,
-                        rollback_exc,
-                    )
-                    errors.append(f"[rollback stop {svc_id}] {rollback_exc}")
+            # to_stop includes:
+            # 1. Services defined in current mode but not in target mode
+            # 2. Services actually running/sleeping that aren't in target mode (orphans)
+            to_stop = (current_service_ids | running_service_ids) - target_service_ids
+            to_start = target_service_ids - current_service_ids
 
-            # Rollback: restart outgoing services (reverse order)
-            for svc_id in reversed(stopped_ids + slept_ids):
-                logger.warning("Rollback: restarting outgoing service %r", svc_id)
-                try:
-                    await self._lifecycle.start(svc_id)
-                    logger.warning("Rollback: successfully restarted outgoing service %r", svc_id)
-                except LifecycleError as rollback_exc:
-                    logger.error(
-                        "Rollback: failed to restart outgoing %r: %s",
-                        svc_id,
-                        rollback_exc,
+            # Log orphan detection
+            orphan_services = running_service_ids - current_service_ids - target_service_ids
+            if orphan_services:
+                logger.info(
+                    "Detected orphan services from prior modes: %s",
+                    sorted(orphan_services),
+                )
+
+            # 4. VRAM pre-flight check
+            gpu_info = await self._vram.get_gpu_info()
+            total_target_vram = 0
+            for svc in target_services:
+                total_target_vram += await self._vram.estimate_service_vram(svc)
+
+            if total_target_vram > gpu_info.vram_total_mb:
+                logger.warning(
+                    "VRAM exceeded for mode %r: requires %dMB, available %dMB",
+                    target_mode_id,
+                    total_target_vram,
+                    gpu_info.vram_total_mb,
+                )
+                return ModeResult(
+                    success=False,
+                    mode_id=target_mode_id,
+                    errors=[
+                        f"VRAM exceeded: target mode requires {total_target_vram}MB "
+                        f"but GPU only has {gpu_info.vram_total_mb}MB"
+                    ],
+                )
+
+            # 5. Handle outgoing services (free VRAM first)
+            slept_ids, stopped_ids = await self._handle_outgoing_services(to_stop)
+
+            # 5.5 Wait for VRAM to be released before starting incoming services
+            if to_start:
+                # Find the largest VRAM requirement among incoming services
+                max_incoming_vram = 0
+                total_incoming_vram = 0
+                for svc_id in to_start:
+                    svc = await self._registry.get(svc_id)
+                    max_incoming_vram = max(max_incoming_vram, svc.vram_mb)
+                    total_incoming_vram += svc.vram_mb
+
+                if max_incoming_vram > 0:
+                    logger.info(
+                        "Waiting for VRAM release before starting services (need %d MB)",
+                        max_incoming_vram,
                     )
-                    errors.append(f"[rollback start {svc_id}] {rollback_exc}")
+                    vram_released = await self._vram.wait_for_vram_release(
+                        required_mb=max_incoming_vram,
+                        timeout_s=120.0,
+                        poll_interval_s=0.5,
+                        safety_margin_mb=512,
+                    )
+                    if not vram_released:
+                        logger.error(
+                            "VRAM not released within timeout. "
+                            "Previous service may still hold GPU memory."
+                        )
+                        return ModeResult(
+                            success=False,
+                            mode_id=target_mode_id,
+                            errors=[
+                                "VRAM not released within timeout. "
+                                "Previous service may still hold GPU memory."
+                            ],
+                        )
+
+                # 5.6 Settle period: give the kernel time to consolidate freed
+                # pages between teardown and CUDA pinned allocations. Skip if
+                # nothing was actually stopped/slept.
+                if slept_ids or stopped_ids:
+                    settle = self._settle_seconds()
+                    if settle > 0:
+                        logger.info(
+                            "Settle period: waiting %.1fs for kernel to consolidate freed pages",
+                            settle,
+                        )
+                        await asyncio.sleep(settle)
+
+                # 5.7 RAM safeguard — pre-flight check for the CUDA pinned-memory
+                # contiguous-allocation freeze pattern.
+                error_msg = await self._check_ram_safeguard(total_incoming_vram)
+                if error_msg:
+                    logger.error("Mode switch blocked by RAM safeguard: %s", error_msg)
+                    return ModeResult(
+                        success=False,
+                        mode_id=target_mode_id,
+                        errors=[error_msg],
+                    )
+
+            # 6. Handle incoming services (with rollback on failure)
+            woken_ids: list[str] = []
+            started_ids: list[str] = []
+
+            try:
+                await self._handle_incoming_services(to_start, woken_ids, started_ids)
+            except LifecycleError as exc:
+                logger.error(
+                    "Incoming service failed during mode switch to %r: %s",
+                    target_mode_id,
+                    exc,
+                )
+                errors: list[str] = [f"[original] {exc}"]
+
+                # Rollback: stop partially-started incoming services (reverse order)
+                for svc_id in reversed(started_ids + woken_ids):
+                    try:
+                        await self._lifecycle.stop(svc_id)
+                    except LifecycleError as rollback_exc:
+                        logger.error(
+                            "Rollback: failed to stop partially-started %r: %s",
+                            svc_id,
+                            rollback_exc,
+                        )
+                        errors.append(f"[rollback stop {svc_id}] {rollback_exc}")
+
+                # Rollback: restart outgoing services (reverse order)
+                for svc_id in reversed(stopped_ids + slept_ids):
+                    logger.warning("Rollback: restarting outgoing service %r", svc_id)
+                    try:
+                        await self._lifecycle.start(svc_id)
+                        logger.warning(
+                            "Rollback: successfully restarted outgoing service %r", svc_id
+                        )
+                    except LifecycleError as rollback_exc:
+                        logger.error(
+                            "Rollback: failed to restart outgoing %r: %s",
+                            svc_id,
+                            rollback_exc,
+                        )
+                        errors.append(f"[rollback start {svc_id}] {rollback_exc}")
+
+                return ModeResult(
+                    success=False,
+                    mode_id=target_mode_id,
+                    errors=errors,
+                )
+
+            # 7. Update current mode in DB
+            await self._db.set_current_mode(target_mode_id)
+
+            logger.info(
+                "Mode switch to %r complete: started=%s, woken=%s, slept=%s, stopped=%s",
+                target_mode_id,
+                started_ids,
+                woken_ids,
+                slept_ids,
+                stopped_ids,
+            )
 
             return ModeResult(
-                success=False,
+                success=True,
                 mode_id=target_mode_id,
-                errors=errors,
+                started=started_ids + woken_ids,  # All services now running
+                stopped=stopped_ids + slept_ids,  # All services no longer running
             )
-
-        # 7. Update current mode in DB
-        await self._db.set_current_mode(target_mode_id)
-
-        logger.info(
-            "Mode switch to %r complete: started=%s, woken=%s, slept=%s, stopped=%s",
-            target_mode_id,
-            started_ids,
-            woken_ids,
-            slept_ids,
-            stopped_ids,
-        )
-
-        return ModeResult(
-            success=True,
-            mode_id=target_mode_id,
-            started=started_ids + woken_ids,  # All services now running
-            stopped=stopped_ids + slept_ids,  # All services no longer running
-        )
 
     async def _handle_outgoing_services(
         self, service_ids: set[str]
