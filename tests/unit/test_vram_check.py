@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gpumod.preflight.vram_check import VRAMCheck, VRAMSuggestion
+from gpumod.preflight.vram_check import VRAMCheck, VRAMSuggestion, estimate_kv_mb
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -29,6 +29,7 @@ def mock_service() -> MagicMock:
     service.driver = "llamacpp"
     service.vram_mb = 22000  # Configured VRAM requirement
     service.model_id = "unsloth/Qwen3-Coder-Next-GGUF"
+    service.kv_cache_profile = None  # Dense model, no profile
     service.extra_config = {
         "unit_vars": {
             "n_gpu_layers": 45,
@@ -48,6 +49,7 @@ def mock_service_small() -> MagicMock:
     service.driver = "fastapi"
     service.vram_mb = 1024  # 1 GB
     service.model_id = None
+    service.kv_cache_profile = None
     service.extra_config = {}
     return service
 
@@ -100,6 +102,7 @@ class TestVRAMCheck:
         service.driver = "llamacpp"
         service.vram_mb = 26000  # Exceeds 24GB GPU
         service.model_id = "test/huge-model"
+        service.kv_cache_profile = None
         service.extra_config = {
             "unit_vars": {
                 "n_gpu_layers": 80,
@@ -156,6 +159,7 @@ class TestVRAMCheck:
         service.driver = "llamacpp"
         service.vram_mb = 23500  # Exactly free VRAM
         service.model_id = "test/tight"
+        service.kv_cache_profile = None
         service.extra_config = {}
 
         check = VRAMCheck(vram_tracker=mock_vram_tracker, safety_margin_mb=512)
@@ -172,6 +176,7 @@ class TestVRAMCheck:
         service.driver = "llamacpp"
         service.vram_mb = 23400  # Fits with 100 MB margin
         service.model_id = "test/tight"
+        service.kv_cache_profile = None
         service.extra_config = {}
 
         check = VRAMCheck(vram_tracker=mock_vram_tracker, safety_margin_mb=100)
@@ -250,6 +255,7 @@ class TestEdgeCases:
         service.id = "test"
         service.driver = "llamacpp"
         service.vram_mb = 8000
+        service.kv_cache_profile = None
         service.extra_config = {}
 
         check = VRAMCheck(vram_tracker=tracker)
@@ -267,6 +273,7 @@ class TestEdgeCases:
         service.driver = "llamacpp"
         service.vram_mb = 8000
         service.model_id = "test/model"
+        service.kv_cache_profile = None
         service.extra_config = {}  # No unit_vars
 
         check = VRAMCheck(vram_tracker=mock_vram_tracker)
@@ -282,6 +289,7 @@ class TestEdgeCases:
         service.driver = "vllm"
         service.vram_mb = 15000
         service.model_id = "meta-llama/Llama-3.1-8B"
+        service.kv_cache_profile = None
         service.extra_config = {}
 
         check = VRAMCheck(vram_tracker=mock_vram_tracker)
@@ -297,6 +305,7 @@ class TestEdgeCases:
         service.driver = "llamacpp"
         service.vram_mb = 30000  # Way over
         service.model_id = "test/huge"
+        service.kv_cache_profile = None
         service.extra_config = {
             "unit_vars": {
                 "n_gpu_layers": 80,
@@ -325,6 +334,7 @@ def _make_mtp_service(vram_mb: int = 22000) -> MagicMock:
     service.driver = "llamacpp"
     service.vram_mb = vram_mb
     service.model_id = "unsloth/Qwen3.6-35B-A3B-MTP-GGUF"
+    service.kv_cache_profile = None
     service.extra_config = {
         "unit_vars": {
             "n_gpu_layers": -1,
@@ -402,6 +412,7 @@ class TestVRAMCheckMTPOverhead:
         service.driver = "llamacpp"
         service.vram_mb = 22000
         service.model_id = "test/model"
+        service.kv_cache_profile = None
         service.extra_config = {
             "unit_vars": {
                 "extra_args": "--threads 16 --no-prefetch --batch-size 512",
@@ -413,3 +424,289 @@ class TestVRAMCheckMTPOverhead:
         # No MTP -> 22000 + 512 = 22512 < 23500 -> passes
         assert result.passed is True
         assert "mtp" not in result.message.lower()
+
+
+# ---------------------------------------------------------------------------
+# gpumod-ja0m: Profile-aware KV cache estimation helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_kv_profile(
+    *,
+    num_sliding_layers: int = 0,
+    num_global_layers: int = 0,
+    num_shared_sliding_layers: int = 0,
+    num_shared_global_layers: int = 0,
+    sliding_window: int | None = None,
+    triattn_budget: int | None = None,
+    per_tok_bytes_local: int = 0,
+    per_tok_bytes_global: int = 0,
+    base_overhead_mb: float = 0.0,
+) -> MagicMock:
+    """Create a mock KVCacheProfile with the locked contract fields."""
+    profile = MagicMock()
+    profile.num_sliding_layers = num_sliding_layers
+    profile.num_global_layers = num_global_layers
+    profile.num_shared_sliding_layers = num_shared_sliding_layers
+    profile.num_shared_global_layers = num_shared_global_layers
+    profile.sliding_window = sliding_window
+    profile.triattn_budget = triattn_budget
+    profile.per_tok_bytes_local = per_tok_bytes_local
+    profile.per_tok_bytes_global = per_tok_bytes_global
+    profile.base_overhead_mb = base_overhead_mb
+    return profile
+
+
+# Gemma 3 27B reference profile (from cf8 research doc, verified 2026-05-24):
+# 52 sliding + 10 global layers, sliding_window=1024, no shared layers
+# per_tok_bytes = kv_factor * num_kv_heads * head_dim * bytes_per_elem
+#               = 2 * 16 * 128 * 2 = 8192
+_GEMMA3_27B_PROFILE = dict(
+    num_sliding_layers=52,
+    num_global_layers=10,
+    num_shared_sliding_layers=0,
+    num_shared_global_layers=0,
+    sliding_window=1024,
+    triattn_budget=None,
+    per_tok_bytes_local=8192,
+    per_tok_bytes_global=8192,
+    base_overhead_mb=0.0,
+)
+
+
+# ---------------------------------------------------------------------------
+# gpumod-ja0m: estimate_kv_mb unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestEstimateKvMb:
+    """Tests for the estimate_kv_mb compound formula (gpumod-ja0m)."""
+
+    def test_dense_all_global_linear_scaling(self) -> None:
+        """Dense model (all global layers) scales linearly with context."""
+        # Qwen3 32B: 64 global layers, per_tok = 2*8*128*2 = 4096
+        profile = _make_kv_profile(
+            num_global_layers=64,
+            per_tok_bytes_global=4096,
+        )
+        result_8k = estimate_kv_mb(profile, 8000)
+        result_16k = estimate_kv_mb(profile, 16000)
+        # Doubling context doubles KV for purely global models
+        assert abs(result_16k - 2 * result_8k) < 0.1
+
+    def test_hybrid_sliding_layers_capped_at_window(self) -> None:
+        """Sliding layers are capped at sliding_window tokens."""
+        profile = _make_kv_profile(**_GEMMA3_27B_PROFILE)
+
+        at_8k = estimate_kv_mb(profile, 8192)
+        at_4k = estimate_kv_mb(profile, 4096)
+
+        # At ctx=8192: sliding=52*1024*8192 + global=10*8192*8192
+        #   = 436207616 + 671088640 = 1107296256 B = 1056.0 MB
+        assert abs(at_8k - 1056.0) < 0.1
+
+        # At ctx=4096: sliding=52*1024*8192 + global=10*4096*8192
+        #   = 436207616 + 335544320 = 771751936 B = 736.0 MB
+        assert abs(at_4k - 736.0) < 0.1
+
+        # Savings from halving: 320 MB (~30%), NOT 528 MB (50%)
+        savings_pct = (at_8k - at_4k) / at_8k * 100
+        assert savings_pct < 40  # Well below 50%
+
+    def test_shared_layers_reduce_kv(self) -> None:
+        """Shared layers are excluded from KV total."""
+        # 20 sliding, 5 shared sliding → 15 unique sliding
+        # 10 global, 2 shared global → 8 unique global
+        profile = _make_kv_profile(
+            num_sliding_layers=20,
+            num_global_layers=10,
+            num_shared_sliding_layers=5,
+            num_shared_global_layers=2,
+            sliding_window=512,
+            per_tok_bytes_local=4096,
+            per_tok_bytes_global=4096,
+        )
+        at_8k = estimate_kv_mb(profile, 8192)
+
+        # unique_sliding=15, sliding_tok=512
+        # unique_global=8, global_tok=8192
+        # bytes = 15*512*4096 + 8*8192*4096 = 31457280 + 268435456 = 299892736
+        expected = 299892736 / (1024 * 1024)  # ~286.0 MB
+        assert abs(at_8k - expected) < 0.1
+
+    def test_triattn_budget_caps_global_layers(self) -> None:
+        """TriAttention budget caps global-layer context."""
+        profile = _make_kv_profile(
+            num_sliding_layers=20,
+            num_global_layers=10,
+            sliding_window=512,
+            triattn_budget=4096,
+            per_tok_bytes_local=4096,
+            per_tok_bytes_global=4096,
+        )
+        at_8k = estimate_kv_mb(profile, 8192)
+        at_4k = estimate_kv_mb(profile, 4096)
+
+        # Both are capped: sliding at 512, global at 4096
+        # Halving context from 8192→4096 saves nothing
+        assert abs(at_8k - at_4k) < 0.1
+
+    def test_base_overhead_added(self) -> None:
+        """base_overhead_mb is added to the computed total."""
+        profile = _make_kv_profile(
+            num_global_layers=10,
+            per_tok_bytes_global=4096,
+            base_overhead_mb=50.0,
+        )
+        result = estimate_kv_mb(profile, 1000)
+        # bytes = 10 * 1000 * 4096 = 40960000 → ~39.06 MB + 50.0 overhead
+        expected = 40960000 / (1024 * 1024) + 50.0
+        assert abs(result - expected) < 0.1
+
+    def test_gemma3_27b_reference_values(self) -> None:
+        """Verified against cf8 PoC output for Gemma 3 27B at ctx=8000."""
+        profile = _make_kv_profile(**_GEMMA3_27B_PROFILE)
+
+        # PoC reference: Gemma 3 27B at ctx=8000 → compound = 1041.0 MB
+        at_8k = estimate_kv_mb(profile, 8000)
+        assert abs(at_8k - 1041.0) < 1.0
+
+
+# ---------------------------------------------------------------------------
+# gpumod-ja0m: Profile-aware _generate_suggestions tests
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateSuggestionsProfileAware:
+    """Tests for profile-aware ctx-reduction in _generate_suggestions."""
+
+    async def test_dense_no_profile_existing_heuristic(self, mock_vram_tracker: MagicMock) -> None:
+        """Dense model (no profile) uses existing scalar heuristic unchanged."""
+        service = MagicMock()
+        service.id = "dense-model"
+        service.driver = "llamacpp"
+        service.vram_mb = 26000
+        service.model_id = "test/dense"
+        service.kv_cache_profile = None
+        service.extra_config = {
+            "unit_vars": {
+                "n_gpu_layers": 0,
+                "ctx_size": 32768,
+            }
+        }
+
+        check = VRAMCheck(vram_tracker=mock_vram_tracker)
+        result = await check.check(service)
+
+        assert result.passed is False
+        suggestions = check.get_suggestions()
+        assert suggestions is not None
+
+        # With 0 layers, for_llamacpp falls through to context heuristic:
+        # overage = 26000 - 23500 = 2500, kv_savings = 2500 // 2 = 1250
+        ctx_suggestions = [s for s in suggestions if s.suggested_ctx_size is not None]
+        assert len(ctx_suggestions) == 1
+        assert ctx_suggestions[0].suggested_ctx_size == 16384  # 32768 // 2
+        assert ctx_suggestions[0].estimated_vram_mb == 26000 - 1250
+
+    async def test_gemma3_27b_profile_sufficient_savings(
+        self, mock_vram_tracker: MagicMock
+    ) -> None:
+        """Gemma 3 27B with profile: savings sufficient to cover overage."""
+        profile = _make_kv_profile(**_GEMMA3_27B_PROFILE)
+
+        # Overage must be <= 320 MB (savings from halving ctx 8192→4096)
+        # vram_mb=23700 → overage = 23700 - 23500 = 200 < 320
+        service = MagicMock()
+        service.id = "gemma3-27b"
+        service.driver = "llamacpp"
+        service.vram_mb = 23700
+        service.model_id = "google/gemma-3-27b"
+        service.kv_cache_profile = profile
+        service.extra_config = {
+            "unit_vars": {
+                "n_gpu_layers": 0,
+                "ctx_size": 8192,
+            }
+        }
+
+        check = VRAMCheck(vram_tracker=mock_vram_tracker)
+        result = await check.check(service)
+
+        assert result.passed is False
+        suggestions = check.get_suggestions()
+        assert suggestions is not None
+
+        # Should suggest ctx reduction with ACCURATE savings (~320 MB)
+        ctx_suggestions = [s for s in suggestions if s.suggested_ctx_size is not None]
+        assert len(ctx_suggestions) == 1
+        assert ctx_suggestions[0].suggested_ctx_size == 4096
+        assert "320" in ctx_suggestions[0].message  # Accurate, not heuristic
+
+    async def test_gemma3_27b_profile_bounded_case(self, mock_vram_tracker: MagicMock) -> None:
+        """Gemma 3 27B above sliding_window: savings < overage → bounded msg."""
+        profile = _make_kv_profile(**_GEMMA3_27B_PROFILE)
+
+        # Overage = 26000 - 23500 = 2500 >> 320 (savings from halving)
+        service = MagicMock()
+        service.id = "gemma3-27b-tight"
+        service.driver = "llamacpp"
+        service.vram_mb = 26000
+        service.model_id = "google/gemma-3-27b"
+        service.kv_cache_profile = profile
+        service.extra_config = {
+            "unit_vars": {
+                "n_gpu_layers": 0,
+                "ctx_size": 8192,
+            }
+        }
+
+        check = VRAMCheck(vram_tracker=mock_vram_tracker)
+        result = await check.check(service)
+
+        assert result.passed is False
+        suggestions = check.get_suggestions()
+        assert suggestions is not None
+
+        # Should surface bounded-case alternative referencing sliding_window
+        all_messages = " ".join(s.message for s in suggestions)
+        assert "sliding_window=1024" in all_messages
+        assert "smaller quantization" in all_messages.lower()
+
+    async def test_triattn_budget_fully_bounded(self, mock_vram_tracker: MagicMock) -> None:
+        """TriAttention budget + sliding window: halving ctx saves nothing."""
+        profile = _make_kv_profile(
+            num_sliding_layers=20,
+            num_global_layers=10,
+            sliding_window=512,
+            triattn_budget=4096,
+            per_tok_bytes_local=4096,
+            per_tok_bytes_global=4096,
+        )
+
+        service = MagicMock()
+        service.id = "triattn-model"
+        service.driver = "llamacpp"
+        service.vram_mb = 25000
+        service.model_id = "test/triattn"
+        service.kv_cache_profile = profile
+        service.extra_config = {
+            "unit_vars": {
+                "n_gpu_layers": 0,
+                "ctx_size": 8192,
+            }
+        }
+
+        check = VRAMCheck(vram_tracker=mock_vram_tracker)
+        result = await check.check(service)
+
+        assert result.passed is False
+        suggestions = check.get_suggestions()
+        assert suggestions is not None
+
+        # Savings = 0 (both types fully bounded) → alternative message
+        all_messages = " ".join(s.message for s in suggestions)
+        assert "smaller quantization" in all_messages.lower()
+        # Should NOT suggest reducing ctx_size since it saves nothing
+        ctx_suggestions = [s for s in suggestions if s.suggested_ctx_size is not None]
+        assert len(ctx_suggestions) == 0

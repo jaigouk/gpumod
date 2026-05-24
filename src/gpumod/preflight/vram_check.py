@@ -1,4 +1,4 @@
-"""VRAM preflight check for gpumod services (gpumod-89z).
+"""VRAM preflight check for gpumod services (gpumod-89z, gpumod-ja0m).
 
 Validates that a service's VRAM requirements fit within available GPU
 memory BEFORE attempting to start the service.
@@ -8,13 +8,14 @@ Key Features:
 - Includes configurable safety margin (default 512 MB)
 - Generates actionable suggestions when VRAM doesn't fit
 - llama.cpp-specific: suggests reduced n_gpu_layers or ctx_size
+- gpumod-ja0m: profile-aware KV cache savings via compound formula
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol
 
 from gpumod.preflight.base import CheckResult
 
@@ -33,6 +34,56 @@ DEFAULT_SAFETY_MARGIN_MB = 512
 DEFAULT_MTP_OVERHEAD_MB = 1500
 # Token in extra_args that marks a service as MTP-using.
 MTP_FLAG_MARKER = "--spec-type draft-mtp"
+
+
+# ---------------------------------------------------------------------------
+# gpumod-ja0m: KV cache profile protocol and compound formula
+# ---------------------------------------------------------------------------
+
+
+class KVCacheProfileLike(Protocol):
+    """Structural interface for KVCacheProfile (Dependency Inversion).
+
+    Consumers depend on this protocol, not on the concrete Pydantic model
+    in ``models.py``. Any object with matching attributes satisfies this.
+    """
+
+    num_sliding_layers: int
+    num_shared_sliding_layers: int
+    num_global_layers: int
+    num_shared_global_layers: int
+    sliding_window: int | None
+    triattn_budget: int | None
+    per_tok_bytes_local: int
+    per_tok_bytes_global: int
+    base_overhead_mb: float
+
+
+def estimate_kv_mb(profile: KVCacheProfileLike, ctx: int) -> float:
+    """Compute KV cache size in MB using the compound formula.
+
+    The compound formula accounts for sliding-window capping, KV sharing,
+    and TriAttention budgets — unlike the linear ``kv_cache_per_1k_tokens_mb``
+    heuristic which assumes all layers scale identically with context.
+
+    Parameters:
+        profile: KV cache profile with per-layer-type parameters.
+        ctx: Context size in tokens.
+
+    Returns:
+        Estimated KV cache size in MB.
+    """
+    unique_sliding = profile.num_sliding_layers - profile.num_shared_sliding_layers
+    unique_global = profile.num_global_layers - profile.num_shared_global_layers
+
+    sliding_tok = min(ctx, profile.sliding_window) if profile.sliding_window else ctx
+    global_tok = min(ctx, profile.triattn_budget) if profile.triattn_budget else ctx
+
+    bytes_total = (
+        unique_sliding * sliding_tok * profile.per_tok_bytes_local
+        + unique_global * global_tok * profile.per_tok_bytes_global
+    )
+    return bytes_total / (1024 * 1024) + profile.base_overhead_mb
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +357,11 @@ class VRAMCheck:
     ) -> list[VRAMSuggestion]:
         """Generate VRAM reduction suggestions.
 
+        Branches on ``kv_cache_profile`` (gpumod-ja0m):
+        - If profile is ``None``: existing scalar heuristic (``for_llamacpp``).
+        - If profile present: compound formula for accurate KV savings.
+        - When savings insufficient (bounded case): alternative remediation.
+
         Parameters:
             service: Service that doesn't fit.
             required_mb: Required VRAM in MB.
@@ -319,12 +375,45 @@ class VRAMCheck:
 
         # Extract llama.cpp-specific config
         unit_vars = service.extra_config.get("unit_vars", {})
+        kv_cache_profile: Any = getattr(service, "kv_cache_profile", None)
+
         if isinstance(unit_vars, dict):
             n_gpu_layers = unit_vars.get("n_gpu_layers")
             ctx_size = unit_vars.get("ctx_size")
 
-            if n_gpu_layers is not None:
-                # Assume total_layers from common models (80 for 70B+)
+            if kv_cache_profile is not None:
+                # --- Profile-aware path (hybrid models, gpumod-ja0m) ---
+                overage = required_mb - available_mb
+
+                # Strategy 1: Layer reduction (same heuristic, always valid)
+                if n_gpu_layers is not None and int(n_gpu_layers) > 0 and overage > 0:
+                    total_layers = 80  # Default assumption
+                    mb_per_layer = required_mb / total_layers
+                    layers_to_remove = int(overage / mb_per_layer) + 1
+                    suggested_layers = max(0, int(n_gpu_layers) - layers_to_remove)
+                    if suggested_layers > 0:
+                        estimated = required_mb - (layers_to_remove * mb_per_layer)
+                        suggestions.append(
+                            VRAMSuggestion(
+                                message=(
+                                    f"Reduce n_gpu_layers from {n_gpu_layers} "
+                                    f"to {suggested_layers} to save "
+                                    f"~{layers_to_remove * mb_per_layer:.0f} MB"
+                                ),
+                                suggested_layers=suggested_layers,
+                                estimated_vram_mb=int(estimated),
+                            )
+                        )
+
+                # Strategy 2: Context reduction via compound formula
+                ctx = int(ctx_size or 8192)
+                if ctx > 4096 and overage > 0:
+                    self._add_profile_ctx_suggestion(
+                        suggestions, kv_cache_profile, ctx, required_mb, overage
+                    )
+
+            elif n_gpu_layers is not None:
+                # --- Existing scalar path (dense models) — UNCHANGED ---
                 total_layers = 80  # Default assumption
                 suggestion = VRAMSuggestion.for_llamacpp(
                     required_mb=required_mb,
@@ -350,3 +439,65 @@ class VRAMCheck:
         )
 
         return suggestions
+
+    def _add_profile_ctx_suggestion(
+        self,
+        suggestions: list[VRAMSuggestion],
+        profile: KVCacheProfileLike,
+        ctx: int,
+        required_mb: int,
+        overage: int,
+    ) -> None:
+        """Add a profile-aware context-reduction suggestion (gpumod-ja0m).
+
+        Uses the compound formula to compute actual KV cache savings from
+        halving context. When savings are insufficient because sliding-window
+        or TriAttention bounds cap the KV cache, surfaces an alternative
+        remediation message instead.
+
+        Parameters:
+            suggestions: List to append suggestion to (mutated in place).
+            profile: KV cache profile with compound formula fields.
+            ctx: Current context size in tokens.
+            required_mb: Required VRAM in MB.
+            overage: How many MB over available VRAM.
+        """
+        current_kv = estimate_kv_mb(profile, ctx)
+        halved_kv = estimate_kv_mb(profile, ctx // 2)
+        savings_mb = current_kv - halved_kv
+
+        if savings_mb >= overage:
+            # Sufficient: suggest ctx reduction with accurate savings
+            suggestions.append(
+                VRAMSuggestion(
+                    message=(
+                        f"Reduce ctx_size from {ctx} to {ctx // 2} "
+                        f"to save ~{savings_mb:.0f} MB of KV cache"
+                    ),
+                    suggested_ctx_size=ctx // 2,
+                    estimated_vram_mb=int(required_mb - savings_mb),
+                )
+            )
+        else:
+            # Bounded: ctx reduction insufficient due to architecture limits
+            sw = profile.sliding_window
+            if sw is not None:
+                suggestions.append(
+                    VRAMSuggestion(
+                        message=(
+                            f"This model's KV cache is bounded by "
+                            f"sliding_window={sw}; reducing ctx below "
+                            f"{sw} saves nothing more — consider a "
+                            f"smaller quantization instead."
+                        ),
+                    )
+                )
+            else:
+                suggestions.append(
+                    VRAMSuggestion(
+                        message=(
+                            "Context reduction insufficient — consider "
+                            "a smaller quantization instead."
+                        ),
+                    )
+                )
