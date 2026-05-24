@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from gpumod.db import Database
-from gpumod.models import ModelInfo, ModelSource
-from gpumod.registry import ModelRegistry
+from gpumod.models import KVCacheProfile, ModelInfo, ModelSource
+from gpumod.registry import ModelRegistry, estimate_kv_mb
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -335,3 +335,216 @@ class TestRemove:
         """remove() should not raise for nonexistent model (idempotent)."""
         # Should not raise
         await registry.remove("nonexistent/model")
+
+
+# ---------------------------------------------------------------------------
+# estimate_kv_mb — compound formula (gpumod-cf8)
+# ---------------------------------------------------------------------------
+
+# Reference KVCacheProfile fixtures derived from PoC oracle values.
+
+GEMMA_3N_E4B_PROFILE = KVCacheProfile(
+    num_sliding_layers=28,
+    num_global_layers=7,
+    num_kv_shared_layers=15,
+    sliding_window=512,
+    head_dim=256,
+    num_kv_heads=2,
+)
+
+GEMMA_3_27B_PROFILE = KVCacheProfile(
+    num_sliding_layers=52,
+    num_global_layers=10,
+    num_kv_shared_layers=0,
+    sliding_window=1024,
+    head_dim=128,
+    num_kv_heads=16,
+)
+
+QWEN3_32B_PROFILE = KVCacheProfile(
+    num_sliding_layers=0,
+    num_global_layers=64,
+    head_dim=128,
+    num_kv_heads=8,
+)
+
+LLAMA33_70B_PROFILE = KVCacheProfile(
+    num_sliding_layers=0,
+    num_global_layers=80,
+    head_dim=128,
+    num_kv_heads=8,
+)
+
+
+class TestEstimateKvMb:
+    """Tests for the estimate_kv_mb pure function (compound formula)."""
+
+    def test_gemma_3n_e4b_8k(self) -> None:
+        """Gemma 3n E4B at 8K context: oracle = 78.5 MB."""
+        result = estimate_kv_mb(GEMMA_3N_E4B_PROFILE, 8_000)
+        assert abs(result - 78.5) < 1.0
+
+    def test_gemma_3n_e4b_32k(self) -> None:
+        """Gemma 3n E4B at 32K context: oracle = 266.0 MB."""
+        result = estimate_kv_mb(GEMMA_3N_E4B_PROFILE, 32_000)
+        assert abs(result - 266.0) < 1.0
+
+    def test_gemma_3n_e4b_128k(self) -> None:
+        """Gemma 3n E4B at 128K context: oracle = 1016.0 MB."""
+        result = estimate_kv_mb(GEMMA_3N_E4B_PROFILE, 128_000)
+        assert abs(result - 1016.0) < 1.0
+
+    def test_gemma_3_27b_8k(self) -> None:
+        """Gemma 3 27B at 8K context: oracle = 1041.0 MB."""
+        result = estimate_kv_mb(GEMMA_3_27B_PROFILE, 8_000)
+        assert abs(result - 1041.0) < 1.0
+
+    def test_gemma_3_27b_32k(self) -> None:
+        """Gemma 3 27B at 32K context: oracle = 2916.0 MB."""
+        result = estimate_kv_mb(GEMMA_3_27B_PROFILE, 32_000)
+        assert abs(result - 2916.0) < 1.0
+
+    def test_gemma_3_27b_128k(self) -> None:
+        """Gemma 3 27B at 128K context: oracle = 10416.0 MB."""
+        result = estimate_kv_mb(GEMMA_3_27B_PROFILE, 128_000)
+        assert abs(result - 10416.0) < 1.0
+
+    def test_qwen3_32b_8k(self) -> None:
+        """Qwen3 32B (dense) at 8K context: oracle = 2000.0 MB."""
+        result = estimate_kv_mb(QWEN3_32B_PROFILE, 8_000)
+        assert abs(result - 2000.0) < 1.0
+
+    def test_qwen3_32b_128k(self) -> None:
+        """Qwen3 32B (dense) at 128K context: oracle = 32000.0 MB."""
+        result = estimate_kv_mb(QWEN3_32B_PROFILE, 128_000)
+        assert abs(result - 32000.0) < 1.0
+
+    def test_llama33_70b_8k(self) -> None:
+        """Llama 3.3 70B (dense) at 8K context: oracle = 2500.0 MB."""
+        result = estimate_kv_mb(LLAMA33_70B_PROFILE, 8_000)
+        assert abs(result - 2500.0) < 1.0
+
+    def test_llama33_70b_128k(self) -> None:
+        """Llama 3.3 70B (dense) at 128K context: oracle = 40000.0 MB."""
+        result = estimate_kv_mb(LLAMA33_70B_PROFILE, 128_000)
+        assert abs(result - 40000.0) < 1.0
+
+
+# ---------------------------------------------------------------------------
+# estimate_vram — compound formula integration
+# ---------------------------------------------------------------------------
+
+
+class TestEstimateVramCompound:
+    """Tests for estimate_vram using kv_cache_profile (compound path)."""
+
+    async def test_uses_compound_when_profile_present(self, registry: ModelRegistry) -> None:
+        """estimate_vram prefers compound formula when kv_cache_profile is set."""
+        model = ModelInfo(
+            id="google/gemma-3n-E4B-it",
+            source=ModelSource.HUGGINGFACE,
+            base_vram_mb=5000,
+            kv_cache_per_1k_tokens_mb=69,
+            kv_cache_profile=GEMMA_3N_E4B_PROFILE,
+        )
+        with patch.object(registry._db, "get_model", new_callable=AsyncMock, return_value=model):
+            result = await registry.estimate_vram("google/gemma-3n-E4B-it", context_size=8_000)
+
+        # compound: 78.5 MB → total = 5000 + 78 = 5078
+        expected_kv = estimate_kv_mb(GEMMA_3N_E4B_PROFILE, 8_000)
+        expected = 5000 + int(expected_kv)
+        assert result == expected
+
+    async def test_compound_differs_from_linear(self, registry: ModelRegistry) -> None:
+        """Compound formula should give different (lower) value than linear for hybrid models."""
+        model = ModelInfo(
+            id="google/gemma-3n-E4B-it",
+            source=ModelSource.HUGGINGFACE,
+            base_vram_mb=5000,
+            kv_cache_per_1k_tokens_mb=69,
+            kv_cache_profile=GEMMA_3N_E4B_PROFILE,
+        )
+        with patch.object(registry._db, "get_model", new_callable=AsyncMock, return_value=model):
+            compound_result = await registry.estimate_vram(
+                "google/gemma-3n-E4B-it", context_size=8_000
+            )
+
+        # Linear path would give: 5000 + int((8000/1000) * 69) = 5000 + 552 = 5552
+        linear_result = 5000 + int((8_000 / 1000) * 69)
+        assert compound_result < linear_result
+
+    async def test_falls_back_to_linear_when_no_profile(
+        self, registry: ModelRegistry, db: Database
+    ) -> None:
+        """estimate_vram uses linear formula when kv_cache_profile is None."""
+        model = _make_model_info(
+            base_vram_mb=16384,
+            kv_cache_per_1k_tokens_mb=64,
+        )
+        await db.insert_model(model)
+
+        result = await registry.estimate_vram("meta-llama/Llama-3-8B", context_size=4096)
+        # Linear: 16384 + int((4096/1000) * 64) = 16384 + 262 = 16646
+        assert result == 16646
+
+    async def test_backward_compat_dense_model_exact_match(
+        self, registry: ModelRegistry, db: Database
+    ) -> None:
+        """Dense model with no profile produces exactly the current linear value."""
+        model = _make_model_info(
+            model_id="dense/test-model",
+            base_vram_mb=20000,
+            kv_cache_per_1k_tokens_mb=250,
+        )
+        await db.insert_model(model)
+
+        result = await registry.estimate_vram("dense/test-model", context_size=8000)
+        # Exact linear formula: 20000 + int((8000/1000) * 250) = 20000 + 2000 = 22000
+        assert result == 22000
+
+    async def test_compound_gemma_3_27b(self, registry: ModelRegistry) -> None:
+        """Gemma 3 27B compound estimate matches PoC oracle within tolerance."""
+        model = ModelInfo(
+            id="google/gemma-3-27b-it",
+            source=ModelSource.HUGGINGFACE,
+            base_vram_mb=14000,
+            kv_cache_per_1k_tokens_mb=485,
+            kv_cache_profile=GEMMA_3_27B_PROFILE,
+        )
+        with patch.object(registry._db, "get_model", new_callable=AsyncMock, return_value=model):
+            result = await registry.estimate_vram("google/gemma-3-27b-it", context_size=8_000)
+
+        expected_kv = estimate_kv_mb(GEMMA_3_27B_PROFILE, 8_000)
+        expected = 14000 + int(expected_kv)
+        assert result == expected
+
+    async def test_compound_qwen3_dense(self, registry: ModelRegistry) -> None:
+        """Dense model with profile: compound matches linear for all-global layers."""
+        model = ModelInfo(
+            id="Qwen/Qwen3-32B",
+            source=ModelSource.HUGGINGFACE,
+            base_vram_mb=18000,
+            kv_cache_per_1k_tokens_mb=250,
+            kv_cache_profile=QWEN3_32B_PROFILE,
+        )
+        with patch.object(registry._db, "get_model", new_callable=AsyncMock, return_value=model):
+            result = await registry.estimate_vram("Qwen/Qwen3-32B", context_size=8_000)
+
+        # For dense model, compound = linear in raw KV
+        expected_kv = estimate_kv_mb(QWEN3_32B_PROFILE, 8_000)
+        expected = 18000 + int(expected_kv)
+        assert result == expected
+
+    async def test_no_kv_info_returns_base_only(self, registry: ModelRegistry) -> None:
+        """Model with neither kv_cache_per_1k nor kv_cache_profile returns base_vram_mb."""
+        model = ModelInfo(
+            id="bare/model",
+            source=ModelSource.LOCAL,
+            base_vram_mb=10000,
+            kv_cache_per_1k_tokens_mb=None,
+            kv_cache_profile=None,
+        )
+        with patch.object(registry._db, "get_model", new_callable=AsyncMock, return_value=model):
+            result = await registry.estimate_vram("bare/model", context_size=32_000)
+
+        assert result == 10000

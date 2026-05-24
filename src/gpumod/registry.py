@@ -8,15 +8,77 @@ for ML models.
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gpumod.fetchers.gguf import GGUFFetcher
 from gpumod.fetchers.huggingface import HuggingFaceFetcher
-from gpumod.models import ModelInfo, ModelSource
+from gpumod.models import KVCacheProfile, ModelInfo, ModelSource
 
 if TYPE_CHECKING:
     from gpumod.db import Database
+
+
+def estimate_kv_mb(profile: KVCacheProfile, ctx: int) -> float:
+    """Compound KV cache estimation: layer-type-aware, non-linear.
+
+    Computes the KV cache memory in MB for a model described by
+    *profile* at a given context length *ctx*.  The formula accounts
+    for sliding vs global attention layers, KV sharing, and optional
+    asymmetric head dimensions (Gemma 4 style).
+
+    Parameters
+    ----------
+    profile:
+        The structural KV cache profile for the model.
+    ctx:
+        Context length in tokens.
+
+    Returns
+    -------
+    float
+        Estimated KV cache size in megabytes.
+    """
+    total_layers = profile.num_sliding_layers + profile.num_global_layers
+    shared = profile.num_kv_shared_layers
+
+    # Distribute shared layers proportionally (conservative: floor → overestimate).
+    if shared > 0 and total_layers > 0:
+        shared_sliding = min(
+            math.floor(shared * profile.num_sliding_layers / total_layers),
+            profile.num_sliding_layers,
+        )
+        shared_global = min(shared - shared_sliding, profile.num_global_layers)
+    else:
+        shared_sliding = 0
+        shared_global = 0
+
+    unique_sliding = profile.num_sliding_layers - shared_sliding
+    unique_global = profile.num_global_layers - shared_global
+
+    kv_factor = 1 if profile.attention_k_eq_v else 2
+    bytes_per_elem = 2  # fp16
+
+    per_tok_local = kv_factor * profile.num_kv_heads * profile.head_dim * bytes_per_elem
+
+    global_hd = (
+        profile.global_head_dim if profile.global_head_dim is not None else profile.head_dim
+    )
+    global_kv_heads = (
+        profile.num_global_kv_heads
+        if profile.num_global_kv_heads is not None
+        else profile.num_kv_heads
+    )
+    per_tok_global = kv_factor * global_kv_heads * global_hd * bytes_per_elem
+
+    sliding_tok = min(ctx, profile.sliding_window) if profile.sliding_window else ctx
+    global_tok = min(ctx, profile.triattn_budget) if profile.triattn_budget else ctx
+
+    bytes_total = (
+        unique_sliding * sliding_tok * per_tok_local + unique_global * global_tok * per_tok_global
+    )
+    return bytes_total / (1024 * 1024)
 
 
 class ModelRegistry:
@@ -126,7 +188,10 @@ class ModelRegistry:
     ) -> int:
         """Estimate total VRAM for a model with given context.
 
-        Calculates: total = base_vram + (context_size / 1000) * kv_cache_per_1k
+        When the model carries a ``kv_cache_profile``, the compound
+        formula is used (layer-type-aware, non-linear).  Otherwise
+        the legacy linear formula applies:
+        ``total = base_vram + (context_size / 1000) * kv_cache_per_1k``.
 
         Parameters
         ----------
@@ -158,7 +223,9 @@ class ModelRegistry:
 
         total = model.base_vram_mb
 
-        if model.kv_cache_per_1k_tokens_mb is not None:
+        if model.kv_cache_profile is not None:
+            total += int(estimate_kv_mb(model.kv_cache_profile, context_size))
+        elif model.kv_cache_per_1k_tokens_mb is not None:
             kv_addition = int((context_size / 1000) * model.kv_cache_per_1k_tokens_mb)
             total += kv_addition
 
