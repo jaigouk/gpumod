@@ -311,3 +311,105 @@ class TestEdgeCases:
         # Should have stored suggestions
         suggestions = check.get_suggestions()
         assert suggestions is not None
+
+
+# ---------------------------------------------------------------------------
+# gpumod-lgt: MTP-aware VRAM checking
+# ---------------------------------------------------------------------------
+
+
+def _make_mtp_service(vram_mb: int = 22000) -> MagicMock:
+    """Service with MTP flags in extra_args (triggers MTP overhead path)."""
+    service = MagicMock()
+    service.id = "qwen36-35b-a3b-mtp-iq4xs"
+    service.driver = "llamacpp"
+    service.vram_mb = vram_mb
+    service.model_id = "unsloth/Qwen3.6-35B-A3B-MTP-GGUF"
+    service.extra_config = {
+        "unit_vars": {
+            "n_gpu_layers": -1,
+            "ctx_size": 32768,
+            "extra_args": (
+                "--parallel 1 --threads 16 "
+                "--spec-type draft-mtp --spec-draft-n-max 2 "
+                "--chat-template-kwargs '{\"enable_thinking\":true}'"
+            ),
+        }
+    }
+    return service
+
+
+class TestVRAMCheckMTPOverhead:
+    """gpumod-lgt: MTP variants load ~1.5 GB more than declared vram_mb due
+    to the draft head + draft KV cache. The preflight check must account
+    for it so the service doesn't OOM mid-load on a 24 GB GPU.
+    """
+
+    async def test_non_mtp_service_unaffected(
+        self, mock_service: MagicMock, mock_vram_tracker: MagicMock
+    ) -> None:
+        # mock_service has no --spec-type in extra_args -> no MTP overhead
+        check = VRAMCheck(vram_tracker=mock_vram_tracker, mtp_overhead_mb=1500)
+        result = await check.check(mock_service)
+
+        assert result.passed is True
+        # Message should NOT mention MTP overhead for non-MTP services
+        assert "mtp" not in result.message.lower()
+
+    async def test_mtp_overhead_applied(self, mock_vram_tracker: MagicMock) -> None:
+        # Service declares 22000 MB; with default 1500 MB MTP overhead,
+        # required = 22000 + 1500 + 512 (safety) = 24012 MB.
+        # GPU has 23500 free -> should FAIL with MTP overhead applied.
+        service = _make_mtp_service(vram_mb=22000)
+        check = VRAMCheck(vram_tracker=mock_vram_tracker, mtp_overhead_mb=1500)
+        result = await check.check(service)
+
+        assert result.passed is False
+        # Failure message MUST reference MTP overhead explicitly
+        assert "mtp" in result.message.lower() or "mtp" in (result.remediation or "").lower()
+
+    async def test_mtp_overhead_disabled_with_zero(self, mock_vram_tracker: MagicMock) -> None:
+        # Override overhead to 0 -> MTP detection has no behavior effect
+        service = _make_mtp_service(vram_mb=22000)
+        check = VRAMCheck(vram_tracker=mock_vram_tracker, mtp_overhead_mb=0)
+        result = await check.check(service)
+
+        # 22000 + 0 + 512 = 22512 < 23500 free -> passes
+        assert result.passed is True
+
+    async def test_mtp_overhead_configurable_higher_value(
+        self, mock_vram_tracker: MagicMock
+    ) -> None:
+        # Aggressive 3000 MB overhead refuses tighter scenarios that 1500
+        # would allow.
+        # vram_mb=20000 + 1500 overhead + 512 = 22012 -> passes (< 23500)
+        # vram_mb=20000 + 3000 overhead + 512 = 23512 -> fails (> 23500)
+        service = _make_mtp_service(vram_mb=20000)
+
+        default = VRAMCheck(vram_tracker=mock_vram_tracker, mtp_overhead_mb=1500)
+        result_default = await default.check(service)
+        assert result_default.passed is True
+
+        aggressive = VRAMCheck(vram_tracker=mock_vram_tracker, mtp_overhead_mb=3000)
+        result_aggressive = await aggressive.check(service)
+        assert result_aggressive.passed is False
+
+    async def test_mtp_detection_via_extra_args_string(self, mock_vram_tracker: MagicMock) -> None:
+        # MTP detection should match the exact `--spec-type draft-mtp` token.
+        # A random use of "spec" should NOT trigger overhead.
+        service = MagicMock()
+        service.id = "false-positive-test"
+        service.driver = "llamacpp"
+        service.vram_mb = 22000
+        service.model_id = "test/model"
+        service.extra_config = {
+            "unit_vars": {
+                "extra_args": "--threads 16 --no-prefetch --batch-size 512",
+            }
+        }
+        check = VRAMCheck(vram_tracker=mock_vram_tracker, mtp_overhead_mb=1500)
+        result = await check.check(service)
+
+        # No MTP -> 22000 + 512 = 22512 < 23500 -> passes
+        assert result.passed is True
+        assert "mtp" not in result.message.lower()

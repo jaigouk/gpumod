@@ -26,6 +26,13 @@ logger = logging.getLogger(__name__)
 
 # Default safety margin in MB
 DEFAULT_SAFETY_MARGIN_MB = 512
+# gpumod-lgt: MTP (Multi-Token Prediction) variants load ~1.5 GB more than
+# the declared vram_mb because of the draft head + draft KV cache. The
+# preset's vram_mb is usually estimated from the non-MTP twin's footprint;
+# without this overhead, MTP services can OOM mid-load on tight 24 GB GPUs.
+DEFAULT_MTP_OVERHEAD_MB = 1500
+# Token in extra_args that marks a service as MTP-using.
+MTP_FLAG_MARKER = "--spec-type draft-mtp"
 
 
 # ---------------------------------------------------------------------------
@@ -145,15 +152,21 @@ class VRAMCheck:
         self,
         vram_tracker: VRAMTracker | None = None,
         safety_margin_mb: int = DEFAULT_SAFETY_MARGIN_MB,
+        mtp_overhead_mb: int = DEFAULT_MTP_OVERHEAD_MB,
     ) -> None:
         """Initialize VRAMCheck.
 
         Parameters:
             vram_tracker: VRAMTracker instance (creates one if not provided).
             safety_margin_mb: Extra VRAM buffer required (default 512 MB).
+            mtp_overhead_mb: Additional VRAM required for MTP draft head +
+                draft KV cache when ``--spec-type draft-mtp`` is in the
+                service's ``extra_args`` (default 1500 MB). Pass 0 to
+                disable MTP-aware accounting.
         """
         self._vram_tracker = vram_tracker
         self._safety_margin_mb = safety_margin_mb
+        self._mtp_overhead_mb = mtp_overhead_mb
         self._last_suggestions: list[VRAMSuggestion] | None = None
 
     @property
@@ -204,17 +217,22 @@ class VRAMCheck:
             )
 
         required_mb = service.vram_mb
-        required_with_margin = required_mb + self._safety_margin_mb
+        # gpumod-lgt: detect MTP and add its draft-context overhead. The
+        # preset's vram_mb usually reflects the non-MTP twin's footprint;
+        # MTP needs ~1.5 GB more for the draft head + draft KV cache.
+        mtp_overhead = self._compute_mtp_overhead(service)
+        required_with_margin = required_mb + mtp_overhead + self._safety_margin_mb
 
         # Check if it fits
         if required_with_margin <= free_mb:
+            msg_parts = [f"VRAM OK: {required_mb} MB required"]
+            if mtp_overhead > 0:
+                msg_parts.append(f"+{mtp_overhead} MB MTP overhead")
+            msg_parts.append(f"+{self._safety_margin_mb} MB margin fits in {free_mb} MB free")
             return CheckResult(
                 passed=True,
                 severity="info",
-                message=(
-                    f"VRAM OK: {required_mb} MB required "
-                    f"(+{self._safety_margin_mb} MB margin) fits in {free_mb} MB free"
-                ),
+                message=" ".join(msg_parts),
             )
 
         # Doesn't fit - generate suggestions
@@ -222,22 +240,54 @@ class VRAMCheck:
         self._last_suggestions = suggestions
 
         remediation_lines = [
-            f"Required: {required_mb} MB (+{self._safety_margin_mb} MB margin)",
+            f"Required: {required_with_margin} MB "
+            f"({required_mb} declared"
+            + (f" + {mtp_overhead} MTP overhead" if mtp_overhead > 0 else "")
+            + f" + {self._safety_margin_mb} margin)",
             f"Available: {free_mb} MB (of {total_mb} MB total)",
             "",
             "Suggestions:",
         ]
         for i, suggestion in enumerate(suggestions, 1):
             remediation_lines.append(f"  {i}. {suggestion.message}")
+        remediation_lines.append(
+            "  See ~/k3s-setup/docs/benchmark-host/gpu-stability.md "
+            "for the broader pinned-memory freeze class."
+        )
+
+        msg = f"VRAM insufficient: {required_with_margin} MB required ({required_mb} declared"
+        if mtp_overhead > 0:
+            msg += f" + {mtp_overhead} MB MTP overhead"
+        msg += f") exceeds {free_mb} MB available"
 
         return CheckResult(
             passed=False,
             severity="error",
-            message=(
-                f"VRAM insufficient: {required_mb} MB required exceeds {free_mb} MB available"
-            ),
+            message=msg,
             remediation="\n".join(remediation_lines),
         )
+
+    def _compute_mtp_overhead(self, service: Service) -> int:
+        """Return MTP overhead in MB if the service uses MTP, else 0.
+
+        Detection looks for ``--spec-type draft-mtp`` in
+        ``extra_config['unit_vars']['extra_args']``. Configurable via the
+        ``mtp_overhead_mb`` constructor arg; pass 0 to disable entirely.
+        """
+        if self._mtp_overhead_mb <= 0:
+            return 0
+        try:
+            unit_vars = service.extra_config.get("unit_vars", {})
+        except AttributeError:
+            return 0
+        if not isinstance(unit_vars, dict):
+            return 0
+        extra_args = unit_vars.get("extra_args", "")
+        if not isinstance(extra_args, str):
+            return 0
+        if MTP_FLAG_MARKER in extra_args:
+            return self._mtp_overhead_mb
+        return 0
 
     def get_suggestions(self) -> list[VRAMSuggestion] | None:
         """Get suggestions from last failed check.

@@ -36,14 +36,32 @@ def _write_meminfo(path: Path, mem_available_mb: int, mem_total_mb: int = 32768)
     )
 
 
-def _make_mock_service():
-    """Create a minimal mock service for RAM check."""
+def _make_mock_service(model_path: str | None = None):
+    """Create a minimal mock service for RAM check.
+
+    When ``model_path`` is provided, populate ``extra_config['unit_vars']``
+    so the model-file-size aware check (gpumod-lgt) can see it.
+    """
     from unittest.mock import MagicMock
 
     service = MagicMock()
     service.id = "test-svc"
     service.vram_mb = 8000
+    if model_path is not None:
+        service.extra_config = {"unit_vars": {"model_path": model_path}}
+    else:
+        service.extra_config = {}
     return service
+
+
+def _make_gguf(path: Path, size_mb: int) -> Path:
+    """Create a fake GGUF file of the given size (in MB) for size-aware tests."""
+    path.write_bytes(b"")
+    # Use truncate to create a sparse file of the requested size without
+    # actually allocating the bytes — perfect for st_size testing.
+    with path.open("r+b") as f:
+        f.truncate(size_mb * 1024 * 1024)
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -219,3 +237,117 @@ class TestRAMCheck:
         assert result.remediation is not None
         assert "32768" in result.remediation  # MemTotal
         assert "500" in result.remediation  # MemAvailable
+
+
+# ---------------------------------------------------------------------------
+# gpumod-lgt: model file size aware checks
+# ---------------------------------------------------------------------------
+
+
+class TestRAMCheckModelFileSize:
+    """RAMCheck should refuse to start a service when MemAvailable cannot
+    accommodate the mmap of the service's model file plus a baseline cushion.
+
+    Triggered the 2026-05-24 OOM hard reboot: an 18 GB GGUF loaded via
+    llama.cpp mmap consumed page cache faster than MemAvailable predicted,
+    and the existing threshold-only check passed (MemAvailable > 4 GB warn).
+    """
+
+    @pytest.mark.asyncio
+    async def test_fails_when_model_file_exceeds_available_ram(self, tmp_path: Path) -> None:
+        meminfo = tmp_path / "meminfo"
+        _write_meminfo(meminfo, mem_available_mb=10000)  # plenty by threshold
+        gguf = _make_gguf(tmp_path / "model.gguf", size_mb=18000)  # 18 GB
+
+        check = RAMCheck(meminfo_path=meminfo, mmap_overhead_factor=1.1)
+        result = await check.check(_make_mock_service(model_path=str(gguf)))
+
+        # 18000 * 1.1 = 19800 MB required, only 10000 MB available
+        assert result.passed is False
+        assert result.severity == "error"
+        # Message should reference the file size and the gap
+        assert "18000" in result.message or "19" in result.message
+        assert result.remediation is not None
+        assert "model" in result.remediation.lower()
+
+    @pytest.mark.asyncio
+    async def test_passes_when_model_fits_with_overhead(self, tmp_path: Path) -> None:
+        meminfo = tmp_path / "meminfo"
+        _write_meminfo(meminfo, mem_available_mb=25000)  # 25 GB
+        gguf = _make_gguf(tmp_path / "model.gguf", size_mb=18000)  # 18 GB
+
+        check = RAMCheck(meminfo_path=meminfo, mmap_overhead_factor=1.1)
+        result = await check.check(_make_mock_service(model_path=str(gguf)))
+
+        # 18000 * 1.1 = 19800 + min_free 1024 = 20824 MB. 25000 > 20824 ✓
+        assert result.passed is True
+        assert result.severity == "info"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_when_no_model_path(self, tmp_path: Path) -> None:
+        """Services without a model_path use the threshold-only check."""
+        meminfo = tmp_path / "meminfo"
+        _write_meminfo(meminfo, mem_available_mb=8000)
+
+        check = RAMCheck(meminfo_path=meminfo, mmap_overhead_factor=1.1)
+        # No model_path → check falls back to threshold semantics
+        result = await check.check(_make_mock_service())
+
+        assert result.passed is True
+        assert result.severity == "info"
+
+    @pytest.mark.asyncio
+    async def test_handles_nonexistent_model_file_gracefully(self, tmp_path: Path) -> None:
+        """If model_path is configured but the file doesn't exist, the check
+        falls back to threshold-only (don't pre-fail when the downloader
+        hasn't run yet)."""
+        meminfo = tmp_path / "meminfo"
+        _write_meminfo(meminfo, mem_available_mb=8000)
+
+        check = RAMCheck(meminfo_path=meminfo, mmap_overhead_factor=1.1)
+        result = await check.check(
+            _make_mock_service(model_path=str(tmp_path / "nonexistent.gguf"))
+        )
+
+        # File doesn't exist → can't size-check → fall back to threshold,
+        # which passes at 8000 MB.
+        assert result.passed is True
+
+    @pytest.mark.asyncio
+    async def test_mmap_overhead_factor_configurable(self, tmp_path: Path) -> None:
+        """Higher factor refuses tighter scenarios that the default would
+        allow — operators on fragmentation-prone hosts can dial it up."""
+        meminfo = tmp_path / "meminfo"
+        _write_meminfo(meminfo, mem_available_mb=20000)  # 20 GB
+        gguf = _make_gguf(tmp_path / "model.gguf", size_mb=18000)
+
+        # Default factor 1.1 → 18000 * 1.1 = 19800 + 1024 = 20824 → fails by 824
+        default = RAMCheck(meminfo_path=meminfo, mmap_overhead_factor=1.1)
+        result_default = await default.check(_make_mock_service(model_path=str(gguf)))
+        # Aggressive factor 1.5 → 18000 * 1.5 = 27000 + 1024 → fails harder
+        aggressive = RAMCheck(meminfo_path=meminfo, mmap_overhead_factor=1.5)
+        result_aggressive = await aggressive.check(_make_mock_service(model_path=str(gguf)))
+
+        # Both fail at 20 GB available
+        assert result_default.passed is False
+        assert result_aggressive.passed is False
+        # Aggressive should report the higher overhead factor
+        assert "1.5" in result_aggressive.message
+        assert "1.1" in result_default.message
+
+    @pytest.mark.asyncio
+    async def test_failure_message_includes_file_size_and_deficit(self, tmp_path: Path) -> None:
+        meminfo = tmp_path / "meminfo"
+        _write_meminfo(meminfo, mem_available_mb=5000)
+        gguf = _make_gguf(tmp_path / "qwen.gguf", size_mb=18000)
+
+        check = RAMCheck(meminfo_path=meminfo, mmap_overhead_factor=1.1)
+        result = await check.check(_make_mock_service(model_path=str(gguf)))
+
+        assert result.passed is False
+        # Remediation must surface enough numbers for the operator to act
+        assert result.remediation is not None
+        text = result.remediation
+        assert "5000" in text  # available
+        assert "18000" in text or "18 GB" in text  # file size
+        assert "qwen.gguf" in text or "model" in text.lower()

@@ -369,3 +369,144 @@ class TestVRAMPreflight:
         # Should skip — already running, no preflight or start called
         driver.start.assert_not_called()
         mock_preflight.assert_not_called()
+
+
+class TestPreflightRunningServicesContext:
+    """gpumod-lgt: when preflight refuses to start a service, the
+    LifecycleError must enumerate currently-running gpumod services so
+    the operator knows what to stop."""
+
+    @pytest.mark.asyncio
+    async def test_running_services_appended_to_error_message(self) -> None:
+        from unittest.mock import patch
+
+        from gpumod.preflight import CheckResult
+
+        target = _make_service("qwen36-35b-a3b-mtp-iq4xs-preserve", vram_mb=22000)
+        # Other running services that should appear in the error context
+        running_others = [
+            _make_service("vllm-embedding-code", vram_mb=2500),
+            _make_service("qwen36-35b-a3b-iq4xs", vram_mb=22000),
+        ]
+        registry = _build_mock_registry(target)
+        registry.list_running = AsyncMock(return_value=running_others)
+        driver = _build_mock_driver()
+        registry.get_driver = lambda dtype: driver
+
+        error_results = (
+            {
+                "ram": CheckResult(
+                    passed=False,
+                    severity="error",
+                    message="System RAM insufficient to mmap 18000 MB model",
+                    remediation="See gpu-stability.md",
+                ),
+            },
+            True,
+        )
+
+        lifecycle_mgr = LifecycleManager(registry)
+
+        with (
+            patch(
+                "gpumod.preflight.run_preflight",
+                new_callable=AsyncMock,
+                return_value=error_results,
+            ),
+            pytest.raises(LifecycleError) as exc_info,
+        ):
+            await lifecycle_mgr.start("qwen36-35b-a3b-mtp-iq4xs-preserve")
+
+        msg = exc_info.value.reason
+        # The original preflight error must be preserved
+        assert "RAM insufficient" in msg
+        # The running-services context must be appended
+        assert "vllm-embedding-code" in msg
+        assert "qwen36-35b-a3b-iq4xs" in msg
+        # Actionable stop commands present
+        assert "gpumod service stop vllm-embedding-code" in msg
+        assert "gpumod service stop qwen36-35b-a3b-iq4xs" in msg
+        # The service being attempted must NOT be in the running list
+        assert "gpumod service stop qwen36-35b-a3b-iq4xs-preserve" not in msg
+
+    @pytest.mark.asyncio
+    async def test_no_context_block_when_no_other_services_running(self) -> None:
+        from unittest.mock import patch
+
+        from gpumod.preflight import CheckResult
+
+        target = _make_service("solo-service", vram_mb=22000)
+        registry = _build_mock_registry(target)
+        registry.list_running = AsyncMock(return_value=[])
+        driver = _build_mock_driver()
+        registry.get_driver = lambda dtype: driver
+
+        error_results = (
+            {
+                "vram": CheckResult(
+                    passed=False,
+                    severity="error",
+                    message="VRAM insufficient",
+                    remediation="Reduce ctx_size",
+                ),
+            },
+            True,
+        )
+
+        lifecycle_mgr = LifecycleManager(registry)
+
+        with (
+            patch(
+                "gpumod.preflight.run_preflight",
+                new_callable=AsyncMock,
+                return_value=error_results,
+            ),
+            pytest.raises(LifecycleError) as exc_info,
+        ):
+            await lifecycle_mgr.start("solo-service")
+
+        msg = exc_info.value.reason
+        assert "VRAM insufficient" in msg
+        # No running-services section appended when none are running
+        assert "Currently running gpumod services" not in msg
+
+    @pytest.mark.asyncio
+    async def test_registry_failure_does_not_mask_original_error(self) -> None:
+        """If list_running() blows up, the original preflight error is
+        still surfaced — best-effort enricher."""
+        from unittest.mock import patch
+
+        from gpumod.preflight import CheckResult
+
+        target = _make_service("flaky-svc", vram_mb=22000)
+        registry = _build_mock_registry(target)
+        registry.list_running = AsyncMock(side_effect=RuntimeError("registry-boom"))
+        driver = _build_mock_driver()
+        registry.get_driver = lambda dtype: driver
+
+        error_results = (
+            {
+                "vram": CheckResult(
+                    passed=False,
+                    severity="error",
+                    message="VRAM insufficient (original)",
+                    remediation="Reduce vram_mb",
+                ),
+            },
+            True,
+        )
+
+        lifecycle_mgr = LifecycleManager(registry)
+
+        with (
+            patch(
+                "gpumod.preflight.run_preflight",
+                new_callable=AsyncMock,
+                return_value=error_results,
+            ),
+            pytest.raises(LifecycleError) as exc_info,
+        ):
+            await lifecycle_mgr.start("flaky-svc")
+
+        # Original failure still visible despite enrichment failure
+        assert "VRAM insufficient (original)" in exc_info.value.reason

@@ -1,7 +1,14 @@
-"""RAM preflight check for gpumod services (gpumod-bfx).
+"""RAM preflight check for gpumod services (gpumod-bfx, extended gpumod-lgt).
 
 Validates that sufficient system RAM is available before starting a service.
 Prevents OOM freezes from mmap, CPU offloading, or KV cache allocation.
+
+gpumod-lgt: extended to model-file-size aware checking. Reading an 18 GB
+GGUF via llama-server mmap loads its pages into the host page cache; if
+MemAvailable cannot accommodate (file_size * overhead_factor + min_free),
+starting the service can OOM the host. See
+``~/k3s-setup/docs/benchmark-host/gpu-stability.md``
+for the broader pinned-memory freeze class this check guards against.
 
 Reads MemAvailable from /proc/meminfo directly (no dependency on
 SystemInfoCollector) with injectable path for testability.
@@ -10,8 +17,9 @@ SystemInfoCollector) with injectable path for testability.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from gpumod.preflight.base import CheckResult
 
@@ -22,6 +30,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MIN_FREE_MB = 1024
 DEFAULT_WARN_FREE_MB = 4096
+# gpumod-lgt: mmap of an N-byte GGUF claims at least N bytes of page cache
+# during load. The overhead factor leaves headroom for the runtime's
+# working set (KV cache allocations before VRAM transfer, malloc arenas,
+# etc.). Conservative default 1.1; raise on fragmentation-prone hosts.
+DEFAULT_MMAP_OVERHEAD_FACTOR = 1.1
 
 
 class RAMCheck:
@@ -40,21 +53,27 @@ class RAMCheck:
         min_free_mb: int = DEFAULT_MIN_FREE_MB,
         warn_free_mb: int = DEFAULT_WARN_FREE_MB,
         meminfo_path: Path = Path("/proc/meminfo"),
+        mmap_overhead_factor: float = DEFAULT_MMAP_OVERHEAD_FACTOR,
     ) -> None:
         """Initialize RAMCheck.
 
         Parameters
         ----------
         min_free_mb:
-            Error threshold in MB (default 2048).
+            Error threshold in MB (default 1024).
         warn_free_mb:
             Warning threshold in MB (default 4096).
         meminfo_path:
             Path to meminfo file (injectable for testing).
+        mmap_overhead_factor:
+            Multiplier applied to the service's model file size when the
+            model_path is known. Required RAM = file_size * factor + min_free.
+            Default 1.1.
         """
         self._min_free_mb = min_free_mb
         self._warn_free_mb = warn_free_mb
         self._meminfo_path = meminfo_path
+        self._mmap_overhead_factor = mmap_overhead_factor
 
     @property
     def name(self) -> str:
@@ -63,6 +82,11 @@ class RAMCheck:
 
     async def check(self, service: Service) -> CheckResult:
         """Check if system RAM is sufficient for service startup.
+
+        gpumod-lgt: when the service has a resolvable ``model_path``, this
+        check requires MemAvailable to cover ``file_size * factor + min_free``
+        — a much stricter bound than threshold-only. Services without a
+        known model file fall back to threshold semantics.
 
         Parameters
         ----------
@@ -83,6 +107,46 @@ class RAMCheck:
                 severity="warning",
                 message="RAM check skipped: unable to read /proc/meminfo",
             )
+
+        # gpumod-lgt: prefer model-file-size aware check when the file
+        # exists. Falls through to threshold check on missing path / file.
+        model_path, model_size_mb = self._get_model_file_size_mb(service)
+        if model_size_mb is not None:
+            required_mb = int(model_size_mb * self._mmap_overhead_factor)
+            required_with_floor = required_mb + self._min_free_mb
+            if mem_available_mb < required_with_floor:
+                deficit = required_with_floor - mem_available_mb
+                model_name = Path(model_path).name if model_path else "model file"
+                return CheckResult(
+                    passed=False,
+                    severity="error",
+                    message=(
+                        f"System RAM insufficient to mmap {model_size_mb} MB "
+                        f"model: {mem_available_mb} MB available, "
+                        f"{required_with_floor} MB required "
+                        f"({model_size_mb} * {self._mmap_overhead_factor} "
+                        f"overhead + {self._min_free_mb} MB floor) "
+                        f"— short by {deficit} MB"
+                    ),
+                    remediation=(
+                        f"Model file: {model_name} ({model_size_mb} MB)\n"
+                        f"  MemAvailable: {mem_available_mb} MB "
+                        f"(of {mem_total_mb} MB total)\n"
+                        f"  Required: {required_with_floor} MB "
+                        f"(mmap overhead factor {self._mmap_overhead_factor})\n"
+                        f"  Deficit: {deficit} MB\n"
+                        f"\n"
+                        f"Suggestions:\n"
+                        f"  1. Stop other gpumod services to free RAM "
+                        f"(see `gpumod service list`)\n"
+                        f"  2. Close memory-hungry desktop apps "
+                        f"(browser, IDE, code-server)\n"
+                        f"  3. Use a smaller model quantization\n"
+                        f"  4. See "
+                        f"~/k3s-setup/docs/benchmark-host/gpu-stability.md "
+                        f"for the broader pinned-memory freeze class"
+                    ),
+                )
 
         # Critical: below minimum threshold
         if mem_available_mb < self._min_free_mb:
@@ -118,6 +182,30 @@ class RAMCheck:
             severity="info",
             message=f"RAM OK: {mem_available_mb} MB available",
         )
+
+    def _get_model_file_size_mb(self, service: Service) -> tuple[str | None, int | None]:
+        """Resolve ``service.extra_config['unit_vars']['model_path']`` and
+        return (resolved_path, file_size_mb).
+
+        Returns ``(None, None)`` when the model_path is unset, unresolvable,
+        or the file does not yet exist (e.g. before download).
+        """
+        try:
+            unit_vars: Any = service.extra_config.get("unit_vars", {})
+        except AttributeError:
+            return None, None
+        if not isinstance(unit_vars, dict):
+            return None, None
+        raw_path = unit_vars.get("model_path")
+        if not raw_path:
+            return None, None
+        try:
+            resolved = os.path.expandvars(os.path.expanduser(str(raw_path)))
+            stat_result = Path(resolved).stat()
+        except (OSError, ValueError):
+            return None, None
+        size_mb = stat_result.st_size // (1024 * 1024)
+        return resolved, size_mb
 
     def _read_meminfo(self) -> tuple[int | None, int | None]:
         """Read MemAvailable and MemTotal from /proc/meminfo.

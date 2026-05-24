@@ -190,11 +190,18 @@ class LifecycleManager:
 
             # Preflight checks: RAM, VRAM, tokenizer, model file
             from gpumod.preflight import PreflightRunner, run_preflight
+            from gpumod.services.running_context import format_running_services
 
             results, has_errors = await run_preflight(svc)
             if has_errors:
                 runner = PreflightRunner.default()
                 msg = runner.format_errors(results)
+                # gpumod-lgt: append the running-services context so the
+                # operator knows what to stop. Best-effort — returns "" on
+                # any error and never masks the underlying preflight failure.
+                ctx = await format_running_services(self._registry, exclude_id=svc.id)
+                if ctx:
+                    msg = msg + "\n\n" + ctx
                 raise LifecycleError(
                     service_id=svc.id,
                     operation="start",
