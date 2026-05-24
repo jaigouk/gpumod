@@ -1,8 +1,9 @@
-"""Tests for the `gpumod preflight` CLI subcommands (gpumod-ecr)."""
+"""Tests for the `gpumod preflight` CLI subcommands (gpumod-ecr, gpumod-aeb)."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
 from typer.testing import CliRunner
@@ -168,5 +169,104 @@ class TestPreflightRamUnknownService:
 
     def test_exits_two_on_unknown_service(self, runner: CliRunner) -> None:
         result = runner.invoke(app, ["preflight", "ram", "--service-id", "does-not-exist"])
+        assert result.exit_code == 2
+        assert "does-not-exist" in (result.stderr or "")
+
+
+# ---------------------------------------------------------------------------
+# Tests for `gpumod preflight all` (gpumod-aeb)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def stub_preflight_runner_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub PreflightRunner.startup_only() to return a runner that always passes."""
+    from gpumod.preflight import CheckResult, PreflightRunner
+
+    fake_results: dict[str, CheckResult] = {
+        "model_file": CheckResult(passed=True, message="OK", severity="error"),
+        "vram": CheckResult(passed=True, message="OK", severity="error"),
+        "ram": CheckResult(passed=True, message="OK", severity="error"),
+    }
+
+    fake_runner = PreflightRunner(checks=[])
+    monkeypatch.setattr(fake_runner, "run_all", AsyncMock(return_value=fake_results))
+    monkeypatch.setattr(
+        "gpumod.cli_preflight.PreflightRunner.startup_only",
+        staticmethod(lambda: fake_runner),
+    )
+
+
+@pytest.fixture
+def stub_preflight_runner_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub PreflightRunner.startup_only() to return a runner that fails."""
+    from gpumod.preflight import CheckResult, PreflightRunner
+
+    fake_results: dict[str, CheckResult] = {
+        "model_file": CheckResult(passed=True, message="OK", severity="error"),
+        "vram": CheckResult(
+            passed=False,
+            message="Insufficient VRAM: need 22000 MB, have 18000 MB",
+            severity="error",
+            remediation="Stop another service to free VRAM.",
+        ),
+        "ram": CheckResult(passed=True, message="OK", severity="error"),
+    }
+
+    fake_runner = PreflightRunner(checks=[])
+    monkeypatch.setattr(fake_runner, "run_all", AsyncMock(return_value=fake_results))
+    monkeypatch.setattr(
+        "gpumod.cli_preflight.PreflightRunner.startup_only",
+        staticmethod(lambda: fake_runner),
+    )
+
+
+@pytest.fixture
+def stub_format_running_services(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub format_running_services to return a canned context block."""
+    context_msg = "Currently running gpumod services:\n  - other-svc: 10000 MB VRAM declared"
+    monkeypatch.setattr(
+        "gpumod.cli_preflight.format_running_services",
+        AsyncMock(return_value=context_msg),
+    )
+
+
+@pytest.mark.usefixtures("stub_registry_get", "stub_preflight_runner_pass")
+class TestPreflightAllSuccess:
+    """`gpumod preflight all` exits 0 when all checks pass."""
+
+    def test_exits_zero_when_all_checks_pass(self, runner: CliRunner) -> None:
+        result = runner.invoke(app, ["preflight", "all", "--service-id", "qwen36"])
+        assert result.exit_code == 0, result.stdout + (result.stderr or "")
+
+
+@pytest.mark.usefixtures(
+    "stub_registry_get", "stub_preflight_runner_fail", "stub_format_running_services"
+)
+class TestPreflightAllFailure:
+    """`gpumod preflight all` exits 1 with diagnostic + running-services context."""
+
+    def test_exits_one_when_check_fails(self, runner: CliRunner) -> None:
+        result = runner.invoke(app, ["preflight", "all", "--service-id", "qwen36"])
+        assert result.exit_code == 1
+
+    def test_stderr_contains_error_message(self, runner: CliRunner) -> None:
+        result = runner.invoke(app, ["preflight", "all", "--service-id", "qwen36"])
+        stderr = result.stderr or ""
+        assert "Insufficient VRAM" in stderr or "vram" in stderr.lower()
+
+    def test_stderr_contains_running_services_context(self, runner: CliRunner) -> None:
+        result = runner.invoke(app, ["preflight", "all", "--service-id", "qwen36"])
+        stderr = result.stderr or ""
+        assert "Currently running" in stderr
+
+
+@pytest.mark.usefixtures("stub_preflight_runner_pass")
+class TestPreflightAllUnknownService:
+    """`gpumod preflight all` exits 2 on unknown service ID."""
+
+    def test_exits_two_on_unknown_service(self, runner: CliRunner) -> None:
+        # stub_registry_get raises KeyError for unknown IDs
+        result = runner.invoke(app, ["preflight", "all", "--service-id", "does-not-exist"])
         assert result.exit_code == 2
         assert "does-not-exist" in (result.stderr or "")

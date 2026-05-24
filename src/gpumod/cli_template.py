@@ -1,9 +1,10 @@
-"""Template CLI commands -- gpumod template list|show|generate|install."""
+"""Template CLI commands -- gpumod template list|show|generate|install|install-all."""
 
 from __future__ import annotations
 
 import asyncio
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -277,5 +278,102 @@ def install_template(
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 target_path.write_text(rendered)
                 _console.print(f"[green]Installed unit file: [bold]{target_path}[/bold][/green]")
+
+    run_async(_cmd())
+
+
+# ---------------------------------------------------------------------------
+# Helpers (systemd)
+# ---------------------------------------------------------------------------
+
+
+def _daemon_reload() -> None:
+    """Run `systemctl --user daemon-reload` to pick up changed unit files."""
+    subprocess.run(
+        ["systemctl", "--user", "daemon-reload"],  # noqa: S607
+        check=False,
+        capture_output=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# install-all
+# ---------------------------------------------------------------------------
+
+
+@template_app.command("install-all")
+def install_all_templates(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt."),
+    as_json: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Re-render and install unit files for ALL registered services.
+
+    Without --yes: prints dry-run summary, then exits.
+    With --yes: renders all, writes to systemd dir, daemon-reload once at end.
+    Exit codes: 0 success, 1 any failure.
+    """
+    from gpumod.cli import cli_context, error_handler, json_output, run_async
+
+    async def _cmd() -> None:
+        async with cli_context() as ctx:
+            with error_handler(console=_console):
+                services = await ctx.registry.list_all()
+
+                if not services:
+                    if as_json:
+                        json_output([], as_json=True)
+                    else:
+                        _console.print("[dim]No services registered.[/dim]")
+                    return
+
+                if not yes:
+                    # Dry-run: list services that would be installed
+                    items = [
+                        {"service_id": s.id, "unit_name": _get_unit_name(s)} for s in services
+                    ]
+                    if as_json:
+                        json_output(items, as_json=True)
+                        return
+
+                    table = Table(title="Services to install (dry-run)")
+                    table.add_column("Service ID", style="cyan")
+                    table.add_column("Unit Name", style="green")
+                    for item in items:
+                        table.add_row(item["service_id"], item["unit_name"])
+                    _console.print(table)
+                    _console.print("[yellow]Pass --yes to confirm installation.[/yellow]")
+                    return
+
+                # With --yes: render and write all
+                settings = await _build_settings(ctx)
+                results = []
+                for service in services:
+                    unit_vars = service.extra_config.get("unit_vars")
+                    rendered = ctx.template_engine.render_service_unit(
+                        service, settings, unit_vars=unit_vars
+                    )
+                    unit_name = _get_unit_name(service)
+                    target_path = _SYSTEMD_UNIT_DIR / f"{unit_name}.service"
+                    _validate_install_path(target_path, _SYSTEMD_UNIT_DIR)
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    target_path.write_text(rendered)
+                    results.append(
+                        {
+                            "service_id": service.id,
+                            "unit_name": unit_name,
+                            "path": str(target_path),
+                        }
+                    )
+
+                _daemon_reload()
+
+                if as_json:
+                    json_output(results, as_json=True)
+                    return
+
+                for item in results:
+                    _console.print(f"[green]Installed: [bold]{item['path']}[/bold][/green]")
+                msg = f"daemon-reload done. {len(results)} unit(s) installed."
+                _console.print(f"[green]{msg}[/green]")
 
     run_async(_cmd())

@@ -73,6 +73,32 @@ class PreflightRunner:
         self.checks = checks
 
     @classmethod
+    def startup_only(cls) -> PreflightRunner:
+        """Create a runner safe for ExecStartPre (no network I/O).
+
+        Includes: ModelFileCheck, VRAMCheck, RAMCheck.
+        Excludes: TokenizerCheck (hits network via from_pretrained).
+
+        Returns
+        -------
+        PreflightRunner:
+            Runner configured with startup-safe checks only.
+        """
+        from gpumod.config import get_settings
+
+        settings = get_settings()
+        return cls(
+            checks=[
+                ModelFileCheck(),
+                VRAMCheck(safety_margin_mb=settings.vram_safety_margin_mb),
+                RAMCheck(
+                    min_free_mb=settings.ram_min_free_mb,
+                    warn_free_mb=settings.ram_warn_free_mb,
+                ),
+            ]
+        )
+
+    @classmethod
     def default(cls) -> PreflightRunner:
         """Create a runner with all default checks.
 

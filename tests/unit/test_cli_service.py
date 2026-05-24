@@ -208,7 +208,7 @@ class TestServiceStart:
             result = runner.invoke(app, ["service", "start", "svc-1"])
 
         assert result.exit_code == 0
-        mock_ctx.lifecycle.start.assert_awaited_once_with("svc-1")
+        mock_ctx.lifecycle.start.assert_awaited_once_with("svc-1", no_quiesce=False)
         assert "svc-1" in result.output
         # Should show success-like message
         assert "start" in result.output.lower()

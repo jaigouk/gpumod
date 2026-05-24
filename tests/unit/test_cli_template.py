@@ -371,6 +371,86 @@ class TestTemplateInstall:
 
 
 # ---------------------------------------------------------------------------
+# template install-all tests
+# ---------------------------------------------------------------------------
+
+
+class TestTemplateInstallAll:
+    """Tests for `gpumod template install-all` command."""
+
+    def test_install_all_dry_run_without_yes(self) -> None:
+        """Without --yes: prints dry-run summary listing services, does not write."""
+        svc1 = _make_service(id="svc-1", unit_name="gpumod-svc-1")
+        svc2 = _make_service(id="svc-2", unit_name="gpumod-svc-2", driver=DriverType.LLAMACPP)
+        mock_ctx = _make_mock_context()
+        mock_ctx.registry = MagicMock()
+        mock_ctx.registry.list_all = AsyncMock(return_value=[svc1, svc2])
+
+        with patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)):
+            result = runner.invoke(app, ["template", "install-all"])
+
+        assert result.exit_code == 0
+        # Should show the services that would be installed
+        assert "svc-1" in result.output
+        assert "svc-2" in result.output
+
+    def test_install_all_with_yes_writes_files(self) -> None:
+        """With --yes: renders all services, writes unit files, daemon-reloads."""
+        import tempfile
+        from pathlib import Path
+
+        svc1 = _make_service(id="svc-1", unit_name="gpumod-svc-1")
+        svc2 = _make_service(id="svc-2", unit_name="gpumod-svc-2", driver=DriverType.LLAMACPP)
+        mock_ctx = _make_mock_context()
+        mock_ctx.registry = MagicMock()
+        mock_ctx.registry.list_all = AsyncMock(return_value=[svc1, svc2])
+        mock_ctx.template_engine.render_service_unit = MagicMock(
+            return_value="[Unit]\nDescription=Test\n"
+        )
+
+        with tempfile.TemporaryDirectory() as td:
+            install_dir = Path(td)
+            with (
+                patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)),
+                patch("gpumod.cli_template._SYSTEMD_UNIT_DIR", install_dir),
+                patch("gpumod.cli_template._daemon_reload") as mock_reload,
+            ):
+                result = runner.invoke(app, ["template", "install-all", "--yes"])
+
+            assert result.exit_code == 0
+            assert (install_dir / "gpumod-svc-1.service").exists()
+            assert (install_dir / "gpumod-svc-2.service").exists()
+            mock_reload.assert_called_once()
+
+    def test_install_all_json_output(self) -> None:
+        """With --json: outputs structured JSON."""
+        svc1 = _make_service(id="svc-1", unit_name="gpumod-svc-1")
+        mock_ctx = _make_mock_context()
+        mock_ctx.registry = MagicMock()
+        mock_ctx.registry.list_all = AsyncMock(return_value=[svc1])
+
+        with patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)):
+            result = runner.invoke(app, ["template", "install-all", "--json"])
+
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
+        assert any("svc-1" in str(item) for item in parsed)
+
+    def test_install_all_empty_registry(self) -> None:
+        """When no services are registered, install-all reports nothing to do."""
+        mock_ctx = _make_mock_context()
+        mock_ctx.registry = MagicMock()
+        mock_ctx.registry.list_all = AsyncMock(return_value=[])
+
+        with patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)):
+            result = runner.invoke(app, ["template", "install-all", "--yes"])
+
+        assert result.exit_code == 0
+        assert "no services" in result.output.lower() or result.output.strip() == ""
+
+
+# ---------------------------------------------------------------------------
 # _build_settings tests
 # ---------------------------------------------------------------------------
 

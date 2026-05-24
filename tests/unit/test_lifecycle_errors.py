@@ -510,3 +510,158 @@ class TestPreflightRunningServicesContext:
 
         # Original failure still visible despite enrichment failure
         assert "VRAM insufficient (original)" in exc_info.value.reason
+
+
+# ── Quiesce gate integration ─────────────────────────────────────────────
+
+
+class TestQuiesceGate:
+    """gpumod-jj0: quiesce gate blocks heavy starts within cooldown window."""
+
+    @pytest.mark.asyncio
+    async def test_heavy_stop_then_heavy_start_within_window_raises(self) -> None:
+        """Stopping a heavy service then starting another heavy within
+        the quiesce window must raise LifecycleError."""
+        import time
+        from unittest.mock import patch
+
+        service = _make_service("vllm-new", vram_mb=8000)
+        registry = _build_mock_registry(service)
+        driver = _build_mock_driver()
+        registry.get_driver = lambda dtype: driver
+
+        # Simulate a recent heavy stop (3s ago, window 10s)
+        recent_stop = str(time.time() - 3)
+        registry._db = AsyncMock()
+        registry._db.get_setting = AsyncMock(return_value=recent_stop)
+
+        lifecycle_mgr = LifecycleManager(registry)
+
+        with (
+            patch(
+                "gpumod.preflight.run_preflight",
+                new_callable=AsyncMock,
+                return_value=({}, False),
+            ),
+            pytest.raises(LifecycleError, match="Quiesce period active"),
+        ):
+            await lifecycle_mgr.start("vllm-new")
+
+        driver.start.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_heavy_stop_then_heavy_start_outside_window_allowed(self) -> None:
+        """Starting a heavy service after the quiesce window has elapsed succeeds."""
+        import time
+        from unittest.mock import patch
+
+        service = _make_service("vllm-new", vram_mb=8000)
+        registry = _build_mock_registry(service)
+        driver = _build_mock_driver()
+        registry.get_driver = lambda dtype: driver
+
+        # Heavy stop 20s ago, window 10s → allowed
+        old_stop = str(time.time() - 20)
+        registry._db = AsyncMock()
+        registry._db.get_setting = AsyncMock(return_value=old_stop)
+
+        lifecycle_mgr = LifecycleManager(registry)
+
+        with patch(
+            "gpumod.preflight.run_preflight",
+            new_callable=AsyncMock,
+            return_value=({}, False),
+        ):
+            await lifecycle_mgr.start("vllm-new")
+
+        driver.start.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_heavy_stop_then_light_start_no_quiesce_needed(self) -> None:
+        """Starting a light service (vram_mb=0) never triggers the quiesce gate."""
+        import time
+        from unittest.mock import patch
+
+        service = _make_service("api-svc", vram_mb=0)
+        registry = _build_mock_registry(service)
+        driver = _build_mock_driver()
+        registry.get_driver = lambda dtype: driver
+
+        # Even with a very recent heavy stop, light services are unaffected
+        recent_stop = str(time.time() - 1)
+        registry._db = AsyncMock()
+        registry._db.get_setting = AsyncMock(return_value=recent_stop)
+
+        lifecycle_mgr = LifecycleManager(registry)
+
+        with patch(
+            "gpumod.preflight.run_preflight",
+            new_callable=AsyncMock,
+            return_value=({}, False),
+        ):
+            await lifecycle_mgr.start("api-svc")
+
+        driver.start.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_quiesce_flag_bypasses_gate(self) -> None:
+        """--no-quiesce bypasses the quiesce gate even within window."""
+        import time
+        from unittest.mock import patch
+
+        service = _make_service("vllm-new", vram_mb=8000)
+        registry = _build_mock_registry(service)
+        driver = _build_mock_driver()
+        registry.get_driver = lambda dtype: driver
+
+        # Very recent heavy stop
+        recent_stop = str(time.time() - 1)
+        registry._db = AsyncMock()
+        registry._db.get_setting = AsyncMock(return_value=recent_stop)
+
+        lifecycle_mgr = LifecycleManager(registry)
+
+        with patch(
+            "gpumod.preflight.run_preflight",
+            new_callable=AsyncMock,
+            return_value=({}, False),
+        ):
+            await lifecycle_mgr.start("vllm-new", no_quiesce=True)
+
+        driver.start.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_stop_heavy_service_records_timestamp(self) -> None:
+        """Stopping a heavy service records the timestamp in the DB."""
+        from gpumod.services.heavy import QUIESCE_LAST_HEAVY_STOP_KEY
+
+        service = _make_service("vllm-chat", vram_mb=8000)
+        registry = _build_mock_registry(service)
+        driver = _build_mock_driver(state=ServiceState.RUNNING)
+        registry.get_driver = lambda dtype: driver
+
+        registry._db = AsyncMock()
+        registry._db.set_setting = AsyncMock()
+
+        lifecycle_mgr = LifecycleManager(registry)
+        await lifecycle_mgr.stop("vllm-chat")
+
+        registry._db.set_setting.assert_called_once()
+        call_args = registry._db.set_setting.call_args
+        assert call_args[0][0] == QUIESCE_LAST_HEAVY_STOP_KEY
+
+    @pytest.mark.asyncio
+    async def test_stop_light_service_does_not_record(self) -> None:
+        """Stopping a light service does NOT record a quiesce timestamp."""
+        service = _make_service("api-svc", vram_mb=0)
+        registry = _build_mock_registry(service)
+        driver = _build_mock_driver(state=ServiceState.RUNNING)
+        registry.get_driver = lambda dtype: driver
+
+        registry._db = AsyncMock()
+        registry._db.set_setting = AsyncMock()
+
+        lifecycle_mgr = LifecycleManager(registry)
+        await lifecycle_mgr.stop("api-svc")
+
+        registry._db.set_setting.assert_not_called()

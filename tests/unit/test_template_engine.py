@@ -258,7 +258,7 @@ class TestRenderVllmUnit:
         )
         settings = {**default_settings, "gpumod_bin": "/usr/local/bin/gpumod"}
         result = TemplateEngine().render_service_unit(service, settings)
-        assert "ExecStartPre=/usr/local/bin/gpumod preflight ram --service-id vllm-chat" in result
+        assert "ExecStartPre=/usr/local/bin/gpumod preflight all --service-id vllm-chat" in result
 
     def test_preflight_required_false_omits_exec_start_pre(
         self, vllm_service: Service, default_settings: dict[str, str]
@@ -547,7 +547,7 @@ class TestPreflightExecStartPreAcrossDrivers:
         settings = {**default_settings, "gpumod_bin": "/usr/local/bin/gpumod"}
         result = TemplateEngine().render_service_unit(service, settings, unit_vars=unit_vars)
         assert (
-            f"ExecStartPre=/usr/local/bin/gpumod preflight ram --service-id {driver_str}-svc"
+            f"ExecStartPre=/usr/local/bin/gpumod preflight all --service-id {driver_str}-svc"
             in result
         )
 
@@ -629,10 +629,10 @@ class TestDoctorVenvExecStartPreAcrossDrivers:
             f"ExecStartPre=/usr/local/bin/gpumod doctor venv --service-id {driver_str}-svc"
             in result
         )
-        # No preflight ram ExecStartPre because preflight_required is False
-        # (the comment above the doctor line mentions "preflight ram", so we
+        # No preflight all ExecStartPre because preflight_required is False
+        # (the comment above the doctor line mentions "preflight all", so we
         # need to check for the directive specifically, not the substring)
-        assert "ExecStartPre=/usr/local/bin/gpumod preflight ram" not in result
+        assert "ExecStartPre=/usr/local/bin/gpumod preflight all" not in result
 
     @pytest.mark.parametrize(("driver_str", "unit_vars"), _DRIVERS)
     def test_both_flags_emit_both_lines_doctor_first(
@@ -646,12 +646,13 @@ class TestDoctorVenvExecStartPreAcrossDrivers:
         result = TemplateEngine().render_service_unit(service, settings, unit_vars=unit_vars)
         # Both present
         assert "doctor venv" in result
-        assert "preflight ram" in result
-        # Doctor line BEFORE ram line (cheaper check fails faster)
+        assert "preflight all" in result
+        # Doctor line BEFORE preflight all line (cheaper check fails faster)
         doctor_pos = result.find("doctor venv")
-        ram_pos = result.find("preflight ram")
-        assert doctor_pos < ram_pos, (
-            f"doctor venv should come before preflight ram; got doctor@{doctor_pos}, ram@{ram_pos}"
+        preflight_pos = result.find("preflight all")
+        assert doctor_pos < preflight_pos, (
+            f"doctor venv should come before preflight all;"
+            f" got doctor@{doctor_pos}, preflight@{preflight_pos}"
         )
 
     @pytest.mark.parametrize(("driver_str", "unit_vars"), _DRIVERS)
@@ -666,7 +667,7 @@ class TestDoctorVenvExecStartPreAcrossDrivers:
         result = TemplateEngine().render_service_unit(service, settings, unit_vars=unit_vars)
         assert "doctor venv" not in result
         # preflight_required is True, so ram line should still be there
-        assert "preflight ram" in result
+        assert "preflight all" in result
 
 
 class TestRenderLlamacppUnit:

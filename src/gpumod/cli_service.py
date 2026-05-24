@@ -147,6 +147,11 @@ def service_status(
 @service_app.command("start")
 def start_service(
     service_id: str = typer.Argument(help="Service ID to start."),
+    no_quiesce: bool = typer.Option(
+        False,
+        "--no-quiesce",
+        help="Bypass the quiesce period gate (use with caution).",
+    ),
 ) -> None:
     """Start a GPU service."""
     from gpumod.cli import cli_context, error_handler, run_async
@@ -158,7 +163,7 @@ def start_service(
                     f"[bold cyan]Starting {service_id}...[/bold cyan]",
                     spinner="dots",
                 ):
-                    await ctx.lifecycle.start(service_id)
+                    await ctx.lifecycle.start(service_id, no_quiesce=no_quiesce)
                 _console.print(
                     f"[green]Started service [bold]{service_id}[/bold] successfully.[/green]"
                 )

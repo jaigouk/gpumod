@@ -125,6 +125,14 @@ class GpumodSettings(BaseSettings):
     ram_warn_free_mb: int = Field(default=4096, ge=0)
     vram_safety_margin_mb: int = Field(default=512, ge=0)
 
+    # Quiesce gate
+    quiesce_seconds: float = Field(
+        default=10.0,
+        ge=0.0,
+        le=300.0,
+        description="Seconds to wait after heavy stop before allowing new heavy start.",
+    )
+
     @field_validator("log_level", mode="before")
     @classmethod
     def _normalize_log_level(cls, v: str) -> str:

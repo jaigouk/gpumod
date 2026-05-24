@@ -163,7 +163,7 @@ class LifecycleManager:
     # Public API
     # ------------------------------------------------------------------
 
-    async def start(self, service_id: str) -> None:
+    async def start(self, service_id: str, *, no_quiesce: bool = False) -> None:
         """Start a service and all its transitive dependencies in topological order.
 
         Already-running dependencies are skipped.
@@ -208,6 +208,20 @@ class LifecycleManager:
                     reason=msg,
                 )
 
+            # Quiesce gate
+            from gpumod.services.heavy import check_quiesce, is_heavy
+
+            if is_heavy(svc) and not no_quiesce:
+                from gpumod.config import get_settings
+
+                verdict = await check_quiesce(self._registry._db, get_settings().quiesce_seconds)
+                if not verdict.allowed:
+                    raise LifecycleError(
+                        service_id=svc.id,
+                        operation="start",
+                        reason=verdict.remediation,
+                    )
+
             logger.info("Starting service %r", svc.id)
             await driver.start(svc)
             await self._wait_for_healthy(svc, driver)
@@ -240,6 +254,11 @@ class LifecycleManager:
             logger.info("Stopping service %r", svc.id)
             await driver.stop(svc)
             logger.info("Service %r stopped", svc.id)
+
+            from gpumod.services.heavy import is_heavy, record_heavy_stop
+
+            if is_heavy(svc):
+                await record_heavy_stop(self._registry._db)
 
     async def restart(self, service_id: str) -> None:
         """Restart a service by stopping it (and dependents) then starting it (and deps)."""
