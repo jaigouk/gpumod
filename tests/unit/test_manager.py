@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from gpumod.models import (
     DriverType,
@@ -321,6 +325,7 @@ class TestSwitchVramExceeds:
             lifecycle=mock_lifecycle,
             vram=vram,
             sleep=mock_sleep,
+            ram=_build_mock_ram(),
         )
 
         result = await mgr.switch_mode("rag")
@@ -350,6 +355,7 @@ class TestSwitchFromNone:
             lifecycle=mock_lifecycle,
             vram=mock_vram,
             sleep=mock_sleep,
+            ram=_build_mock_ram(),
         )
 
         result = await mgr.switch_mode("rag")
@@ -424,6 +430,7 @@ class TestSwitchDoesNotUpdateDbOnFailure:
             lifecycle=mock_lifecycle,
             vram=vram,
             sleep=mock_sleep,
+            ram=_build_mock_ram(),
         )
 
         result = await mgr.switch_mode("rag")
@@ -479,6 +486,7 @@ class TestGetStatusNvidiaSmiFailure:
             lifecycle=mock_lifecycle,
             vram=vram,
             sleep=mock_sleep,
+            ram=_build_mock_ram(),
         )
 
         status = await mgr.get_status()
@@ -690,6 +698,7 @@ class TestSleepAwareSwitchSleepsOutgoing:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         result = await manager.switch_mode("rag")
@@ -719,6 +728,7 @@ class TestSleepAwareSwitchStopsNonSleepable:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         result = await manager.switch_mode("code")
@@ -754,6 +764,7 @@ class TestSleepAwareSwitchWakesSleeping:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         result = await manager.switch_mode("code")
@@ -786,6 +797,7 @@ class TestSleepAwareSwitchStartsStopped:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         result = await manager.switch_mode("rag")
@@ -823,6 +835,7 @@ class TestSleepAwareSwitchMixed:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         result = await manager.switch_mode("rag")
@@ -879,6 +892,7 @@ class TestSleepAwareSwitchIdempotent:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         result = await manager.switch_mode("rag")
@@ -933,6 +947,7 @@ class TestVramWaitOnSwitch:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         result = await manager.switch_mode("rag")
@@ -969,6 +984,7 @@ class TestVramWaitOnSwitch:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         await manager.switch_mode("rag")
@@ -1009,6 +1025,7 @@ class TestVramTimeoutAborts:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         result = await manager.switch_mode("rag")
@@ -1042,6 +1059,7 @@ class TestVramTimeoutAborts:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         await manager.switch_mode("rag")
@@ -1069,6 +1087,7 @@ class TestVramTimeoutAborts:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         result = await manager.switch_mode("rag")
@@ -1127,6 +1146,7 @@ class TestSleepAwareSwitchOrder:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         await manager.switch_mode("rag")
@@ -1311,6 +1331,7 @@ class TestOrphanServiceCleanup:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         result = await manager.switch_mode("blank")
@@ -1354,6 +1375,7 @@ class TestOrphanServiceCleanup:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         result = await manager.switch_mode("blank")
@@ -1395,6 +1417,7 @@ class TestOrphanServiceCleanup:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         # Switch to rag mode
@@ -1433,6 +1456,7 @@ class TestOrphanServiceCleanup:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         result = await manager.switch_mode("rag")
@@ -1478,6 +1502,7 @@ class TestOrphanEdgeCases:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         result = await manager.switch_mode("code")
@@ -1511,6 +1536,7 @@ class TestOrphanEdgeCases:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         result = await manager.switch_mode("blank")
@@ -1538,6 +1564,7 @@ class TestOrphanEdgeCases:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         result = await manager.switch_mode("rag")
@@ -1571,6 +1598,7 @@ class TestOrphanEdgeCases:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         result = await manager.switch_mode("blank")
@@ -1608,6 +1636,7 @@ class TestOrphanEdgeCases:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         result = await manager.switch_mode("rag")
@@ -1647,6 +1676,7 @@ class TestOrphanEdgeCases:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         result = await manager.switch_mode("rag")
@@ -1678,6 +1708,7 @@ class TestOrphanEdgeCases:
             lifecycle=lifecycle,
             vram=vram,
             sleep=sleep_ctrl,
+            ram=_build_mock_ram(),
         )
 
         result = await manager.switch_mode("code")
@@ -1985,3 +2016,103 @@ class TestSwitchModePartialIncomingCleanup:
         )
         # DB should NOT be updated
         db.set_current_mode.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# RAM safeguard with real RAMTracker + fake /proc/meminfo (gpumod-a4dd)
+# ---------------------------------------------------------------------------
+
+
+def _write_fake_meminfo(path: Path, total_mb: int, available_mb: int, free_mb: int) -> None:
+    """Write a synthetic /proc/meminfo file with the given values (in MB).
+
+    Values are converted to kB (the kernel's unit) so RAMTracker's parser
+    works unchanged.
+    """
+    kb = 1024
+    path.write_text(
+        f"MemTotal:       {total_mb * kb} kB\n"
+        f"MemFree:        {free_mb * kb} kB\n"
+        f"MemAvailable:   {available_mb * kb} kB\n"
+        f"Buffers:        0 kB\n"
+        f"Cached:         0 kB\n"
+    )
+
+
+class TestRamSafeguardWithMockedMeminfo:
+    """Validate the RAM safeguard using a real RAMTracker pointed at a fake meminfo.
+
+    This class exercises :func:`check_ram_safeguard` with a *real*
+    ``RAMTracker`` whose ``meminfo_path`` is a tmp file, ensuring the
+    mock used elsewhere does not hide bugs in the parser or threshold
+    logic.
+    """
+
+    async def test_returns_none_when_above_hard_floor_and_headroom(self, tmp_path: Path) -> None:
+        """Safeguard should return None (safe) when RAM is comfortably above thresholds."""
+        from gpumod.services.ram import RAMTracker, check_ram_safeguard
+
+        meminfo = tmp_path / "meminfo"
+        _write_fake_meminfo(meminfo, total_mb=32_000, available_mb=20_000, free_mb=8_000)
+
+        ram = RAMTracker(meminfo_path=meminfo)
+        # incoming_vram_mb=5000 -> required = 5000*0.3 + 5000 = 6500 MB
+        # available=20000 >> 6500, well above hard floor 6000
+        result = await check_ram_safeguard(5000, ram)
+        assert result is None
+
+    async def test_returns_error_when_below_hard_floor(self, tmp_path: Path) -> None:
+        """Safeguard should return error string when MemAvailable < hard floor (6 GB)."""
+        from gpumod.services.ram import RAM_HARD_FLOOR_MB, RAMTracker, check_ram_safeguard
+
+        meminfo = tmp_path / "meminfo"
+        # 4 GB available -- below the 6 GB hard floor
+        _write_fake_meminfo(meminfo, total_mb=32_000, available_mb=4_000, free_mb=1_000)
+
+        ram = RAMTracker(meminfo_path=meminfo)
+        result = await check_ram_safeguard(0, ram)
+        assert result is not None
+        assert "RAM safeguard" in result
+        assert "4000" in result
+        assert str(RAM_HARD_FLOOR_MB) in result
+
+    async def test_returns_error_when_below_headroom(self, tmp_path: Path) -> None:
+        """Safeguard should return error when above hard floor but below headroom estimate."""
+        from gpumod.services.ram import RAMTracker, check_ram_safeguard
+
+        meminfo = tmp_path / "meminfo"
+        # incoming_vram_mb=10000 -> required = 10000*0.3 + 5000 = 8000 MB
+        # Give 7000 MB: above hard floor (6000) but below headroom (8000)
+        _write_fake_meminfo(meminfo, total_mb=32_000, available_mb=7_000, free_mb=2_000)
+
+        ram = RAMTracker(meminfo_path=meminfo)
+        result = await check_ram_safeguard(10_000, ram)
+        assert result is not None
+        assert "RAM safeguard" in result
+        assert "7000" in result
+
+    async def test_returns_none_when_exactly_at_required_headroom(self, tmp_path: Path) -> None:
+        """Safeguard should return None when MemAvailable exactly meets the headroom."""
+        from gpumod.services.ram import RAMTracker, check_ram_safeguard, required_ram_mb
+
+        incoming_vram = 10_000
+        required = required_ram_mb(incoming_vram)  # 10000*0.3 + 5000 = 8000
+
+        meminfo = tmp_path / "meminfo"
+        _write_fake_meminfo(meminfo, total_mb=32_000, available_mb=required, free_mb=2_000)
+
+        ram = RAMTracker(meminfo_path=meminfo)
+        result = await check_ram_safeguard(incoming_vram, ram)
+        assert result is None
+
+    async def test_hard_floor_checked_even_with_zero_incoming_vram(self, tmp_path: Path) -> None:
+        """Hard floor applies even when incoming_vram_mb is 0 (no new services)."""
+        from gpumod.services.ram import RAMTracker, check_ram_safeguard
+
+        meminfo = tmp_path / "meminfo"
+        _write_fake_meminfo(meminfo, total_mb=32_000, available_mb=3_000, free_mb=500)
+
+        ram = RAMTracker(meminfo_path=meminfo)
+        result = await check_ram_safeguard(0, ram)
+        assert result is not None
+        assert "hard floor" in result
