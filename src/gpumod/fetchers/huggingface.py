@@ -11,13 +11,17 @@ estimating VRAM from file sizes without requiring a download.
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import math
 import re
 from datetime import UTC, datetime
 
-from huggingface_hub import model_info
+from huggingface_hub import hf_hub_download, model_info
 
-from gpumod.models import ModelInfo, ModelSource
+from gpumod.models import KVCacheProfile, ModelInfo, ModelSource
+
+logger = logging.getLogger(__name__)
 
 # Regex for valid HuggingFace model IDs: org/model with alphanumeric, hyphens, underscores, dots
 _MODEL_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
@@ -134,7 +138,7 @@ class HuggingFaceFetcher:
             parameters_b,
         )
 
-        # Estimate KV cache
+        # Estimate KV cache (scalar — backward compat, unchanged)
         kv_cache_per_1k: int | None = None
         if (
             num_layers is not None
@@ -149,6 +153,12 @@ class HuggingFaceFetcher:
                 num_attention_heads=num_attention_heads,
             )
 
+        # Build structured KV cache profile from raw config.json
+        kv_cache_profile: KVCacheProfile | None = None
+        raw_config = await self._fetch_raw_config(model_id)
+        if raw_config is not None:
+            kv_cache_profile = self._build_kv_cache_profile(raw_config)
+
         return ModelInfo(
             id=model_id,
             source=ModelSource.HUGGINGFACE,
@@ -156,9 +166,156 @@ class HuggingFaceFetcher:
             architecture=architecture,
             base_vram_mb=base_vram_mb,
             kv_cache_per_1k_tokens_mb=kv_cache_per_1k,
+            kv_cache_profile=kv_cache_profile,
             quantizations=quantizations,
             fetched_at=datetime.now(tz=UTC).isoformat(),
             notes=notes,
+        )
+
+    # ------------------------------------------------------------------
+    # KV cache profile: raw config fetch + profile build
+    # ------------------------------------------------------------------
+
+    async def _fetch_raw_config(self, repo_id: str) -> dict[str, object] | None:
+        """Fetch and parse raw ``config.json`` from HuggingFace Hub.
+
+        Uses :func:`huggingface_hub.hf_hub_download` which caches locally.
+        Returns ``None`` on any error (gated repos, network issues, missing
+        file) so the caller can fall back to the scalar KV estimate.
+        """
+        try:
+            path: str = await asyncio.to_thread(
+                hf_hub_download,
+                repo_id=repo_id,
+                filename="config.json",
+            )
+            raw: dict[str, object] = await asyncio.to_thread(self._read_json, path)
+            return raw
+        except Exception:
+            logger.warning(
+                "Failed to fetch raw config.json for %s; falling back to scalar KV estimate",
+                repo_id,
+            )
+            return None
+
+    @staticmethod
+    def _read_json(path: str) -> dict[str, object]:
+        """Read and parse a JSON file (sync, meant for ``asyncio.to_thread``)."""
+        with open(path) as fh:
+            result: dict[str, object] = json.load(fh)
+        return result
+
+    def _build_kv_cache_profile(
+        self,
+        raw_config: dict[str, object],
+    ) -> KVCacheProfile | None:
+        """Build a :class:`KVCacheProfile` from a raw ``config.json`` dict.
+
+        Handles both top-level configs (Qwen, Llama) and nested
+        ``text_config`` (Gemma 3, 3n, 4).  Returns ``None`` when required
+        fields are missing.
+        """
+        # Resolve text_config nesting for multimodal models
+        tc = raw_config.get("text_config", raw_config)
+        if not isinstance(tc, dict):
+            return None
+
+        # Extract required fields
+        num_layers = tc.get("num_hidden_layers")
+        num_heads = tc.get("num_attention_heads")
+        hidden_size = tc.get("hidden_size")
+        if not isinstance(num_layers, int) or not isinstance(num_heads, int):
+            return None
+        if not isinstance(hidden_size, int) or num_heads == 0:
+            return None
+
+        num_kv_heads_raw = tc.get("num_key_value_heads", num_heads)
+        num_kv_heads = num_kv_heads_raw if isinstance(num_kv_heads_raw, int) else num_heads
+
+        # Head dim: explicit field if present, else derived
+        head_dim_raw = tc.get("head_dim")
+        head_dim: int = head_dim_raw if isinstance(head_dim_raw, int) else hidden_size // num_heads
+
+        # --- Determine layer types ---
+        layer_types: list[str] | None = None
+        raw_layer_types = tc.get("layer_types")
+        if isinstance(raw_layer_types, list) and raw_layer_types:
+            layer_types = [str(lt) for lt in raw_layer_types]
+
+        sliding_window_raw = tc.get("sliding_window")
+        sliding_window: int | None = (
+            sliding_window_raw if isinstance(sliding_window_raw, int) else None
+        )
+
+        sliding_window_pattern_raw = tc.get("sliding_window_pattern")
+        sliding_window_pattern: int | None = (
+            sliding_window_pattern_raw if isinstance(sliding_window_pattern_raw, int) else None
+        )
+
+        # Derive layer_types from sliding_window_pattern if explicit list absent
+        if layer_types is None and sliding_window_pattern is not None:
+            layer_types = [
+                "sliding_attention" if bool((i + 1) % sliding_window_pattern) else "full_attention"
+                for i in range(num_layers)
+            ]
+
+        # Gemma 3 family: infer pattern=6 when only sliding_window is present
+        # Source: transformers v5.1.0 Gemma3TextConfig sliding_window_pattern=6
+        model_type = tc.get("model_type", "")
+        if (
+            layer_types is None
+            and sliding_window is not None
+            and sliding_window_pattern is None
+            and isinstance(model_type, str)
+            and "gemma3" in model_type
+        ):
+            layer_types = [
+                "sliding_attention" if bool((i + 1) % 6) else "full_attention"
+                for i in range(num_layers)
+            ]
+
+        # Count layer types
+        if layer_types is not None:
+            n_sliding = sum(1 for lt in layer_types if lt == "sliding_attention")
+            n_global = sum(1 for lt in layer_types if lt == "full_attention")
+        else:
+            # Dense model: all layers are global
+            n_sliding = 0
+            n_global = num_layers
+
+        # --- KV sharing ---
+        shared_raw = tc.get("num_kv_shared_layers", 0)
+        num_kv_shared: int = shared_raw if isinstance(shared_raw, int) else 0
+
+        # --- Global-layer overrides (Gemma 4 style) ---
+        global_head_dim_raw = tc.get("global_head_dim")
+        global_head_dim: int | None = (
+            global_head_dim_raw if isinstance(global_head_dim_raw, int) else None
+        )
+        global_kv_heads_raw = tc.get("num_global_key_value_heads")
+        num_global_kv_heads: int | None = (
+            global_kv_heads_raw if isinstance(global_kv_heads_raw, int) else None
+        )
+
+        # --- attention_k_eq_v ---
+        k_eq_v_raw = tc.get("attention_k_eq_v", False)
+        attention_k_eq_v: bool = k_eq_v_raw is True
+
+        # --- kv_per_1k_at_inf (linear-equivalent rate) ---
+        kv_per_1k_bytes = 2 * num_layers * num_kv_heads * head_dim * 2 * 1000
+        kv_per_1k_at_inf = math.ceil(kv_per_1k_bytes / (1024 * 1024))
+
+        return KVCacheProfile(
+            num_sliding_layers=n_sliding,
+            num_global_layers=n_global,
+            num_kv_shared_layers=num_kv_shared,
+            sliding_window=sliding_window,
+            head_dim=head_dim,
+            global_head_dim=global_head_dim,
+            num_kv_heads=num_kv_heads,
+            num_global_kv_heads=num_global_kv_heads,
+            attention_k_eq_v=attention_k_eq_v,
+            kv_per_1k_at_inf=kv_per_1k_at_inf,
         )
 
     def _estimate_base_vram(
