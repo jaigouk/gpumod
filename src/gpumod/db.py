@@ -14,6 +14,7 @@ import aiosqlite
 
 from gpumod.models import (
     DriverType,
+    KVCacheProfile,
     Mode,
     ModelInfo,
     ModelSource,
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 
 _CREATE_TABLES = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -120,6 +121,7 @@ class Database:
         # IF NOT EXISTS above leaves pre-existing tables untouched, so any
         # column added after the initial release needs an ALTER here.
         await self._migrate_services_v3()
+        await self._migrate_models_v4()
 
         # Manage schema version: insert if empty, update if outdated.
         cursor = await self._conn.execute("SELECT COUNT(*) FROM schema_version")
@@ -149,6 +151,20 @@ class Database:
             )
         if "compat" not in columns:
             await self._conn.execute("ALTER TABLE services ADD COLUMN compat TEXT")
+
+    async def _migrate_models_v4(self) -> None:
+        """Add kv_cache_profile column to models table (v3 → v4).
+
+        Safe to run on any version: existing column is detected via
+        PRAGMA table_info and skipped, so re-running on a v4 DB is a no-op.
+        """
+        assert self._conn is not None
+        cursor = await self._conn.execute("PRAGMA table_info(models)")
+        columns = {row["name"] for row in await cursor.fetchall()}
+        if "kv_cache_profile" not in columns:
+            await self._conn.execute(
+                "ALTER TABLE models ADD COLUMN kv_cache_profile TEXT",
+            )
 
     async def close(self) -> None:
         """Close the database connection."""
@@ -213,6 +229,7 @@ class Database:
 
     @staticmethod
     def _row_to_model_info(row: Any) -> ModelInfo:
+        profile_raw = row["kv_cache_profile"]
         return ModelInfo(
             id=row["id"],
             source=ModelSource(row["source"]),
@@ -220,6 +237,11 @@ class Database:
             architecture=row["architecture"],
             base_vram_mb=row["base_vram_mb"],
             kv_cache_per_1k_tokens_mb=row["kv_cache_per_1k_tokens_mb"],
+            kv_cache_profile=(
+                KVCacheProfile.model_validate_json(profile_raw)
+                if profile_raw is not None
+                else None
+            ),
             quantizations=json.loads(row["quantizations"]),
             capabilities=json.loads(row["capabilities"]),
             fetched_at=row["fetched_at"],
@@ -596,9 +618,9 @@ class Database:
             """
             INSERT INTO models
                 (id, source, parameters_b, architecture, base_vram_mb,
-                 kv_cache_per_1k_tokens_mb, quantizations, capabilities,
-                 fetched_at, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 kv_cache_per_1k_tokens_mb, kv_cache_profile, quantizations,
+                 capabilities, fetched_at, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 model.id,
@@ -607,6 +629,11 @@ class Database:
                 model.architecture,
                 model.base_vram_mb,
                 model.kv_cache_per_1k_tokens_mb,
+                (
+                    model.kv_cache_profile.model_dump_json()
+                    if model.kv_cache_profile is not None
+                    else None
+                ),
                 json.dumps(model.quantizations),
                 json.dumps(model.capabilities),
                 model.fetched_at,

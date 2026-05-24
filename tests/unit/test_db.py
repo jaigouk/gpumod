@@ -9,6 +9,7 @@ import pytest
 from gpumod.db import Database
 from gpumod.models import (
     DriverType,
+    KVCacheProfile,
     Mode,
     ModelInfo,
     ModelSource,
@@ -673,6 +674,7 @@ def _make_model_info(
     capabilities: list[str] | None = None,
     fetched_at: str | None = "2025-01-15T10:00:00Z",
     notes: str | None = None,
+    kv_cache_profile: KVCacheProfile | None = None,
 ) -> ModelInfo:
     return ModelInfo(
         id=id,
@@ -685,6 +687,7 @@ def _make_model_info(
         capabilities=capabilities or [],
         fetched_at=fetched_at,
         notes=notes,
+        kv_cache_profile=kv_cache_profile,
     )
 
 
@@ -696,14 +699,14 @@ def _make_model_info(
 class TestSchemaV2:
     """Tests for schema-v2-introduced tables (kept; class name preserved)."""
 
-    async def test_schema_version_is_3(self, tmp_path: Path) -> None:
-        """Schema version should be 3 after connect (bumped for compat + preflight_required)."""
+    async def test_schema_version_is_4(self, tmp_path: Path) -> None:
+        """Schema version should be 4 after connect (bumped for kv_cache_profile)."""
         async with Database(tmp_path / "test.db") as db:
             conn = db._ensure_conn()
             cursor = await conn.execute("SELECT version FROM schema_version")
             row = await cursor.fetchone()
             assert row is not None
-            assert row[0] == 3
+            assert row[0] == 4
 
 
 class TestSchemaV3Migration:
@@ -1285,3 +1288,226 @@ class TestPopulateModeServices:
             modes = await db.list_modes()
             found = [m for m in modes if m.id == "dynamic-mode"][0]
             assert found.services == ["late-svc"]
+
+
+# ---------------------------------------------------------------------------
+# Schema v4 — KV cache profile migration (gpumod-1jrf)
+# ---------------------------------------------------------------------------
+
+
+class TestSchemaV4Migration:
+    """Tests for v3→v4 migration: kv_cache_profile column on models table."""
+
+    async def test_schema_version_is_4(self, tmp_path: Path) -> None:
+        """Schema version should be 4 after connect."""
+        async with Database(tmp_path / "test.db") as db:
+            conn = db._ensure_conn()
+            cursor = await conn.execute("SELECT version FROM schema_version")
+            row = await cursor.fetchone()
+            assert row is not None
+            assert row[0] == 4
+
+    async def test_models_table_has_kv_cache_profile_column(self, tmp_path: Path) -> None:
+        """Fresh DB should have kv_cache_profile column in models table."""
+        async with Database(tmp_path / "test.db") as db:
+            conn = db._ensure_conn()
+            cursor = await conn.execute("PRAGMA table_info(models)")
+            columns = {row["name"] for row in await cursor.fetchall()}
+            assert "kv_cache_profile" in columns
+
+    async def test_alter_adds_column_when_missing(self, tmp_path: Path) -> None:
+        """Connect against a v3 DB and verify kv_cache_profile column is added."""
+        import aiosqlite
+
+        db_path = tmp_path / "legacy_v3.db"
+        # Create a v3-shaped models table by hand (no kv_cache_profile).
+        async with aiosqlite.connect(db_path) as raw:
+            await raw.executescript(
+                """
+                CREATE TABLE schema_version (version INTEGER NOT NULL);
+                INSERT INTO schema_version (version) VALUES (3);
+                CREATE TABLE services (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    driver TEXT NOT NULL,
+                    port INTEGER,
+                    vram_mb INTEGER NOT NULL,
+                    sleep_mode TEXT NOT NULL DEFAULT 'none',
+                    health_endpoint TEXT DEFAULT '/health',
+                    model_id TEXT,
+                    unit_name TEXT,
+                    depends_on TEXT NOT NULL DEFAULT '[]',
+                    startup_timeout INTEGER NOT NULL DEFAULT 120,
+                    extra_config TEXT NOT NULL DEFAULT '{}',
+                    preflight_required INTEGER NOT NULL DEFAULT 0,
+                    compat TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE modes (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    total_vram_mb INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE mode_services (
+                    mode_id TEXT NOT NULL REFERENCES modes(id) ON DELETE CASCADE,
+                    service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+                    start_order INTEGER DEFAULT 0,
+                    PRIMARY KEY (mode_id, service_id)
+                );
+                CREATE TABLE settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE service_templates (
+                    service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
+                    unit_template TEXT NOT NULL,
+                    preset_template TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE models (
+                    id TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    parameters_b REAL,
+                    architecture TEXT,
+                    base_vram_mb INTEGER,
+                    kv_cache_per_1k_tokens_mb INTEGER,
+                    quantizations TEXT NOT NULL DEFAULT '[]',
+                    capabilities TEXT NOT NULL DEFAULT '[]',
+                    fetched_at TIMESTAMP,
+                    notes TEXT
+                );
+                INSERT INTO models (id, source, parameters_b, kv_cache_per_1k_tokens_mb)
+                VALUES ('legacy/model', 'huggingface', 8.0, 64);
+                """,
+            )
+            await raw.commit()
+
+        # Connect via the real Database: v4 migration must run.
+        async with Database(db_path) as db:
+            conn = db._ensure_conn()
+            cursor = await conn.execute("PRAGMA table_info(models)")
+            columns = {row["name"] for row in await cursor.fetchall()}
+            assert "kv_cache_profile" in columns
+
+            # Legacy model should still work, with profile = None.
+            got = await db.get_model("legacy/model")
+            assert got is not None
+            assert got.kv_cache_per_1k_tokens_mb == 64
+            assert got.kv_cache_profile is None
+
+    async def test_migration_is_idempotent(self, tmp_path: Path) -> None:
+        """Running connect twice on a v4 DB must not error."""
+        db_path = tmp_path / "idem_v4.db"
+        profile = KVCacheProfile(
+            num_sliding_layers=0,
+            num_global_layers=64,
+            head_dim=128,
+            num_kv_heads=8,
+        )
+        async with Database(db_path) as db:
+            await db.insert_model(_make_model_info(id="idem-model", kv_cache_profile=profile))
+        # Second connect: migration should detect existing column and no-op.
+        async with Database(db_path) as db:
+            got = await db.get_model("idem-model")
+            assert got is not None
+            assert got.kv_cache_profile is not None
+            assert got.kv_cache_profile.num_global_layers == 64
+
+
+# ---------------------------------------------------------------------------
+# Models CRUD with kv_cache_profile (gpumod-1jrf)
+# ---------------------------------------------------------------------------
+
+
+class TestModelsCRUDWithProfile:
+    """Tests for model insert / get / list with kv_cache_profile."""
+
+    async def test_insert_and_get_model_with_profile(self, tmp_path: Path) -> None:
+        """Round-trip: insert with kv_cache_profile then get returns equal profile."""
+        profile = KVCacheProfile(
+            num_sliding_layers=28,
+            num_global_layers=7,
+            num_kv_shared_layers=15,
+            sliding_window=512,
+            head_dim=256,
+            num_kv_heads=2,
+            attention_k_eq_v=False,
+            kv_per_1k_at_inf=69,
+        )
+        async with Database(tmp_path / "test.db") as db:
+            model = _make_model_info(
+                id="google/gemma-3n-E4B-it",
+                kv_cache_per_1k_tokens_mb=69,
+                kv_cache_profile=profile,
+            )
+            await db.insert_model(model)
+            got = await db.get_model("google/gemma-3n-E4B-it")
+
+            assert got is not None
+            assert got.kv_cache_profile is not None
+            assert got.kv_cache_profile == profile
+            assert got.kv_cache_per_1k_tokens_mb == 69
+
+    async def test_insert_model_with_none_profile(self, tmp_path: Path) -> None:
+        """Model without kv_cache_profile round-trips with None."""
+        async with Database(tmp_path / "test.db") as db:
+            model = _make_model_info(id="dense/model", kv_cache_profile=None)
+            await db.insert_model(model)
+            got = await db.get_model("dense/model")
+
+            assert got is not None
+            assert got.kv_cache_profile is None
+
+    async def test_list_models_returns_profiles(self, tmp_path: Path) -> None:
+        """list_models() returns models with deserialized profiles."""
+        profile = KVCacheProfile(
+            num_sliding_layers=52,
+            num_global_layers=10,
+            sliding_window=1024,
+            head_dim=128,
+            num_kv_heads=16,
+        )
+        async with Database(tmp_path / "test.db") as db:
+            await db.insert_model(_make_model_info(id="a-with-profile", kv_cache_profile=profile))
+            await db.insert_model(_make_model_info(id="b-without-profile", kv_cache_profile=None))
+
+            models = await db.list_models()
+            assert len(models) == 2
+
+            by_id = {m.id: m for m in models}
+            assert by_id["a-with-profile"].kv_cache_profile == profile
+            assert by_id["b-without-profile"].kv_cache_profile is None
+
+    async def test_profile_all_fields_round_trip(self, tmp_path: Path) -> None:
+        """Profile with all fields set survives DB round-trip."""
+        profile = KVCacheProfile(
+            num_sliding_layers=20,
+            num_global_layers=10,
+            num_kv_shared_layers=5,
+            sliding_window=2048,
+            head_dim=128,
+            global_head_dim=256,
+            num_kv_heads=8,
+            num_global_kv_heads=16,
+            attention_k_eq_v=True,
+            triattn_budget=4096,
+            kv_per_1k_at_inf=300,
+        )
+        async with Database(tmp_path / "test.db") as db:
+            await db.insert_model(
+                _make_model_info(id="all-fields/model", kv_cache_profile=profile)
+            )
+            got = await db.get_model("all-fields/model")
+
+            assert got is not None
+            assert got.kv_cache_profile is not None
+            assert got.kv_cache_profile.num_sliding_layers == 20
+            assert got.kv_cache_profile.global_head_dim == 256
+            assert got.kv_cache_profile.num_global_kv_heads == 16
+            assert got.kv_cache_profile.attention_k_eq_v is True
+            assert got.kv_cache_profile.triattn_budget == 4096
+            assert got.kv_cache_profile.kv_per_1k_at_inf == 300

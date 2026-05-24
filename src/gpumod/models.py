@@ -166,6 +166,30 @@ class SystemStatus(BaseModel):
     services: list[ServiceInfo] = []
 
 
+class KVCacheProfile(BaseModel):
+    """Layer-type-aware KV cache profile for hybrid-attention models.
+
+    Encodes the structural parameters needed by the compound KV cache
+    estimation formula (gpumod-cf8).  Dense models set
+    ``num_sliding_layers=0`` and place all layers in
+    ``num_global_layers``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    num_sliding_layers: int = 0
+    num_global_layers: int = 0
+    num_kv_shared_layers: int = 0
+    sliding_window: int | None = None
+    head_dim: int = 128
+    global_head_dim: int | None = None
+    num_kv_heads: int = 1
+    num_global_kv_heads: int | None = None
+    attention_k_eq_v: bool = False
+    triattn_budget: int | None = None
+    kv_per_1k_at_inf: int | None = None
+
+
 class ModelInfo(BaseModel):
     """Model metadata for VRAM estimation."""
 
@@ -177,6 +201,7 @@ class ModelInfo(BaseModel):
     architecture: str | None = None
     base_vram_mb: int | None = None
     kv_cache_per_1k_tokens_mb: int | None = None
+    kv_cache_profile: KVCacheProfile | None = None
     quantizations: list[str] = []
     capabilities: list[str] = []
     fetched_at: str | None = None

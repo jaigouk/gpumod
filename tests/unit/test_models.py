@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from gpumod.models import (
     DriverType,
     GPUInfo,
+    KVCacheProfile,
     Mode,
     ModelInfo,
     ModelSource,
@@ -485,6 +486,173 @@ class TestModelInfoModel:
         json_str = model.model_dump_json()
         restored = ModelInfo.model_validate_json(json_str)
         assert restored == model
+
+    def test_kv_cache_profile_defaults_to_none(self) -> None:
+        """kv_cache_profile defaults to None — backward compatible."""
+        model = ModelInfo(id="test-model", source=ModelSource.LOCAL)
+        assert model.kv_cache_profile is None
+
+    def test_kv_cache_profile_coexists_with_scalar(self) -> None:
+        """Both kv_cache_per_1k_tokens_mb and kv_cache_profile can be set."""
+        profile = KVCacheProfile(
+            num_sliding_layers=0,
+            num_global_layers=64,
+            head_dim=128,
+            num_kv_heads=8,
+        )
+        model = ModelInfo(
+            id="Qwen/Qwen3-32B",
+            source=ModelSource.HUGGINGFACE,
+            kv_cache_per_1k_tokens_mb=250,
+            kv_cache_profile=profile,
+        )
+        assert model.kv_cache_per_1k_tokens_mb == 250
+        assert model.kv_cache_profile is not None
+        assert model.kv_cache_profile.num_global_layers == 64
+
+    def test_model_info_with_profile_serialization_round_trip(self) -> None:
+        """ModelInfo with kv_cache_profile survives dict round-trip."""
+        profile = KVCacheProfile(
+            num_sliding_layers=28,
+            num_global_layers=7,
+            num_kv_shared_layers=15,
+            sliding_window=512,
+            head_dim=256,
+            num_kv_heads=2,
+        )
+        model = ModelInfo(
+            id="google/gemma-3n-E4B-it",
+            source=ModelSource.HUGGINGFACE,
+            kv_cache_per_1k_tokens_mb=69,
+            kv_cache_profile=profile,
+        )
+        data = model.model_dump()
+        restored = ModelInfo.model_validate(data)
+        assert restored == model
+        assert restored.kv_cache_profile == profile
+
+    def test_model_info_with_profile_json_round_trip(self) -> None:
+        """ModelInfo with kv_cache_profile survives JSON round-trip."""
+        profile = KVCacheProfile(
+            num_sliding_layers=52,
+            num_global_layers=10,
+            sliding_window=1024,
+            head_dim=128,
+            num_kv_heads=16,
+        )
+        model = ModelInfo(
+            id="google/gemma-3-27b-it",
+            source=ModelSource.HUGGINGFACE,
+            kv_cache_per_1k_tokens_mb=485,
+            kv_cache_profile=profile,
+        )
+        json_str = model.model_dump_json()
+        restored = ModelInfo.model_validate_json(json_str)
+        assert restored == model
+        assert restored.kv_cache_profile is not None
+        assert restored.kv_cache_profile.sliding_window == 1024
+
+
+# ── KVCacheProfile model ───────────────────────────────────────────────
+
+
+class TestKVCacheProfileModel:
+    def test_defaults(self) -> None:
+        """KVCacheProfile with no args uses sensible defaults."""
+        profile = KVCacheProfile()
+        assert profile.num_sliding_layers == 0
+        assert profile.num_global_layers == 0
+        assert profile.num_kv_shared_layers == 0
+        assert profile.sliding_window is None
+        assert profile.head_dim == 128
+        assert profile.global_head_dim is None
+        assert profile.num_kv_heads == 1
+        assert profile.num_global_kv_heads is None
+        assert profile.attention_k_eq_v is False
+        assert profile.triattn_budget is None
+        assert profile.kv_per_1k_at_inf is None
+
+    def test_dense_model_profile(self) -> None:
+        """Dense model (Qwen3-32B): all global layers, no sliding."""
+        profile = KVCacheProfile(
+            num_sliding_layers=0,
+            num_global_layers=64,
+            head_dim=128,
+            num_kv_heads=8,
+            kv_per_1k_at_inf=250,
+        )
+        assert profile.num_sliding_layers == 0
+        assert profile.num_global_layers == 64
+        assert profile.sliding_window is None
+        assert profile.kv_per_1k_at_inf == 250
+
+    def test_hybrid_model_profile(self) -> None:
+        """Hybrid model (Gemma 3n E4B): sliding + global + shared layers."""
+        profile = KVCacheProfile(
+            num_sliding_layers=28,
+            num_global_layers=7,
+            num_kv_shared_layers=15,
+            sliding_window=512,
+            head_dim=256,
+            num_kv_heads=2,
+            kv_per_1k_at_inf=69,
+        )
+        assert profile.num_sliding_layers == 28
+        assert profile.num_global_layers == 7
+        assert profile.num_kv_shared_layers == 15
+        assert profile.sliding_window == 512
+        assert profile.head_dim == 256
+        assert profile.num_kv_heads == 2
+
+    def test_asymmetric_head_dim_profile(self) -> None:
+        """Profile with different global head_dim and kv_heads (Gemma 4 style)."""
+        profile = KVCacheProfile(
+            num_sliding_layers=20,
+            num_global_layers=10,
+            head_dim=128,
+            global_head_dim=256,
+            num_kv_heads=8,
+            num_global_kv_heads=16,
+            attention_k_eq_v=True,
+        )
+        assert profile.global_head_dim == 256
+        assert profile.num_global_kv_heads == 16
+        assert profile.attention_k_eq_v is True
+
+    def test_extra_fields_rejected(self) -> None:
+        """ConfigDict(extra='forbid') rejects unknown fields."""
+        with pytest.raises(ValidationError):
+            KVCacheProfile(bogus="bad")  # type: ignore[call-arg]
+
+    def test_serialization_round_trip(self) -> None:
+        """KVCacheProfile survives dict round-trip."""
+        profile = KVCacheProfile(
+            num_sliding_layers=28,
+            num_global_layers=7,
+            num_kv_shared_layers=15,
+            sliding_window=512,
+            head_dim=256,
+            num_kv_heads=2,
+            attention_k_eq_v=False,
+            triattn_budget=None,
+            kv_per_1k_at_inf=69,
+        )
+        data = profile.model_dump()
+        restored = KVCacheProfile.model_validate(data)
+        assert restored == profile
+
+    def test_json_round_trip(self) -> None:
+        """KVCacheProfile survives JSON round-trip."""
+        profile = KVCacheProfile(
+            num_sliding_layers=52,
+            num_global_layers=10,
+            sliding_window=1024,
+            head_dim=128,
+            num_kv_heads=16,
+        )
+        json_str = profile.model_dump_json()
+        restored = KVCacheProfile.model_validate_json(json_str)
+        assert restored == profile
 
 
 # ── ServiceTemplate model ────────────────────────────────────────────────
