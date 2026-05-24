@@ -1,0 +1,1 @@
+self.lock = threading.Lock()
