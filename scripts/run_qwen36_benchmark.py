@@ -252,13 +252,27 @@ class ArchitectureBenchmark:
                 )
             except Exception as e:
                 response = f"ERROR: {e}"
-            # gpumod-76l.3: Qwen3.6 thinking mode often emits code INSIDE
-            # the <think> block (reasoning_content) and leaves `content`
-            # short or empty. Combine both so _extract_code can find code
-            # regardless of which field the model put it in.
+            # gpumod-76l.3: Prefer `content` (the model's final answer);
+            # `reasoning_content` holds the chain-of-thought, which often
+            # contains DRAFT code the model later refined or rejected.
+            # Picking from reasoning first means we grab a draft and miss
+            # the polished final code. Only fall back to reasoning when
+            # content has no code fence at all (model burned its budget
+            # thinking without reaching final code).
             reasoning = self.client.last_reasoning_content
-            combined_for_extract = (
-                reasoning + "\n\n" + response if reasoning else response
+            if "```" in response:
+                extract_source = response
+            elif reasoning:
+                extract_source = reasoning + "\n\n" + response
+            else:
+                extract_source = response
+            # Artifact preserves both fields for post-hoc debugging even
+            # when we extracted from content alone.
+            artifact_response = (
+                f"<reasoning_content>\n{reasoning}\n</reasoning_content>\n\n"
+                f"<content>\n{response}\n</content>"
+                if reasoning
+                else response
             )
 
             end_time = time.perf_counter()
@@ -286,7 +300,7 @@ class ArchitectureBenchmark:
                 draft_n_accepted=draft_n_accepted,
             )
 
-            code = self._extract_code(combined_for_extract)
+            code = self._extract_code(extract_source)
             validation_result = self.validator.validate(code, level_def.test_code)
             passed = validation_result.passed
             points = level_def.points if passed else 0
@@ -298,17 +312,15 @@ class ArchitectureBenchmark:
             else:
                 print(f"FAIL ({validation_result.error or 'failed'})")
 
-            # gpumod-76l.3: store the combined (reasoning + content) text
-            # in the artifact so post-hoc re-extraction matches what the
-            # validator actually saw. Reasoning often contains code the
-            # model later refined or rejected; keeping it is fine because
-            # _extract_code picks the first ```python block.
+            # gpumod-76l.3: artifact stores tagged reasoning+content so
+            # we can post-mortem mismatch between what the model said and
+            # what _extract_code returned, without losing either field.
             artifact = LevelArtifact(
                 level=level_num,
                 name=level_def.name,
                 points_possible=level_def.points,
                 prompt=level_def.prompt,
-                response=combined_for_extract,
+                response=artifact_response,
                 validation={
                     "passed": validation_result.passed,
                     "pass_rate": validation_result.pass_rate,
