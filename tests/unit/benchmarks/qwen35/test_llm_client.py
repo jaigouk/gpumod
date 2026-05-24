@@ -358,9 +358,7 @@ class TestLlamaCppClientTiming:
         client = LlamaCppClient(base_url="http://localhost:8080")
 
         mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": "direct answer"}}]
-        }
+        mock_response.json.return_value = {"choices": [{"message": {"content": "direct answer"}}]}
         mock_response.headers = {}
 
         client._client = AsyncMock()
@@ -398,9 +396,7 @@ class TestLlamaCppClientTiming:
 
         # Second call: non-thinking response — reasoning must reset
         plain_response = MagicMock()
-        plain_response.json.return_value = {
-            "choices": [{"message": {"content": "direct"}}]
-        }
+        plain_response.json.return_value = {"choices": [{"message": {"content": "direct"}}]}
         plain_response.headers = {}
         client._client.post = AsyncMock(return_value=plain_response)
         await client.generate("second prompt")

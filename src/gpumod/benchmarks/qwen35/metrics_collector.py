@@ -68,9 +68,7 @@ class DefaultMetricsCollector:
             record["draft_n"] = draft_n
             record["draft_n_accepted"] = draft_n_accepted
             # Per-call acceptance ratio; 0.0 when no drafts were generated.
-            record["draft_acceptance"] = (
-                draft_n_accepted / draft_n if draft_n > 0 else 0.0
-            )
+            record["draft_acceptance"] = draft_n_accepted / draft_n if draft_n > 0 else 0.0
 
         self._generations.append(record)
 

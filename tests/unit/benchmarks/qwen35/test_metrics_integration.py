@@ -323,13 +323,19 @@ class TestDefaultMetricsCollector:
         collector = DefaultMetricsCollector()
         # Gen 1: 44 drafted, 41 accepted => 93.2%
         collector.record_generation(
-            tokens=64, duration_seconds=8.0, ttft_seconds=0.1,
-            draft_n=44, draft_n_accepted=41,
+            tokens=64,
+            duration_seconds=8.0,
+            ttft_seconds=0.1,
+            draft_n=44,
+            draft_n_accepted=41,
         )
         # Gen 2: 100 drafted, 80 accepted => 80.0%
         collector.record_generation(
-            tokens=80, duration_seconds=10.0, ttft_seconds=0.1,
-            draft_n=100, draft_n_accepted=80,
+            tokens=80,
+            duration_seconds=10.0,
+            ttft_seconds=0.1,
+            draft_n=100,
+            draft_n_accepted=80,
         )
 
         metrics = collector.get_iteration_metrics()
@@ -347,8 +353,11 @@ class TestDefaultMetricsCollector:
 
         collector = DefaultMetricsCollector()
         collector.record_generation(
-            tokens=2, duration_seconds=0.2, ttft_seconds=0.05,
-            draft_n=0, draft_n_accepted=0,
+            tokens=2,
+            duration_seconds=0.2,
+            ttft_seconds=0.05,
+            draft_n=0,
+            draft_n_accepted=0,
         )
 
         metrics = collector.get_iteration_metrics()

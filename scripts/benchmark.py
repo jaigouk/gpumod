@@ -462,7 +462,7 @@ PROMPTS: list[BenchmarkPrompt] = [
             "@app.route('/user/<user_id>')\n"
             "def get_user(user_id):\n"
             "    conn = sqlite3.connect('users.db')\n"
-            "    cursor = conn.execute(f\"SELECT * FROM users WHERE id = {user_id}\")\n"
+            '    cursor = conn.execute(f"SELECT * FROM users WHERE id = {user_id}")\n'
             "    return str(cursor.fetchone())\n"
             "\n"
             "@app.route('/run')\n"
@@ -532,12 +532,12 @@ PROMPTS: list[BenchmarkPrompt] = [
         system_prompt="You are a professional translator.",
         user_prompt=(
             "Translate this German technical text to English:\n\n"
-            "\"Die künstliche Intelligenz hat in den letzten Jahren enorme "
+            '"Die künstliche Intelligenz hat in den letzten Jahren enorme '
             "Fortschritte gemacht. Besonders im Bereich der Sprachverarbeitung "
             "zeigen große Sprachmodelle beeindruckende Fähigkeiten. Diese Modelle "
             "können Texte verstehen, generieren und sogar Code schreiben. Die "
             "Herausforderung besteht darin, diese Systeme sicher und verantwortungsvoll "
-            "einzusetzen.\"\n\n"
+            'einzusetzen."\n\n'
             "Preserve the technical accuracy and formal tone."
         ),
         max_tokens=384,
@@ -582,10 +582,10 @@ PROMPTS: list[BenchmarkPrompt] = [
         system_prompt="You are an editor improving text clarity and correctness.",
         user_prompt=(
             "Rewrite this paragraph for clarity, fixing grammar and improving style:\n\n"
-            "\"Me and my colleague we was working on the report yesterday and we "
+            '"Me and my colleague we was working on the report yesterday and we '
             "realized that the data which we collected it was incomplete. We tried "
             "contacting the department whom was responsible but they didn't answered. "
-            "The deadline is tomorrow so we will have to make due with what we got.\"\n\n"
+            'The deadline is tomorrow so we will have to make due with what we got."\n\n'
             "Show the improved version, then list the main issues you fixed."
         ),
         max_tokens=512,
@@ -963,9 +963,7 @@ async def run_model_benchmark(
         # Run all prompts
         results: list[dict] = []
         for prompt in PROMPTS:
-            result = await run_prompt(
-                client, model_id, prompt, consistency_runs=consistency_runs
-            )
+            result = await run_prompt(client, model_id, prompt, consistency_runs=consistency_runs)
             results.append(asdict(result))
 
         # Compute summary
@@ -1202,11 +1200,7 @@ def main() -> None:
         model_ids = [m.strip() for m in args.models.split(",")]
         asyncio.run(run_lifecycle_test(model_ids, output_dir))
     elif args.model:
-        asyncio.run(
-            run_model_benchmark(
-                args.model, output_dir, consistency_runs=consistency_runs
-            )
-        )
+        asyncio.run(run_model_benchmark(args.model, output_dir, consistency_runs=consistency_runs))
     else:
         parser.error("Specify --model or --lifecycle --models")
 

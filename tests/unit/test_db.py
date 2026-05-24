@@ -316,9 +316,7 @@ class TestUpdateService:
             assert got.depends_on == ["svc-a", "svc-b"]
             assert got.extra_config == {"unit_vars": {"gpu_mem_util": 0.3}}
 
-    async def test_insert_and_update_persist_compat_and_preflight(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_insert_and_update_persist_compat_and_preflight(self, tmp_path: Path) -> None:
         """Regression for gpumod-032: round-trip compat + preflight_required.
 
         Before the schema v3 migration, the Service model carried these fields
