@@ -1819,3 +1819,169 @@ class TestSettleSecondsEnvVar:
     def test_invalid_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("GPUMOD_SETTLE_SECONDS", "not-a-number")
         assert ServiceManager._settle_seconds() == 15.0
+
+
+# ---------------------------------------------------------------------------
+# Rollback tests for switch_mode (gpumod-8r3)
+# ---------------------------------------------------------------------------
+
+
+class TestSwitchModeRollbackOnIncomingFailure:
+    """When _handle_incoming_services raises LifecycleError, rollback outgoing."""
+
+    async def test_switch_mode_rollback_on_incoming_failure(self) -> None:
+        """Incoming failure triggers rollback; ModeResult has [original] error."""
+        from gpumod.services.lifecycle import LifecycleError
+
+        db = _build_mock_db(current_mode="code")
+        registry = _build_mock_registry()
+        lifecycle = _build_mock_lifecycle()
+        vram = _build_mock_vram()
+        sleep_ctrl = _build_mock_sleep()
+        ram = _build_mock_ram()
+
+        # Make lifecycle.start raise LifecycleError on the first incoming service
+        async def _start_failing(service_id: str) -> None:
+            raise LifecycleError(
+                service_id=service_id,
+                operation="start",
+                reason="systemd unit crashed",
+            )
+
+        lifecycle.start = AsyncMock(side_effect=_start_failing)
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+            ram=ram,
+        )
+
+        result = await manager.switch_mode("rag")
+
+        # Should fail
+        assert result.success is False
+        assert result.mode_id == "rag"
+        # Should have the [original] error prefix
+        assert any(e.startswith("[original]") for e in result.errors), (
+            f"Expected '[original]' prefix in errors: {result.errors}"
+        )
+        # DB should NOT be updated
+        db.set_current_mode.assert_not_called()
+        # Rollback attempted to restart outgoing services via lifecycle.start,
+        # but since lifecycle.start always raises here, the rollback failure
+        # is captured as a [rollback start ...] error (tested separately).
+
+
+class TestSwitchModeRollbackAlsoFails:
+    """When incoming fails AND rollback also fails, errors contain both."""
+
+    async def test_switch_mode_rollback_also_fails(self) -> None:
+        """Both original and rollback failures appear in ModeResult.errors."""
+        from gpumod.services.lifecycle import LifecycleError
+
+        db = _build_mock_db(current_mode="code")
+        registry = _build_mock_registry()
+        lifecycle = _build_mock_lifecycle()
+        vram = _build_mock_vram()
+        sleep_ctrl = _build_mock_sleep()
+        ram = _build_mock_ram()
+
+        call_count = 0
+
+        async def _start_always_fails(service_id: str) -> None:
+            nonlocal call_count
+            call_count += 1
+            raise LifecycleError(
+                service_id=service_id,
+                operation="start",
+                reason=f"fail-{call_count}",
+            )
+
+        lifecycle.start = AsyncMock(side_effect=_start_always_fails)
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+            ram=ram,
+        )
+
+        result = await manager.switch_mode("rag")
+
+        assert result.success is False
+        assert result.mode_id == "rag"
+        # Must have [original] error
+        has_original = any(e.startswith("[original]") for e in result.errors)
+        assert has_original, f"Expected '[original]' error in: {result.errors}"
+        # Must have [rollback start ...] error for the outgoing service restart failure
+        has_rollback = any(e.startswith("[rollback start") for e in result.errors)
+        assert has_rollback, f"Expected '[rollback start ...]' error in: {result.errors}"
+        # DB should NOT be updated
+        db.set_current_mode.assert_not_called()
+
+
+class TestSwitchModePartialIncomingCleanup:
+    """Some incoming services started before failure; they get stopped during rollback."""
+
+    async def test_switch_mode_partial_incoming_cleanup(self) -> None:
+        """Partially-started incoming services are stopped during rollback."""
+        from gpumod.services.lifecycle import LifecycleError
+
+        db = _build_mock_db(current_mode="code")
+        registry = _build_mock_registry()
+        lifecycle = _build_mock_lifecycle()
+        vram = _build_mock_vram()
+        sleep_ctrl = _build_mock_sleep()
+        ram = _build_mock_ram()
+
+        # Track which services started successfully vs failed
+        started_services: list[str] = []
+
+        async def _start_second_fails(service_id: str) -> None:
+            """First incoming service succeeds, second raises LifecycleError."""
+            if len(started_services) == 0:
+                started_services.append(service_id)
+                return
+            raise LifecycleError(
+                service_id=service_id,
+                operation="start",
+                reason="second service crashed",
+            )
+
+        lifecycle.start = AsyncMock(side_effect=_start_second_fails)
+
+        # Track stops to verify partial cleanup
+        stopped_during_rollback: list[str] = []
+
+        async def _track_stop(service_id: str) -> None:
+            stopped_during_rollback.append(service_id)
+
+        lifecycle.stop = AsyncMock(side_effect=_track_stop)
+
+        manager = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=lifecycle,
+            vram=vram,
+            sleep=sleep_ctrl,
+            ram=ram,
+        )
+
+        result = await manager.switch_mode("rag")
+
+        assert result.success is False
+        # The first incoming service that started successfully should be stopped during rollback
+        assert len(started_services) == 1
+        first_started = started_services[0]
+        # Rollback should stop the partially-started incoming service
+        assert first_started in stopped_during_rollback, (
+            f"Expected {first_started} to be stopped during rollback. "
+            f"Stopped: {stopped_during_rollback}"
+        )
+        # DB should NOT be updated
+        db.set_current_mode.assert_not_called()

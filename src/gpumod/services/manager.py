@@ -20,6 +20,7 @@ from gpumod.models import (
     SystemStatus,
 )
 from gpumod.services.health import HealthMonitor
+from gpumod.services.lifecycle import LifecycleError
 from gpumod.services.ram import (
     InsufficientRAMError,
     RAMTracker,
@@ -143,7 +144,7 @@ class ServiceManager:
     # Mode switching
     # ------------------------------------------------------------------
 
-    async def switch_mode(self, target_mode_id: str) -> ModeResult:  # noqa: C901
+    async def switch_mode(self, target_mode_id: str) -> ModeResult:  # noqa: C901, PLR0912, PLR0915
         """Switch to the target mode, managing service lifecycle and VRAM.
 
         Steps:
@@ -300,8 +301,51 @@ class ServiceManager:
                     errors=[error_msg],
                 )
 
-        # 6. Handle incoming services
-        woken_ids, started_ids = await self._handle_incoming_services(to_start)
+        # 6. Handle incoming services (with rollback on failure)
+        woken_ids: list[str] = []
+        started_ids: list[str] = []
+
+        try:
+            await self._handle_incoming_services(to_start, woken_ids, started_ids)
+        except LifecycleError as exc:
+            logger.error(
+                "Incoming service failed during mode switch to %r: %s",
+                target_mode_id,
+                exc,
+            )
+            errors: list[str] = [f"[original] {exc}"]
+
+            # Rollback: stop partially-started incoming services (reverse order)
+            for svc_id in reversed(started_ids + woken_ids):
+                try:
+                    await self._lifecycle.stop(svc_id)
+                except LifecycleError as rollback_exc:
+                    logger.error(
+                        "Rollback: failed to stop partially-started %r: %s",
+                        svc_id,
+                        rollback_exc,
+                    )
+                    errors.append(f"[rollback stop {svc_id}] {rollback_exc}")
+
+            # Rollback: restart outgoing services (reverse order)
+            for svc_id in reversed(stopped_ids + slept_ids):
+                logger.warning("Rollback: restarting outgoing service %r", svc_id)
+                try:
+                    await self._lifecycle.start(svc_id)
+                    logger.warning("Rollback: successfully restarted outgoing service %r", svc_id)
+                except LifecycleError as rollback_exc:
+                    logger.error(
+                        "Rollback: failed to restart outgoing %r: %s",
+                        svc_id,
+                        rollback_exc,
+                    )
+                    errors.append(f"[rollback start {svc_id}] {rollback_exc}")
+
+            return ModeResult(
+                success=False,
+                mode_id=target_mode_id,
+                errors=errors,
+            )
 
         # 7. Update current mode in DB
         await self._db.set_current_mode(target_mode_id)
@@ -364,20 +408,26 @@ class ServiceManager:
         return slept_ids, stopped_ids
 
     async def _handle_incoming_services(
-        self, service_ids: set[str]
-    ) -> tuple[list[str], list[str]]:
+        self,
+        service_ids: set[str],
+        woken_ids: list[str],
+        started_ids: list[str],
+    ) -> None:
         """Handle services entering the target mode.
 
         Sleeping services are woken; stopped services are started.
+        Lists are populated in-place so partial progress is visible
+        when :class:`LifecycleError` is raised mid-iteration.
 
-        Returns
-        -------
-        tuple[list[str], list[str]]
-            (woken_ids, started_ids)
+        Parameters
+        ----------
+        service_ids:
+            IDs of services to bring up.
+        woken_ids:
+            Mutable list populated with IDs of services successfully woken.
+        started_ids:
+            Mutable list populated with IDs of services successfully started.
         """
-        woken_ids: list[str] = []
-        started_ids: list[str] = []
-
         for service_id in sorted(service_ids):
             service = await self._registry.get(service_id)
             driver = self._registry.get_driver(service.driver)
@@ -391,8 +441,6 @@ class ServiceManager:
                 logger.info("Starting service %r (required by target mode)", service_id)
                 await self._lifecycle.start(service_id)
                 started_ids.append(service_id)
-
-        return woken_ids, started_ids
 
     # ------------------------------------------------------------------
     # Status
