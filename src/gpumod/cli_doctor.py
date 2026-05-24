@@ -112,3 +112,45 @@ def _resolve_declared(service: Service, profile_name: str | None) -> dict[str, s
             sys.stderr.write(f"{exc!s}\n")
             raise typer.Exit(code=1) from None
     return service.compat or {}
+
+
+@doctor_app.command("sysctl")
+def sysctl_command(
+    threshold: int = typer.Option(
+        None,
+        "--threshold",
+        help=(
+            "Minimum acceptable vm.min_free_kbytes (kB). Defaults to the "
+            "module-level RECOMMENDED_MIN_FREE_KBYTES (1 GiB)."
+        ),
+    ),
+) -> None:
+    """Verify kernel sysctl tuning for GPU stability (gpumod-ej0).
+
+    Currently checks ``vm.min_free_kbytes``. Reads /proc/sys/vm/min_free_kbytes
+    and refuses with actionable remediation when the value is below the
+    recommended threshold.
+
+    Exit codes:
+      0 — sysctl is OK
+      1 — below threshold or unreadable
+    """
+    from gpumod.services.sysctl_check import (
+        RECOMMENDED_MIN_FREE_KBYTES,
+        check_min_free_kbytes,
+        read_min_free_kbytes,
+    )
+
+    current = read_min_free_kbytes()
+    actual_threshold = threshold if threshold is not None else RECOMMENDED_MIN_FREE_KBYTES
+    result = check_min_free_kbytes(current, threshold=actual_threshold)
+
+    if result.ok:
+        typer.echo(
+            f"sysctl OK: vm.min_free_kbytes={result.current} kB "
+            f"(>= recommended {result.threshold} kB)"
+        )
+        raise typer.Exit(code=0)
+
+    sys.stderr.write(f"[sysctl] {result.remediation}\n")
+    raise typer.Exit(code=1)
