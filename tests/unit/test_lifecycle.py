@@ -79,6 +79,14 @@ def _build_mock_registry(
     return registry
 
 
+def _build_mock_db() -> AsyncMock:
+    """Build a mock Database for quiesce/heavy-stop operations."""
+    db = AsyncMock()
+    db.get_setting = AsyncMock(return_value=None)
+    db.set_setting = AsyncMock()
+    return db
+
+
 def _build_mock_driver(
     healthy: bool = True,
     state: ServiceState = ServiceState.STOPPED,
@@ -116,10 +124,21 @@ def mock_driver() -> AsyncMock:
 
 
 @pytest.fixture
-def lifecycle(mock_registry: AsyncMock, mock_driver: AsyncMock) -> LifecycleManager:
+def mock_db() -> AsyncMock:
+    """A mock Database that allows quiesce checks and heavy-stop recording."""
+    db = AsyncMock()
+    db.get_setting = AsyncMock(return_value=None)
+    db.set_setting = AsyncMock()
+    return db
+
+
+@pytest.fixture
+def lifecycle(
+    mock_registry: AsyncMock, mock_driver: AsyncMock, mock_db: AsyncMock
+) -> LifecycleManager:
     """A LifecycleManager wired to mock registry and driver."""
     mock_registry.get_driver = lambda dtype: mock_driver
-    return LifecycleManager(mock_registry)
+    return LifecycleManager(mock_registry, db=mock_db)
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +204,7 @@ class TestStartSkipsRunning:
         driver.status = AsyncMock(side_effect=_status_side_effect)
         mock_registry.get_driver = lambda dtype: driver
 
-        lm = LifecycleManager(mock_registry)
+        lm = LifecycleManager(mock_registry, db=_build_mock_db())
         await lm.start("svc-c")
 
         # svc-a should NOT be started; only svc-b and svc-c
@@ -210,7 +229,7 @@ class TestStopWithDependents:
         driver = _build_mock_driver(state=ServiceState.RUNNING)
         mock_registry.get_driver = lambda dtype: driver
 
-        lm = LifecycleManager(mock_registry)
+        lm = LifecycleManager(mock_registry, db=_build_mock_db())
         await lm.stop("svc-a")
 
         stopped_services = [c.args[0].id for c in driver.stop.call_args_list]
@@ -240,7 +259,7 @@ class TestStopSkipsStopped:
         driver.status = AsyncMock(side_effect=_status_side_effect)
         mock_registry.get_driver = lambda dtype: driver
 
-        lm = LifecycleManager(mock_registry)
+        lm = LifecycleManager(mock_registry, db=_build_mock_db())
         await lm.stop("svc-a")
 
         stopped_services = [c.args[0].id for c in driver.stop.call_args_list]
@@ -277,7 +296,7 @@ class TestRestart:
         driver.status = AsyncMock(side_effect=_status_side_effect)
         mock_registry.get_driver = lambda dtype: driver
 
-        lm = LifecycleManager(mock_registry)
+        lm = LifecycleManager(mock_registry, db=_build_mock_db())
         await lm.restart("svc-b")
 
         # stop should happen before start — collect all calls in order
@@ -491,7 +510,7 @@ class TestStartWakesRouterService:
         driver.wake = AsyncMock()
         registry.get_driver = lambda dtype: driver
 
-        lm = LifecycleManager(registry)
+        lm = LifecycleManager(registry, db=_build_mock_db())
         await lm.start("router-svc")
 
         driver.start.assert_called_once_with(router_svc)
@@ -505,7 +524,7 @@ class TestStartWakesRouterService:
         driver.wake = AsyncMock()
         registry.get_driver = lambda dtype: driver
 
-        lm = LifecycleManager(registry)
+        lm = LifecycleManager(registry, db=_build_mock_db())
         await lm.start("svc-a")
 
         driver.start.assert_called_once_with(SVC_A)
@@ -1036,10 +1055,11 @@ class TestPreflightLifecycle:
         mock_registry: AsyncMock,
         mock_driver: AsyncMock,
         mock_preflight: AsyncMock,
+        mock_db: AsyncMock,
     ) -> None:
         """start() calls run_preflight for each service."""
         mock_registry.get_driver = lambda dtype: mock_driver
-        lm = LifecycleManager(mock_registry)
+        lm = LifecycleManager(mock_registry, db=mock_db)
         await lm.start("svc-a")
 
         mock_preflight.assert_called_once_with(SVC_A)
@@ -1066,7 +1086,7 @@ class TestPreflightLifecycle:
         )
 
         mock_registry.get_driver = lambda dtype: mock_driver
-        lm = LifecycleManager(mock_registry)
+        lm = LifecycleManager(mock_registry, db=mock_db)
 
         with pytest.raises(LifecycleError, match="RAM"):
             await lm.start("svc-a")
@@ -1078,6 +1098,7 @@ class TestPreflightLifecycle:
         mock_registry: AsyncMock,
         mock_driver: AsyncMock,
         mock_preflight: AsyncMock,
+        mock_db: AsyncMock,
     ) -> None:
         """start() proceeds when preflight has warnings but no errors."""
         from gpumod.preflight import CheckResult
@@ -1094,7 +1115,7 @@ class TestPreflightLifecycle:
         )
 
         mock_registry.get_driver = lambda dtype: mock_driver
-        lm = LifecycleManager(mock_registry)
+        lm = LifecycleManager(mock_registry, db=mock_db)
         await lm.start("svc-a")
 
         mock_driver.start.assert_called_once_with(SVC_A)
@@ -1104,13 +1125,121 @@ class TestPreflightLifecycle:
         mock_registry: AsyncMock,
         mock_driver: AsyncMock,
         mock_preflight: AsyncMock,
+        mock_db: AsyncMock,
     ) -> None:
         """start(svc-c) runs preflight once per service in the chain."""
         mock_registry.get_driver = lambda dtype: mock_driver
-        lm = LifecycleManager(mock_registry)
+        lm = LifecycleManager(mock_registry, db=mock_db)
         await lm.start("svc-c")
 
         # Should be called 3 times: svc-a, svc-b, svc-c
         assert mock_preflight.call_count == 3
         called_ids = [call.args[0].id for call in mock_preflight.call_args_list]
         assert called_ids == ["svc-a", "svc-b", "svc-c"]
+
+
+# ---------------------------------------------------------------------------
+# Test: db injection via __init__ (gpumod-44e)
+# ---------------------------------------------------------------------------
+
+
+class TestDbInjection:
+    """LifecycleManager accepts an optional db parameter via __init__."""
+
+    def test_stores_db_when_provided(self) -> None:
+        """LifecycleManager(registry, db=mock_db) stores db correctly."""
+        registry = _build_mock_registry()
+        mock_db = AsyncMock()
+        lm = LifecycleManager(registry, db=mock_db)
+        assert lm._db is mock_db
+
+    def test_db_defaults_to_none(self) -> None:
+        """LifecycleManager(registry) without db works for non-db operations."""
+        registry = _build_mock_registry()
+        lm = LifecycleManager(registry)
+        assert lm._db is None
+
+    async def test_start_raises_runtime_error_when_quiesce_needs_db_but_none(
+        self,
+        mock_preflight: AsyncMock,
+    ) -> None:
+        """RuntimeError with exact message when quiesce path needs db but db is None."""
+        service = _make_service(id="heavy-svc", vram_mb=8000)
+        registry = _build_mock_registry(services={"heavy-svc": service})
+        driver = _build_mock_driver(state=ServiceState.STOPPED)
+        registry.get_driver = lambda dtype: driver
+
+        # No db injected
+        lm = LifecycleManager(registry)
+
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                "LifecycleManager requires a Database instance "
+                "for quiesce checks; pass db= to __init__"
+            ),
+        ):
+            await lm.start("heavy-svc")
+
+    async def test_stop_raises_runtime_error_when_heavy_stop_needs_db_but_none(
+        self,
+    ) -> None:
+        """RuntimeError with exact message when heavy-stop recording needs db but db is None."""
+        service = _make_service(id="heavy-svc", vram_mb=8000)
+        registry = _build_mock_registry(services={"heavy-svc": service})
+        driver = _build_mock_driver(state=ServiceState.RUNNING)
+        registry.get_driver = lambda dtype: driver
+
+        # No db injected
+        lm = LifecycleManager(registry)
+
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                "LifecycleManager requires a Database instance "
+                "for recording heavy stops; pass db= to __init__"
+            ),
+        ):
+            await lm.stop("heavy-svc")
+
+    async def test_start_quiesce_uses_injected_db(
+        self,
+        mock_preflight: AsyncMock,
+    ) -> None:
+        """check_quiesce receives self._db when db is injected."""
+        import time
+
+        service = _make_service(id="heavy-svc", vram_mb=8000)
+        registry = _build_mock_registry(services={"heavy-svc": service})
+        driver = _build_mock_driver(state=ServiceState.STOPPED)
+        registry.get_driver = lambda dtype: driver
+
+        mock_db = AsyncMock()
+        # Simulate quiesce window expired (old stop)
+        mock_db.get_setting = AsyncMock(return_value=str(time.time() - 60))
+
+        lm = LifecycleManager(registry, db=mock_db)
+        await lm.start("heavy-svc")
+
+        # check_quiesce should have been called with mock_db, not registry._db
+        mock_db.get_setting.assert_called()
+        driver.start.assert_called_once()
+
+    async def test_stop_heavy_stop_uses_injected_db(self) -> None:
+        """record_heavy_stop receives self._db when db is injected."""
+        from gpumod.services.heavy import QUIESCE_LAST_HEAVY_STOP_KEY
+
+        service = _make_service(id="heavy-svc", vram_mb=8000)
+        registry = _build_mock_registry(services={"heavy-svc": service})
+        driver = _build_mock_driver(state=ServiceState.RUNNING)
+        registry.get_driver = lambda dtype: driver
+
+        mock_db = AsyncMock()
+        mock_db.set_setting = AsyncMock()
+
+        lm = LifecycleManager(registry, db=mock_db)
+        await lm.stop("heavy-svc")
+
+        mock_db.set_setting.assert_called_once()
+        call_args = mock_db.set_setting.call_args
+        assert call_args[0][0] == QUIESCE_LAST_HEAVY_STOP_KEY

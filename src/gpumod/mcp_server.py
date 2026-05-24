@@ -313,7 +313,7 @@ async def gpumod_lifespan(
 
     registry = ServiceRegistry(db)
     unit_installer = UnitFileInstaller(db=db, template_engine=TemplateEngine())
-    lifecycle = LifecycleManager(registry, unit_installer=unit_installer)
+    lifecycle = LifecycleManager(registry, unit_installer=unit_installer, db=db)
     vram = VRAMTracker()
     sleep = SleepController(registry)
     manager = ServiceManager(

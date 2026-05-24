@@ -336,7 +336,9 @@ class TestVRAMPreflight:
         driver = _build_mock_driver()
         registry.get_driver = lambda dtype: driver
 
-        lifecycle_mgr = LifecycleManager(registry)
+        mock_db = AsyncMock()
+        mock_db.get_setting = AsyncMock(return_value=None)
+        lifecycle_mgr = LifecycleManager(registry, db=mock_db)
 
         with patch(
             "gpumod.preflight.run_preflight",
@@ -532,10 +534,10 @@ class TestQuiesceGate:
 
         # Simulate a recent heavy stop (3s ago, window 10s)
         recent_stop = str(time.time() - 3)
-        registry._db = AsyncMock()
-        registry._db.get_setting = AsyncMock(return_value=recent_stop)
+        mock_db = AsyncMock()
+        mock_db.get_setting = AsyncMock(return_value=recent_stop)
 
-        lifecycle_mgr = LifecycleManager(registry)
+        lifecycle_mgr = LifecycleManager(registry, db=mock_db)
 
         with (
             patch(
@@ -562,10 +564,10 @@ class TestQuiesceGate:
 
         # Heavy stop 20s ago, window 10s → allowed
         old_stop = str(time.time() - 20)
-        registry._db = AsyncMock()
-        registry._db.get_setting = AsyncMock(return_value=old_stop)
+        mock_db = AsyncMock()
+        mock_db.get_setting = AsyncMock(return_value=old_stop)
 
-        lifecycle_mgr = LifecycleManager(registry)
+        lifecycle_mgr = LifecycleManager(registry, db=mock_db)
 
         with patch(
             "gpumod.preflight.run_preflight",
@@ -589,10 +591,10 @@ class TestQuiesceGate:
 
         # Even with a very recent heavy stop, light services are unaffected
         recent_stop = str(time.time() - 1)
-        registry._db = AsyncMock()
-        registry._db.get_setting = AsyncMock(return_value=recent_stop)
+        mock_db = AsyncMock()
+        mock_db.get_setting = AsyncMock(return_value=recent_stop)
 
-        lifecycle_mgr = LifecycleManager(registry)
+        lifecycle_mgr = LifecycleManager(registry, db=mock_db)
 
         with patch(
             "gpumod.preflight.run_preflight",
@@ -616,10 +618,10 @@ class TestQuiesceGate:
 
         # Very recent heavy stop
         recent_stop = str(time.time() - 1)
-        registry._db = AsyncMock()
-        registry._db.get_setting = AsyncMock(return_value=recent_stop)
+        mock_db = AsyncMock()
+        mock_db.get_setting = AsyncMock(return_value=recent_stop)
 
-        lifecycle_mgr = LifecycleManager(registry)
+        lifecycle_mgr = LifecycleManager(registry, db=mock_db)
 
         with patch(
             "gpumod.preflight.run_preflight",
@@ -640,14 +642,14 @@ class TestQuiesceGate:
         driver = _build_mock_driver(state=ServiceState.RUNNING)
         registry.get_driver = lambda dtype: driver
 
-        registry._db = AsyncMock()
-        registry._db.set_setting = AsyncMock()
+        mock_db = AsyncMock()
+        mock_db.set_setting = AsyncMock()
 
-        lifecycle_mgr = LifecycleManager(registry)
+        lifecycle_mgr = LifecycleManager(registry, db=mock_db)
         await lifecycle_mgr.stop("vllm-chat")
 
-        registry._db.set_setting.assert_called_once()
-        call_args = registry._db.set_setting.call_args
+        mock_db.set_setting.assert_called_once()
+        call_args = mock_db.set_setting.call_args
         assert call_args[0][0] == QUIESCE_LAST_HEAVY_STOP_KEY
 
     @pytest.mark.asyncio
@@ -658,10 +660,10 @@ class TestQuiesceGate:
         driver = _build_mock_driver(state=ServiceState.RUNNING)
         registry.get_driver = lambda dtype: driver
 
-        registry._db = AsyncMock()
-        registry._db.set_setting = AsyncMock()
+        mock_db = AsyncMock()
+        mock_db.set_setting = AsyncMock()
 
-        lifecycle_mgr = LifecycleManager(registry)
+        lifecycle_mgr = LifecycleManager(registry, db=mock_db)
         await lifecycle_mgr.stop("api-svc")
 
-        registry._db.set_setting.assert_not_called()
+        mock_db.set_setting.assert_not_called()

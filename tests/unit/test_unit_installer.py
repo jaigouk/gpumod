@@ -252,7 +252,9 @@ class TestLifecycleIntegration:
         mock_installer.ensure_unit_file = AsyncMock()
         mock_installer.daemon_reload_if_needed = AsyncMock()
 
-        lifecycle = LifecycleManager(mock_registry, unit_installer=mock_installer)
+        mock_db = AsyncMock()
+        mock_db.get_setting = AsyncMock(return_value=None)
+        lifecycle = LifecycleManager(mock_registry, unit_installer=mock_installer, db=mock_db)
         # Mock preflight to skip VRAM check
         with patch("gpumod.preflight.run_preflight", AsyncMock(return_value=([], False))):
             await lifecycle.start("vllm-chat")
@@ -277,7 +279,9 @@ class TestLifecycleIntegration:
         mock_driver.health_check = AsyncMock(return_value=True)
         mock_registry.get_driver = MagicMock(return_value=mock_driver)
 
-        lifecycle = LifecycleManager(mock_registry)
+        mock_db = AsyncMock()
+        mock_db.get_setting = AsyncMock(return_value=None)
+        lifecycle = LifecycleManager(mock_registry, db=mock_db)
         # Mock preflight to skip VRAM check
         with patch("gpumod.preflight.run_preflight", AsyncMock(return_value=([], False))):
             await lifecycle.start("vllm-chat")

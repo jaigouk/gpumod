@@ -13,6 +13,7 @@ from gpumod.models import ServiceState, SleepMode
 from gpumod.services.systemd import get_unit_state, journal_logs
 
 if TYPE_CHECKING:
+    from gpumod.db import Database
     from gpumod.models import Service
     from gpumod.services.base import ServiceDriver
     from gpumod.services.registry import ServiceRegistry
@@ -154,10 +155,33 @@ class LifecycleManager:
         *,
         unit_installer: UnitFileInstaller | None = None,
         vram_tracker: VRAMTracker | None = None,
+        db: Database | None = None,
     ) -> None:
         self._registry = registry
         self._unit_installer = unit_installer
         self._vram_tracker = vram_tracker
+        self._db = db
+
+    def _require_db(self, purpose: str) -> Database:
+        """Return the injected Database or raise if None.
+
+        Parameters
+        ----------
+        purpose:
+            A short phrase describing why the Database is needed,
+            used in the RuntimeError message.
+
+        Raises
+        ------
+        RuntimeError
+            If no Database was provided at construction time.
+        """
+        if self._db is None:
+            raise RuntimeError(
+                f"LifecycleManager requires a Database instance for {purpose}; "
+                "pass db= to __init__"
+            )
+        return self._db
 
     # ------------------------------------------------------------------
     # Public API
@@ -214,7 +238,8 @@ class LifecycleManager:
             if is_heavy(svc) and not no_quiesce:
                 from gpumod.config import get_settings
 
-                verdict = await check_quiesce(self._registry._db, get_settings().quiesce_seconds)
+                db = self._require_db("quiesce checks")
+                verdict = await check_quiesce(db, get_settings().quiesce_seconds)
                 if not verdict.allowed:
                     raise LifecycleError(
                         service_id=svc.id,
@@ -258,7 +283,8 @@ class LifecycleManager:
             from gpumod.services.heavy import is_heavy, record_heavy_stop
 
             if is_heavy(svc):
-                await record_heavy_stop(self._registry._db)
+                db = self._require_db("recording heavy stops")
+                await record_heavy_stop(db)
 
     async def restart(self, service_id: str) -> None:
         """Restart a service by stopping it (and dependents) then starting it (and deps)."""
