@@ -459,3 +459,41 @@ After installation, enable and start the service:
 systemctl --user enable gpumod-mcp
 systemctl --user start gpumod-mcp
 ```
+
+## gpumod doctor
+
+System health checks for GPU stability and host protection.
+
+### doctor sysctl
+
+Verify kernel sysctl tuning for GPU stability. Checks that
+`vm.min_free_kbytes` is high enough to prevent CUDA pinned-memory
+allocation hangs caused by page fragmentation.
+
+```bash
+# Check with default threshold (1 GiB)
+gpumod doctor sysctl
+
+# Custom threshold
+gpumod doctor sysctl --threshold 524288
+```
+
+Exit codes: 0 = OK, 1 = below threshold or unreadable.
+
+### doctor oom-protection
+
+Verify that OOM protection drop-ins are installed for code-server and
+systemd-oomd. These drop-ins prevent systemd-oomd from killing
+code-server during LLM model loads.
+
+```bash
+gpumod doctor oom-protection
+```
+
+If the check fails, install the drop-ins:
+
+```bash
+sudo scripts/oom-protection/install.sh
+```
+
+Exit codes: 0 = protection correctly installed, 1 = missing or misconfigured.

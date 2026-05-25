@@ -154,3 +154,26 @@ def sysctl_command(
 
     sys.stderr.write(f"[sysctl] {result.remediation}\n")
     raise typer.Exit(code=1)
+
+
+@doctor_app.command("oom-protection")
+def oom_protection_command() -> None:
+    """Verify OOM protection drop-ins are installed (gpumod-1lpe).
+
+    Checks that code-server and systemd-oomd drop-in configs are present
+    and contain the expected directives.
+
+    Exit codes:
+      0 — protection is correctly installed
+      1 — missing or misconfigured
+    """
+    from gpumod.services.oom_protection_check import check_oom_protection
+
+    result = check_oom_protection()
+
+    if result.ok:
+        typer.echo("oom-protection OK: drop-ins installed and directives correct")
+        raise typer.Exit(code=0)
+
+    sys.stderr.write(f"[oom-protection] {result.remediation}\n")
+    raise typer.Exit(code=1)
