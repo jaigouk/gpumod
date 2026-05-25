@@ -1,40 +1,35 @@
 import time
-   from typing import Callable, Any, Dict, Optional
+   from typing import Callable, Dict, Any
 
    class JobQueue:
        def __init__(self):
            self.jobs: Dict[str, Dict[str, Any]] = {}
+           self.retry_counts: Dict[str, int] = {}
+           self.backoff_delays: Dict[str, list] = {}
 
-       def add_job(self, job_id: str, data: Any):
-           self.jobs[job_id] = {"data": data, "retry_count": 0}
+       def add_job(self, job_id: str, data: Dict[str, Any]) -> None:
+           self.jobs[job_id] = data
+           self.retry_counts[job_id] = 0
+           self.backoff_delays[job_id] = []
 
        def process_job(self, job_id: str, processor: Callable) -> bool:
            if job_id not in self.jobs:
                return False
 
-           job = self.jobs[job_id]
            max_retries = 3
-           succeeded = False
+           backoff_sequence = [1, 2, 4]
+           job_data = self.jobs[job_id]
 
-           # Initial attempt
-           try:
-               processor(job["data"])
-               succeeded = True
-           except Exception:
-               succeeded = False
-
-           # Retry logic
-           while not succeeded and job["retry_count"] < max_retries:
-               job["retry_count"] += 1
-               # Calculate backoff: 1s, 2s, 4s for retries 1, 2, 3
-               backoff_delay = 2 ** (job["retry_count"] - 1)
-               # Store backoff delay instead of sleeping
-               job["next_backoff"] = backoff_delay
-               # Simulate delay or just continue
+           while self.retry_counts[job_id] <= max_retries:
                try:
-                   processor(job["data"])
-                   succeeded = True
+                   processor(job_data)
+                   self.retry_counts[job_id] = 0  # Reset on success
+                   return True
                except Exception:
-                   succeeded = False
-
-           return succeeded
+                   self.retry_counts[job_id] += 1
+                   if self.retry_counts[job_id] <= max_retries:
+                       delay = backoff_sequence[self.retry_counts[job_id] - 1]
+                       self.backoff_delays[job_id].append(delay)
+                   else:
+                       return False
+           return False

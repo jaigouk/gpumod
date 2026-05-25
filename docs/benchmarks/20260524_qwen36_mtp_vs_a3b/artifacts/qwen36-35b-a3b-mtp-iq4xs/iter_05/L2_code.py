@@ -1,33 +1,33 @@
 import time
-   from typing import Callable, Any, Dict, List, Optional
+   from typing import Callable, Dict, Any, Optional
 
    class JobQueue:
        def __init__(self):
            self.jobs: Dict[str, Dict[str, Any]] = {}
            self.retry_counts: Dict[str, int] = {}
-           self.backoff_delays: List[float] = [1.0, 2.0, 4.0]
-           self.retry_delays: Dict[str, List[float]] = {} # To track used delays per job
+           self.backoff_delays: Dict[str, list] = {}
 
        def add_job(self, job_id: str, data: Any) -> None:
-           self.jobs[job_id] = data
+           self.jobs[job_id] = {"data": data}
            self.retry_counts[job_id] = 0
-           self.retry_delays[job_id] = []
+           self.backoff_delays[job_id] = []
 
        def process_job(self, job_id: str, processor: Callable) -> bool:
-           if job_id not in self.jobs:
-               raise ValueError(f"Job {job_id} not found")
-
            max_retries = 3
-           for attempt in range(max_retries + 1):
+           base_delay = 1  # seconds
+
+           for attempt in range(max_retries + 1):  # 0 to 3 (4 attempts total)
                try:
-                   processor(self.jobs[job_id])
+                   job_data = self.jobs[job_id]["data"]
+                   processor(job_data)
+                   # Success
                    return True
-               except Exception as e:
-                   self.retry_counts[job_id] = attempt + 1
+               except Exception:
+                   self.retry_counts[job_id] += 1
                    if attempt < max_retries:
-                       delay = self.backoff_delays[attempt]
-                       self.retry_delays[job_id].append(delay)
-                       # Simulate backoff by storing, not sleeping
-                       # time.sleep(delay) # explicitly not sleeping per requirements
+                       delay = base_delay * (2 ** attempt)  # 1, 2, 4
+                       self.backoff_delays[job_id].append(delay)
+                       # Simulate sleep by just storing it, as per requirement
                    else:
                        return False
+           return False

@@ -1,17 +1,24 @@
 from __future__ import annotations
    import time
-   from dataclasses import dataclass, field
+   import uuid
    from collections import deque
+   from dataclasses import dataclass, field
    from typing import Any, Optional
 
    @dataclass
    class Job:
-       id: str
-       name: str
+       id: str = field(default_factory=lambda: str(uuid.uuid4()))
        payload: Any = None
-       status: str = "pending"  # pending, processing, completed, failed
+       status: str = "pending"
        created_at: float = field(default_factory=time.time)
-       updated_at: float = field(default_factory=time.time)
+       error: Optional[str] = None
+
+       def mark_processed(self):
+           self.status = "completed"
+
+       def mark_failed(self, error: str):
+           self.status = "failed"
+           self.error = error
 
    class JobQueue:
        def __init__(self):
@@ -21,20 +28,19 @@ from __future__ import annotations
            self._queue.append(job)
 
        def dequeue(self) -> Optional[Job]:
-           if self.is_empty():
-               return None
-           job = self._queue.popleft()
-           job.status = "processing"
-           job.updated_at = time.time()
-           return job
+           return self._queue.popleft() if self._queue else None
 
        def peek(self) -> Optional[Job]:
-           if self.is_empty():
-               return None
-           return self._queue[0]
+           return self._queue[0] if self._queue else None
 
        def is_empty(self) -> bool:
            return len(self._queue) == 0
 
        def size(self) -> int:
            return len(self._queue)
+
+       def clear(self) -> None:
+           self._queue.clear()
+
+       def __iter__(self):
+           return iter(self._queue)

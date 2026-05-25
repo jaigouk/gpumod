@@ -5,16 +5,15 @@ class JobQueue:
         self._queue = []
         self._counter = 0
 
-    def add_job(self, job_id: str, metadata: dict, priority: int = 0):
-        # Use negative priority because heapq is a min-heap
-        # and higher priority numbers should be processed first.
-        # Counter ensures FIFO order for same priority.
-        heapq.heappush(self._queue, (-priority, self._counter, job_id, metadata))
+    def add_job(self, name: str, data: dict, priority: int = 0):
+        # Higher priority value means higher priority.
+        # heapq is a min-heap, so we negate priority.
+        # Counter ensures FIFO for same priority.
+        heapq.heappush(self._queue, (-priority, self._counter, name, data))
         self._counter += 1
 
     def get_next_job(self) -> tuple[str, dict] | None:
         if not self._queue:
             return None
-        # Pop the item with the smallest value (most negative priority = highest priority)
-        _, _, job_id, metadata = heapq.heappop(self._queue)
-        return (job_id, metadata)
+        _, _, name, data = heapq.heappop(self._queue)
+        return name, data

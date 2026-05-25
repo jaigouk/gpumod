@@ -1,16 +1,17 @@
 import heapq
+from typing import Optional, Tuple, Dict
 
 class JobQueue:
     def __init__(self):
-        self._queue = []
+        self._heap = []
         self._counter = 0
-        
-    def add_job(self, name: str, data: dict, priority: int = 0):
-        heapq.heappush(self._queue, (-priority, self._counter, name, data))
+
+    def add_job(self, name: str, data: dict, priority: int = 0) -> None:
+        heapq.heappush(self._heap, (-priority, self._counter, name, data))
         self._counter += 1
-        
-    def get_next_job(self) -> tuple[str, dict] | None:
-        if not self._queue:
+
+    def get_next_job(self) -> Optional[Tuple[str, dict]]:
+        if not self._heap:
             return None
-        _, _, name, data = heapq.heappop(self._queue)
+        _, _, name, data = heapq.heappop(self._heap)
         return name, data

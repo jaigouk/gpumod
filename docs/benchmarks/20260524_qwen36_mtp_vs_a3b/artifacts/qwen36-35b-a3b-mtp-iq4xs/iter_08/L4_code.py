@@ -1,30 +1,26 @@
 import threading
 
-    class JobQueue:
-        def __init__(self):
-            self.jobs = {}
-            self.results = {}
-            self.lock = threading.Lock() # 1. Create lock
+class JobQueue:
+    def __init__(self):
+        self.jobs = {}
+        self.results = {}
+        self.lock = threading.Lock()
 
-        def add_job(self, job_id, data):
-            with self.lock: # 2. Protect add_job too for thread safety
-                self.jobs[job_id] = data
+    def add_job(self, job_id, data):
+        with self.lock:
+            self.jobs[job_id] = data
             return job_id
 
-        def process_job(self, job_id, processor):
-            with self.lock: # 3. Acquire lock
-                if job_id not in self.jobs:
-                    return False
-                
-                # We must remove the job immediately to prevent other threads
-                # from picking it up while we process it.
-                data = self.jobs.pop(job_id) 
-            
-            # 4. Process outside lock to allow concurrency for different jobs
+    def process_job(self, job_id, processor):
+        with self.lock:
+            if job_id not in self.jobs:
+                return False
+
+            data = self.jobs.pop(job_id)  # pop is atomic and avoids separate del
             result = processor(data)
-            
-            # 5. Lock again to write result safely (or just write, but lock is safer)
-            with self.lock:
-                self.results[job_id] = result
-            
+            self.results[job_id] = result
             return True
+
+    def get_result(self, job_id):
+        with self.lock:
+            return self.results.get(job_id)

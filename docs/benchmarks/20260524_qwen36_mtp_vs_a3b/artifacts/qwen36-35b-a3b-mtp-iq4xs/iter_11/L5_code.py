@@ -1,16 +1,27 @@
 from dataclasses import dataclass, field
-   from datetime import datetime
-   from typing import Any, Optional
-   import uuid
+   from typing import Any, Callable, List, Optional
+   import time
 
    @dataclass
    class Job:
-       id: str = field(default_factory=lambda: str(uuid.uuid4()))
-       payload: Any = None
-       priority: int = 0
-       created_at: datetime = field(default_factory=datetime.utcnow)
-       status: str = "pending"  # pending, processing, completed, failed
+       job_id: str
+       payload: Any
+       status: str = "pending"
+       attempts: int = 0
+       max_retries: int = 3
+       created_at: float = field(default_factory=time.time)
 
-       def __lt__(self, other):
-           # For basic queue comparison if needed
-           return self.created_at < other.created_at
+   class JobQueue:
+       def __init__(self):
+           self._queue: List[Job] = []
+
+       def add(self, job: Job) -> None:
+           self._queue.append(job)
+
+       def pop(self) -> Optional[Job]:
+           if not self._queue:
+               return None
+           return self._queue.pop(0)
+
+       def __len__(self) -> int:
+           return len(self._queue)

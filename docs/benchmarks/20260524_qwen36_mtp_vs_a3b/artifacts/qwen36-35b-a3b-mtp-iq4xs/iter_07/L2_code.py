@@ -1,34 +1,34 @@
 import time
-   from typing import Callable, Dict, Any
+   from typing import Callable, Any, Dict, List, Optional
 
    class JobQueue:
        def __init__(self):
-           self.jobs: Dict[str, Any] = {}
+           self.jobs: Dict[str, Dict[str, Any]] = {}
            self.retry_counts: Dict[str, int] = {}
-           self.backoff_delays: Dict[str, list] = {}
+           self.backoff_delays: Dict[str, List[float]] = {}
 
        def add_job(self, job_id: str, data: Any) -> None:
            self.jobs[job_id] = data
            self.retry_counts[job_id] = 0
-           self.backoff_delays[job_id] = [1, 2, 4]
+           self.backoff_delays[job_id] = []
 
        def process_job(self, job_id: str, processor: Callable) -> bool:
-           # If job not in queue, maybe raise or handle? Example implies it's added first.
-           if job_id not in self.jobs:
-               raise ValueError(f"Job {job_id} not found")
-
            max_retries = 3
-           while self.retry_counts[job_id] <= max_retries:
+           base_delay = 1.0  # seconds
+           current_retry = 0
+
+           while current_retry <= max_retries:
                try:
                    processor(self.jobs[job_id])
                    return True
                except Exception:
-                   self.retry_counts[job_id] += 1
-                   if self.retry_counts[job_id] > max_retries:
+                   if current_retry < max_retries:
+                       delay = base_delay * (2 ** current_retry)
+                       self.backoff_delays[job_id].append(delay)
+                       self.retry_counts[job_id] = current_retry + 1
+                       # Simulate sleep by just storing delay
+                       # time.sleep(delay) # Not used per requirement
+                       current_retry += 1
+                   else:
                        return False
-                   # Store backoff delay instead of sleeping
-                   delay = self.backoff_delays[job_id].pop(0)
-                   # Actually, let's just store the delay for tracking
-                   # The requirement says delays can be stored/tracked rather than actually sleeping.
-                   # I'll just record it in a list or attribute.
            return False
