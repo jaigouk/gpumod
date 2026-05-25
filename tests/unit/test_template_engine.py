@@ -709,6 +709,18 @@ class TestRenderLlamacppUnit:
         )
         assert "--n-gpu-layers -1" in result
 
+    def test_ggml_cuda_no_pinned_unconditional(
+        self, llamacpp_service: Service, default_settings: dict[str, str]
+    ) -> None:
+        from gpumod.templates.engine import TemplateEngine
+
+        engine = TemplateEngine()
+        unit_vars: dict[str, Any] = {"model_path": "/models/code.gguf"}
+        result = engine.render_service_unit(
+            llamacpp_service, default_settings, unit_vars=unit_vars
+        )
+        assert 'Environment="GGML_CUDA_NO_PINNED=1"' in result
+
     def test_flash_attn_enabled_renders_on_value(
         self, llamacpp_service: Service, default_settings: dict[str, str]
     ) -> None:

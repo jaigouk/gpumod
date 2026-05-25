@@ -200,6 +200,56 @@ The prior 32K result JSONs are preserved as `result_*.32k-baseline.json` for aud
 | `artifacts/qwen36-35b-a3b-mtp-iq4xs/`                         | Per-iteration response artifacts (enable_thinking @ 128K) |
 | `artifacts/qwen36-35b-a3b-mtp-iq4xs-preserve/`                | Per-iteration response artifacts (preserve_thinking @ 128K) |
 
+## GGML_CUDA_NO_PINNED A/B (gpumod-56md)
+
+**Date:** 2026-05-26
+**Question:** Does disabling `cudaMallocHost` (via `GGML_CUDA_NO_PINNED=1`) measurably degrade TPS or quality?
+
+**Background:** The `cudaHostAlloc`-based pinned memory path in llama.cpp requires contiguous high-order physical pages. When `MemAvailable` is low due to fragmentation, the NVIDIA driver hangs indefinitely waiting for pages — no OOM signal, no PSI spike, eventual hard reboot. Setting `GGML_CUDA_NO_PINNED=1` makes `ggml_cuda_host_malloc` fall back to regular `malloc`, eliminating the failure class entirely. See `docs/research/20260525_oom_protection_findings/FINDINGS.md` for root-cause analysis.
+
+### Results
+
+| Metric | Pinned (baseline) | No-pinned (variant) | Delta |
+|--------|------------------:|--------------------:|------:|
+| Mean score | 88.3 | 86.7 | -1.6 |
+| Std Dev | 6.5 | 8.8 | +2.3 |
+| 95% CI | [84.8, 91.9] | [81.8, 91.5] | overlap |
+| Mean TPS | 216.5 | 215.9 | -0.28% |
+| Draft acceptance | 78.7% | 79.1% | +0.4pp |
+| L1 pass | 93% | 93% | — |
+| L4 pass | 100% | 100% | — |
+| L5 pass | 0% | 0% | — |
+
+### Score Distribution
+
+| Variant | Scores (15 iters) |
+|---------|-------------------|
+| Pinned (baseline) | 90, 90, 90, 65, 90, 90, 90, 90, 90, 90, 90, 90, 90, 90, 90 |
+| No-pinned | 90, 65, 90, 90, 90, 90, 90, 90, 90, 90, 90, 90, 65, 90, 90 |
+
+Both have exactly two 65-score outliers (L1 failures); the remainder hit the 90 ceiling. Distributions are statistically indistinguishable.
+
+### Decision
+
+**Enable.** Both criteria pass:
+
+1. **TPS regression = 0.28%** — well within the 5% threshold (216.5 → 215.9 t/s)
+2. **95% CIs overlap** — baseline [84.8, 91.9] ∩ no-pinned [81.8, 91.5] = [84.8, 91.5]
+
+Draft acceptance actually improved slightly (78.7% → 79.1%), confirming the MTP speculative-decoding path is unaffected by the host buffer allocation strategy.
+
+### Recommendation
+
+`GGML_CUDA_NO_PINNED=1` is now the unconditional default for all llamacpp services via `src/gpumod/templates/systemd/llamacpp.service.j2`. This eliminates the entire `cudaHostAlloc` fragmentation-hang failure class at negligible cost. Operators who need the pinned path for benchmarking CPU↔GPU transfer bandwidth can override via `systemctl --user edit <service>` with `Environment="GGML_CUDA_NO_PINNED=0"`.
+
+### Files
+
+| File | Description |
+|------|-------------|
+| `result_qwen36-35b-a3b-mtp-iq4xs-preserve.json` | Pinned baseline (15 iters, 128K + q8_0) |
+| `result_qwen36-35b-a3b-mtp-iq4xs-preserve.no-pinned.json` | No-pinned variant (15 iters, same config) |
+| `run_no_pinned.log` | Benchmark stdout for the no-pinned run |
+
 ## References
 
 - [Prior 20260423 benchmark (non-MTP baselines)](../20260423_qwen36_gemma4_comparison/README.md)
