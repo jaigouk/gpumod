@@ -24,6 +24,12 @@ assistant integration.
 - **AI Planning** -- LLM-assisted VRAM allocation suggestions (advisory only)
 - **Interactive TUI** -- Terminal dashboard with live GPU status
 - **Rich CLI** -- Beautiful output with tables, VRAM bar charts, and JSON mode
+- **Host-Stability Doctor** -- Preflight checks (`gpumod doctor sysctl`,
+  `gpumod doctor oom-protection`, `gpumod doctor venv`) that catch
+  fragmentation-class freezes and operator-disconnect failures BEFORE
+  they happen. Installable systemd drop-ins in
+  [scripts/oom-protection/](scripts/oom-protection/) protect critical
+  services (code-server, SSH) from being killed under memory pressure.
 
 ## Installation
 
@@ -127,6 +133,28 @@ prefix. A `.env.example` file is included in the repository root — copy it to
 Key settings include preflight thresholds (RAM/VRAM), LLM backend
 configuration, database path, and MCP rate limits. See
 [Configuration](docs/getting-started/configuration.md) for the full list.
+
+## Host Stability
+
+On hosts where GPU services compete with desktop apps, browsers, and CI
+runners, the dominant failure mode is `cudaHostAlloc` hanging the NVIDIA
+driver when contiguous high-order pages are exhausted. gpumod ships three
+layers of defense:
+
+1. **Preflight RAMCheck** — refuses to start services when MemAvailable is
+   below a safe floor (`model_size × 1.1 + 1024 MB`).
+2. **`vm.min_free_kbytes=1 GiB`** — installer at
+   [scripts/install-gpumod-sysctl.sh](scripts/install-gpumod-sysctl.sh)
+   tells the kernel to keep more contiguous pages free at all times.
+3. **`GGML_CUDA_NO_PINNED=1`** is set by default in the llamacpp systemd
+   template — `cudaMallocHost` is bypassed, eliminating the freeze class
+   entirely with ~0.3% TPS cost (measured 2026-05-26).
+4. **Cgroup memory protection for code-server / SSH** — installer at
+   [scripts/oom-protection/install.sh](scripts/oom-protection/install.sh)
+   keeps the operator connected during heavy GPU loads.
+
+After installation, run `gpumod doctor sysctl` and
+`gpumod doctor oom-protection` to verify the protections are in place.
 
 ## Security
 

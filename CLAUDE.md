@@ -50,20 +50,60 @@ bd close <id>         # Complete work
 <!-- END BEADS INTEGRATION -->
 
 
+## Detailed Project Guidance
+
+The detailed AI-agent guidance lives in [`.claude/CLAUDE.md`](.claude/CLAUDE.md).
+Read that first — it contains the full architecture, conventions, testing
+matrix, long-benchmark protocol, and stability rules.
+
 ## Build & Test
 
-_Add your build and test commands here_
-
 ```bash
-# Example:
-# npm install
-# npm test
+uv sync                                 # install dependencies
+uv run pytest tests/unit/ -q            # unit tests (must pass before close)
+uv run ruff check src/ tests/           # lint
+uv run ruff format --check src/ tests/  # format check
+uv run mypy src/ --strict               # type check
 ```
+
+The pre-commit hook at [scripts/pre-commit-check.sh](scripts/pre-commit-check.sh)
+runs all four gates automatically.
 
 ## Architecture Overview
 
-_Add a brief overview of your project architecture_
+- **CLI** (Typer) → [src/gpumod/cli.py](src/gpumod/cli.py)
+- **MCP server** (FastMCP) → `python -m gpumod.mcp_main`
+- **Service drivers** → [src/gpumod/services/drivers/](src/gpumod/services/drivers/) (vllm, llamacpp, fastapi, docker)
+- **Systemd templates** → [src/gpumod/templates/systemd/*.j2](src/gpumod/templates/systemd/) (sandboxed Jinja2)
+- **Presets** → [presets/](presets/) (YAML service definitions)
+- **Modes** → [modes/](modes/) (YAML service bundles)
+- **DB** → aiosqlite via [src/gpumod/db.py](src/gpumod/db.py)
+- **Preflight** → [src/gpumod/preflight/](src/gpumod/preflight/) (RAM/VRAM/model-file checks; runs from `ExecStartPre`)
+- **Doctor** → [src/gpumod/cli_doctor.py](src/gpumod/cli_doctor.py) (`sysctl`, `oom-protection`, `venv` subcommands)
+- **Host-protection drop-ins** → [scripts/oom-protection/](scripts/oom-protection/), [scripts/install-gpumod-sysctl.sh](scripts/install-gpumod-sysctl.sh)
+
+See [docs/architecture/index.md](docs/architecture/index.md) for the full
+system design (arc42 format).
 
 ## Conventions & Patterns
 
-_Add your project-specific conventions here_
+- **TDD mandatory** — write the failing test first; no production code
+  without a failing test.
+- **SOLID** for module design — Single Responsibility, Open/Closed, etc.
+- **Beads** (`bd`) for ALL task tracking — never TodoWrite, never markdown
+  TODO lists.
+- **Privacy** — no home directory paths, usernames, or machine-specific
+  paths in committed files. See [.claude/CLAUDE.md](.claude/CLAUDE.md)
+  Privacy section.
+- **Quality gates** — all four (lint, format, types, tests) must pass
+  before any ticket closes.
+- **Long benchmarks** — always run inside `tmux` with a separate monitor
+  session (see [.claude/CLAUDE.md](.claude/CLAUDE.md) "Running Long
+  Benchmarks").
+- **Template-touching tickets** — always run `uv run gpumod template
+  install-all --yes` as part of acceptance. The test suite covers the
+  template engine but not the full preset matrix; running install-all
+  surfaces latent preset bugs that pytest misses.
+
+For everything else (commit messages, file ownership rules, MCP tool
+patterns, etc.) refer to [`.claude/CLAUDE.md`](.claude/CLAUDE.md).

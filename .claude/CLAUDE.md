@@ -29,7 +29,9 @@ When writing systemd templates, tests, or documentation, use generic paths like 
 - **Discovery**: `src/gpumod/discovery/` — GPU and model discovery
 - **Fetchers**: `src/gpumod/fetchers/` — model fetchers
 - **LLM**: `src/gpumod/llm/` — LLM integration
-- **Preflight**: `src/gpumod/preflight/` — pre-launch validation
+- **Preflight**: `src/gpumod/preflight/` — pre-launch validation (RAM/VRAM/model-file checks; runs from systemd `ExecStartPre`)
+- **Doctor**: `src/gpumod/cli_doctor.py` with `src/gpumod/services/{sysctl_check,oom_protection_check,venv_compat}.py` — `gpumod doctor {sysctl|oom-protection|venv}` health checks
+- **Host-protection installers**: `scripts/install-gpumod-sysctl.sh` (`vm.min_free_kbytes=1 GiB`, gpumod-ej0) and `scripts/oom-protection/install.sh` (systemd drop-ins for code-server + tuned systemd-oomd, gpumod-1lpe)
 - **TUI**: `src/gpumod/tui.py` — terminal UI
 
 ## Task Tracking
@@ -109,6 +111,35 @@ watch -n 5 'free -h && echo --- && dmesg | tail -3'          # RAM + kernel OOM 
 | `free -h` shows MemAvailable < 2 GiB | Build a longer cushion before starting; concurrent compiles or other heavy commands will OOM-kill at random |
 
 **VRAM isolation for benchmarks:** stop ALL other GPU-resident services before launching (`gpumod service stop <id>` for each). Co-tenant services contaminate TPS measurements via PCIe contention and shrink the headroom for model activations. See feedback memory `feedback_benchmark_vram_isolation.md`.
+
+## Host Stability (cudaHostAlloc-class freezes)
+
+The dominant failure mode on shared GPU hosts is `cudaHostAlloc` hanging the NVIDIA driver when contiguous high-order pages are unavailable. This is **NOT OOM**: no kernel OOM log, no `systemd-oomd` trigger, no PSI signal — the kernel is stuck inside the NVIDIA allocator in uninterruptible I/O wait. See the cross-project doc `~/k3s-setup/docs/benchmark-host/gpu-stability.md` for the full incident log.
+
+The defense stack, in priority order:
+
+1. **`GGML_CUDA_NO_PINNED=1` is default for all llamacpp services** (gpumod-56md, 2026-05-26). The Jinja template at `src/gpumod/templates/systemd/llamacpp.service.j2` sets it unconditionally; `cudaMallocHost` is bypassed; the freeze class is eliminated. Measured cost: 0.28% TPS regression. Do NOT remove this line without compelling evidence.
+2. **Preflight RAMCheck** (`src/gpumod/preflight/ram_check.py`, gpumod-lgt): refuses service starts when MemAvailable is below `model_size × 1.1 + 1024 MB`. Empirically calibrated; do not relax without a fresh GGML_CUDA_NO_PINNED benchmark on the new floor.
+3. **`vm.min_free_kbytes=1 GiB`** (gpumod-ej0): installer at `scripts/install-gpumod-sysctl.sh`. Doctor check: `gpumod doctor sysctl`.
+4. **Cgroup memory protection for code-server** (gpumod-1lpe): installer at `scripts/oom-protection/install.sh`. Doctor check: `gpumod doctor oom-protection`. Keeps the operator's lifeline alive during expected pressure events (15 GiB MemAvailable range); does NOT help in the unrecoverable 12 GiB driver-hang case.
+
+**Key counter-intuitive facts to remember:**
+
+- NVIDIA's `cudaHostAlloc` page-locking is **invisible** to `/proc/<pid>/status:VmPin` and `/proc/meminfo:Mlocked`. Don't conclude "no pinned allocation happens" from those counters being zero.
+- Swap does NOT satisfy `cudaHostAlloc` directly (page-locked memory is non-swappable), but it CAN absorb anonymous app RSS to free physical RAM for the GGUF page cache. The bd memory `swap-does-not-help-llm-loading-on-this` was corrected 2026-05-25 to clarify this.
+- `cudaHostAlloc` failures hang the driver silently; they do NOT raise OOM. Cgroup `memory.high` and `systemd-oomd` cannot catch them.
+
+## Template-Touching Tickets (mandatory acceptance step)
+
+For any ticket that modifies a file under `src/gpumod/templates/`, the acceptance criteria MUST include:
+
+```bash
+uv run gpumod template install-all --yes
+```
+
+This re-renders every registered service against the modified template and surfaces preset bugs that the unit tests miss. Lesson learned in gpumod-56md (2026-05-26): the team's PR passed all gates (ruff, format, mypy, 2343 pytest), but `install-all` failed on the first preset that lacked `unit_vars.model_path`. That bug had been latent for months because no team had run `install-all` end-to-end against the full preset matrix.
+
+Same rule applies for any change to `presets/llm/*.yaml` schema expectations: re-render and verify.
 
 ## Design Principles
 
