@@ -151,7 +151,7 @@ class RAMCheck:
                         f"(browser, IDE, code-server)\n"
                         f"  3. Use a smaller model quantization\n"
                         f"  4. See "
-                        f"~/k3s-setup/docs/benchmark-host/gpu-stability.md "
+                        f"docs/research/20260525_oom_protection_findings/FINDINGS.md "
                         f"for the broader pinned-memory freeze class"
                     ),
                 )

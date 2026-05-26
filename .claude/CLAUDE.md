@@ -114,7 +114,7 @@ watch -n 5 'free -h && echo --- && dmesg | tail -3'          # RAM + kernel OOM 
 
 ## Host Stability (cudaHostAlloc-class freezes)
 
-The dominant failure mode on shared GPU hosts is `cudaHostAlloc` hanging the NVIDIA driver when contiguous high-order pages are unavailable. This is **NOT OOM**: no kernel OOM log, no `systemd-oomd` trigger, no PSI signal — the kernel is stuck inside the NVIDIA allocator in uninterruptible I/O wait. See the cross-project doc `~/k3s-setup/docs/benchmark-host/gpu-stability.md` for the full incident log.
+The dominant failure mode on shared GPU hosts is `cudaHostAlloc` hanging the NVIDIA driver when contiguous high-order pages are unavailable. This is **NOT OOM**: no kernel OOM log, no `systemd-oomd` trigger, no PSI signal — the kernel is stuck inside the NVIDIA allocator in uninterruptible I/O wait. See [docs/research/20260525_oom_protection_findings/FINDINGS.md](../docs/research/20260525_oom_protection_findings/FINDINGS.md) for the full incident log.
 
 The defense stack, in priority order:
 

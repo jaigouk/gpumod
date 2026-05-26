@@ -55,7 +55,7 @@ class TestDoctorSysctlCommand:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        _patch_proc(monkeypatch, tmp_path, "67584")  # default on the benchmark host
+        _patch_proc(monkeypatch, tmp_path, "67584")  # default on 30 GiB reference host
         result = runner.invoke(app, ["doctor", "sysctl"])
         assert result.exit_code == 1
         # Remediation goes to stderr — CliRunner mixes by default

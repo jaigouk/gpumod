@@ -1,0 +1,3 @@
+job_id = queue.add_job(...)
+        # After processing...
+        result = queue.get_result(...)

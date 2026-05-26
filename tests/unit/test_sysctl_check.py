@@ -50,7 +50,7 @@ class TestCheckMinFreeKbytes:
         assert result.ok is True
 
     def test_fails_when_below_recommendation(self) -> None:
-        # 67584 ≈ default on the 30 GiB the benchmark host — the value that
+        # 67584 ≈ default on a 30 GiB reference host — the value that
         # was insufficient for the documented freezes.
         result = check_min_free_kbytes(current=67584)
         assert result.ok is False

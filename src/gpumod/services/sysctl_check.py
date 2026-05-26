@@ -7,9 +7,9 @@ host.
 Background: ``cudaHostAlloc`` requires physically contiguous, page-locked
 RAM. When fragmentation builds up over hours (sustained CI / mmap /
 crashlooping services), the next pinned allocation can fail — and the
-NVIDIA driver hangs silently instead of returning an error. The 30 GiB
-the benchmark host has documented 9+ such freezes
-(see ``~/k3s-setup/docs/benchmark-host/gpu-stability.md``).
+NVIDIA driver hangs silently instead of returning an error. The reference
+30 GiB host has documented 9+ such freezes (see
+``docs/research/20260525_oom_protection_findings/FINDINGS.md``).
 
 The default ``vm.min_free_kbytes`` on this host is ~66 MiB (scales from
 the kernel formula). Bumping it to ~1 GiB tells the kernel to keep that
@@ -121,7 +121,7 @@ def check_min_free_kbytes(
             f"Background: low vm.min_free_kbytes lets contiguous "
             f"high-order pages fragment, causing CUDA pinned-memory "
             f"allocations (cudaHostAlloc) to hang the NVIDIA driver. See "
-            f"~/k3s-setup/docs/benchmark-host/gpu-stability.md "
+            f"docs/research/20260525_oom_protection_findings/FINDINGS.md "
             f"for the broader freeze class."
         ),
     )

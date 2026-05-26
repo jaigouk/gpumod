@@ -4,14 +4,14 @@
 
 The rapid advancement of open-weights Large Language Models (LLMs) has culminated in architectures that defy traditional hardware scaling laws. The release of **Qwen3-Coder-Next** by the Qwen team represents a pivotal moment in this trajectory, introducing a massive 80-billion parameter Mixture-of-Experts (MoE) model that claims the inference latency of a mere 3-billion parameter model. This architecture promises state-of-the-art coding capabilities—rivaling proprietary behemoths—while theoretically remaining accessible to local developers. However, the disparity between the model’s **active parameter count** (3B) and its **total storage footprint** (80B) creates a complex deployment paradox for consumer hardware.
 
-This report provides an exhaustive technical analysis of Qwen3-Coder-Next, specifically tailored to a constrained hardware environment: an **NVIDIA GeForce RTX 4090 (24GB VRAM)** paired with **32GB of System RAM** in an **eGPU configuration** (the benchmark host). The analysis is driven by the user's requirement to utilize **vLLM** (Virtual Large Language Model) as the inference engine, a choice that presents significant challenges in memory management compared to alternative backends like llama.cpp.
+This report provides an exhaustive technical analysis of Qwen3-Coder-Next, specifically tailored to a constrained hardware environment: an **NVIDIA GeForce RTX 4090 (24GB VRAM)** paired with **32GB of System RAM** in an **eGPU configuration** (reference 30 GiB host). The analysis is driven by the user's requirement to utilize **vLLM** (Virtual Large Language Model) as the inference engine, a choice that presents significant challenges in memory management compared to alternative backends like llama.cpp.
 
 ### **Key Findings**
 
 1. **Feasibility Status:** Deploying Qwen3-Coder-Next on a 24GB VRAM / 32GB RAM system is **technically feasible but operationally precarious**. The total memory footprint of the model, even when heavily quantized to 4-bit precision, exceeds the combined physical capacity of the GPU and the available System RAM. Success requires the utilization of aggressive virtual memory strategies (Linux Swap) and specific quantization formats.  
 2. **The "Ram Wall" Criticality:** The user's specific constraint of **32GB System RAM** (with only \~2.7GB currently free) is the primary failure point. Unlike the 64GB systems often cited in community benchmarks, a 32GB system cannot hold the "offloaded" experts in physical RAM. This necessitates a reliance on NVMe-backed Swap space, which introduces a severe latency penalty, potentially degrading token generation speeds from \~10 tokens per second (TPS) to \<1 TPS if not managed correctly.  
 3. **vLLM vs. Hardware Reality:** While vLLM supports CPU offloading (--cpu-offload-gb), its architecture prioritizes throughput over low-memory compatibility. The "sharded state" loading mechanism often requires a memory spike during initialization that causes Out-Of-Memory (OOM) crashes on 24GB cards before the offloading logic engages.  
-4. **eGPU Bandwidth Bottleneck:** The the benchmark host platform typically provides a PCIe 3.0 x16 interface for the discrete GPU. This limits bandwidth to \~16 GB/s, half the speed of the PCIe 4.0 standard assumed in most benchmarks. For an MoE model that must constantly fetch expert weights from system RAM, this bandwidth reduction linearly impacts inference speed.
+4. **eGPU Bandwidth Bottleneck:** The reference 30 GiB host platform typically provides a PCIe 3.0 x16 interface for the discrete GPU. This limits bandwidth to \~16 GB/s, half the speed of the PCIe 4.0 standard assumed in most benchmarks. For an MoE model that must constantly fetch expert weights from system RAM, this bandwidth reduction linearly impacts inference speed.
 
 ### **Recommendations Overview**
 
@@ -118,9 +118,9 @@ On a 4090 running a 48GB model:
 
 This confirms that **\~28GB of System RAM must be dedicated solely to the model.**
 
-### **2.3 The eGPU Bandwidth Constraint (the benchmark host)**
+### **2.3 The eGPU Bandwidth Constraint (reference 30 GiB host)**
 
-The user is utilizing a the benchmark host with an RTX 4090 in eGPU mode.
+The user is utilizing a reference 30 GiB host with an RTX 4090 in eGPU mode.
 
 * **Interface:** This device typically exposes a PCIe 3.0 x16 slot for the discrete GPU.  
 * **Bandwidth:** PCIe 3.0 x16 offers **\~15.75 GB/s** of bidirectional bandwidth.  
@@ -370,7 +370,7 @@ This report addresses a specific, highly constrained deployment scenario:
 
 * **Target Model:** Qwen3-Coder-Next (80B MoE).  
 * **Inference Hardware:** NVIDIA GeForce RTX 4090 (24GB VRAM).  
-* **Host System:** the benchmark host (Ryzen APU Platform) with **32GB System RAM**.  
+* **Host System:** reference 30 GiB host (Ryzen APU Platform) with **32GB System RAM**.  
 * **Configuration:** eGPU (External GPU) mode.  
 * **Target Engine:** vLLM (Virtual Large Language Model).
 
@@ -436,7 +436,7 @@ For Qwen3-Coder-Next, thanks to 75% of layers being DeltaNet, the KV cache might
 
 # **Section 3: Hardware Resource Analysis**
 
-We now map the model's requirements against the user's specific the benchmark host \+ RTX 4090 hardware.
+We now map the model's requirements against the user's specific reference 30 GiB host \+ RTX 4090 hardware.
 
 ## **3.1 VRAM: The Hard Limit**
 
@@ -481,7 +481,7 @@ The user *must* configure a Swap file on their SSD. This allows the OS to page o
 
 ## **3.4 eGPU Bandwidth Analysis**
 
-The the benchmark host connects the discrete GPU via a PCIe 3.0 x16 interface.
+The reference 30 GiB host connects the discrete GPU via a PCIe 3.0 x16 interface.
 
 * **Theoretical Bandwidth:** \~15.7 GB/s.  
 * **Efficiency Loss:** eGPU docks often have overhead (10-15%).  
@@ -637,7 +637,7 @@ If the performance of Qwen3-Coder-Next (at 3 TPS) is too slow for interactive us
 
 # **Section 8: Conclusion**
 
-Deploying **Qwen3-Coder-Next** on a the benchmark host with an RTX 4090 and 32GB RAM is a triumph of software engineering over hardware limitations. By leveraging the model's **MoE Architecture** and **Hybrid DeltaNet** efficiency, along with **Linux Swap** and **Quantization**, it is possible to run this massive 80B parameter model.
+Deploying **Qwen3-Coder-Next** on a reference 30 GiB host with an RTX 4090 and 32GB RAM is a triumph of software engineering over hardware limitations. By leveraging the model's **MoE Architecture** and **Hybrid DeltaNet** efficiency, along with **Linux Swap** and **Quantization**, it is possible to run this massive 80B parameter model.
 
 However, the user must accept the reality of the hardware bottleneck:
 

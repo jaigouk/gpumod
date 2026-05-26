@@ -302,7 +302,7 @@ class VRAMCheck:
         for i, suggestion in enumerate(suggestions, 1):
             remediation_lines.append(f"  {i}. {suggestion.message}")
         remediation_lines.append(
-            "  See ~/k3s-setup/docs/benchmark-host/gpu-stability.md "
+            "  See docs/research/20260525_oom_protection_findings/FINDINGS.md "
             "for the broader pinned-memory freeze class."
         )
 
