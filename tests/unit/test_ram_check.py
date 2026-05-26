@@ -15,7 +15,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from gpumod.preflight.ram_check import RAMCheck
+from gpumod.preflight.ram_check import (
+    DEFAULT_MIN_FREE_MB,
+    DEFAULT_MMAP_OVERHEAD_FACTOR,
+    RAMCheck,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -351,3 +355,48 @@ class TestRAMCheckModelFileSize:
         assert "5000" in text  # available
         assert "18000" in text or "18 GB" in text  # file size
         assert "qwen.gguf" in text or "model" in text.lower()
+
+
+# ---------------------------------------------------------------------------
+# gpumod-ki89: default constants guard + factor=1.0 behavior
+# ---------------------------------------------------------------------------
+
+
+class TestRAMCheckDefaultConstants:
+    """Guard tests for the default constants after gpumod-ki89 recalibration.
+
+    GGML_CUDA_NO_PINNED=1 (gpumod-56md) eliminated the cudaHostAlloc freeze
+    class, making factor=1.0 safe. These tests catch accidental drift.
+    """
+
+    def test_default_overhead_factor_is_0_9(self) -> None:
+        assert DEFAULT_MMAP_OVERHEAD_FACTOR == 0.9
+
+    def test_default_min_free_mb_is_1024(self) -> None:
+        assert DEFAULT_MIN_FREE_MB == 1024
+
+    @pytest.mark.asyncio
+    async def test_default_factor_passes_at_threshold(self, tmp_path: Path) -> None:
+        """With factor=0.9, MemAvailable = int(model_size*0.9) + 1024 should pass."""
+        meminfo = tmp_path / "meminfo"
+        # 17365 * 0.9 = 15628.5 → int() = 15628, + 1024 = 16652
+        _write_meminfo(meminfo, mem_available_mb=16653)
+        gguf = _make_gguf(tmp_path / "model.gguf", size_mb=17365)
+
+        check = RAMCheck(meminfo_path=meminfo)  # uses defaults
+        result = await check.check(_make_mock_service(model_path=str(gguf)))
+
+        assert result.passed is True
+
+    @pytest.mark.asyncio
+    async def test_default_factor_fails_below_threshold(self, tmp_path: Path) -> None:
+        """With factor=0.9, MemAvailable below threshold should fail."""
+        meminfo = tmp_path / "meminfo"
+        _write_meminfo(meminfo, mem_available_mb=16651)  # 1 MB below threshold
+        gguf = _make_gguf(tmp_path / "model.gguf", size_mb=17365)
+
+        check = RAMCheck(meminfo_path=meminfo)  # uses defaults
+        result = await check.check(_make_mock_service(model_path=str(gguf)))
+
+        assert result.passed is False
+        assert result.severity == "error"

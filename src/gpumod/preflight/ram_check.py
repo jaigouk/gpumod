@@ -1,14 +1,20 @@
 """RAM preflight check for gpumod services (gpumod-bfx, extended gpumod-lgt).
 
 Validates that sufficient system RAM is available before starting a service.
-Prevents OOM freezes from mmap, CPU offloading, or KV cache allocation.
+Prevents OOM from mmap page-cache pressure during GGUF model loading.
 
 gpumod-lgt: extended to model-file-size aware checking. Reading an 18 GB
 GGUF via llama-server mmap loads its pages into the host page cache; if
 MemAvailable cannot accommodate (file_size * overhead_factor + min_free),
-starting the service can OOM the host. See
-``~/k3s-setup/docs/benchmark-host/gpu-stability.md``
-for the broader pinned-memory freeze class this check guards against.
+starting the service risks OOM.
+
+gpumod-ki89: overhead factor relaxed from 1.1 to 0.9. The 1.1x headroom
+guarded against cudaHostAlloc contiguous-page hangs; gpumod-56md made
+GGML_CUDA_NO_PINNED=1 the default for all llamacpp services, eliminating
+that freeze class entirely. Factor < 1.0 is valid because mmap'd pages
+are demand-paged and reclaimable during GPU transfer — the full model
+file does not need to reside in RAM simultaneously.
+See llamacpp.service.j2 line 13.
 
 Reads MemAvailable from /proc/meminfo directly (no dependency on
 SystemInfoCollector) with injectable path for testability.
@@ -30,11 +36,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MIN_FREE_MB = 1024
 DEFAULT_WARN_FREE_MB = 4096
-# gpumod-lgt: mmap of an N-byte GGUF claims at least N bytes of page cache
-# during load. The overhead factor leaves headroom for the runtime's
-# working set (KV cache allocations before VRAM transfer, malloc arenas,
-# etc.). Conservative default 1.1; raise on fragmentation-prone hosts.
-DEFAULT_MMAP_OVERHEAD_FACTOR = 1.1
+# SAFETY: factor < 1.1 is only safe because llamacpp.service.j2 sets
+# GGML_CUDA_NO_PINNED=1, bypassing cudaHostAlloc (gpumod-56md).
+# If that env var is removed, raise this back to >= 1.1.
+# See gpumod-56md, gpumod-ki89, gpumod-x7rv.
+DEFAULT_MMAP_OVERHEAD_FACTOR = 0.9
 
 
 class RAMCheck:
@@ -68,7 +74,9 @@ class RAMCheck:
         mmap_overhead_factor:
             Multiplier applied to the service's model file size when the
             model_path is known. Required RAM = file_size * factor + min_free.
-            Default 1.1.
+            Default 0.9 (gpumod-ki89: relaxed from 1.1 because
+            GGML_CUDA_NO_PINNED=1 is the default in llamacpp.service.j2 —
+            see module docstring).
         """
         self._min_free_mb = min_free_mb
         self._warn_free_mb = warn_free_mb
