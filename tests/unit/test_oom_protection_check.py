@@ -83,6 +83,7 @@ class TestCheckOomProtection:
             "[Service]\n"
             "MemoryMin=1G\n"
             "MemoryLow=2G\n"
+            "MemorySwapMax=8G\n"
             "OOMScoreAdjust=-900\n"
             "ManagedOOMMemoryPressure=avoid\n"
             "ManagedOOMSwap=avoid\n"
@@ -164,6 +165,33 @@ class TestCheckOomProtection:
         assert result.ok is False
         assert len(result.wrong_values) >= 1
         assert any("MemoryMin" in v for v in result.wrong_values)
+        assert result.remediation is not None
+
+    def test_memoryswapmax_missing_is_flagged(self, tmp_path: Path) -> None:
+        """Regression: drop-in predating the 2026-06-03 swap cap addition.
+
+        Pre-existing installations have every directive except MemorySwapMax.
+        The check must flag this so operators re-run install.sh and pick up
+        the new bound (claude-code#19223 blast-radius cap).
+        """
+        cs = tmp_path / "cs" / "10-oom-protect.conf"
+        oomd = tmp_path / "oomd" / "gpumod.conf"
+        cs.parent.mkdir(parents=True, exist_ok=True)
+        cs.write_text(
+            "[Service]\n"
+            "MemoryMin=1G\n"
+            "MemoryLow=2G\n"
+            # MemorySwapMax intentionally absent
+            "OOMScoreAdjust=-900\n"
+            "ManagedOOMMemoryPressure=avoid\n"
+            "ManagedOOMSwap=avoid\n"
+        )
+        self._write_oomd_dropin(oomd)
+
+        result = check_oom_protection(code_server_dropin=cs, oomd_dropin=oomd)
+
+        assert result.ok is False
+        assert any("MemorySwapMax" in v for v in result.wrong_values)
         assert result.remediation is not None
 
     def test_wrong_values_in_oomd(self, tmp_path: Path) -> None:

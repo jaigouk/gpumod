@@ -17,6 +17,14 @@ This module:
 - Parses ``Key=Value`` directives from systemd unit content
 - Compares against expected values
 - Returns a structured result with remediation guidance
+
+History:
+- 2026-06-03: Added ``MemorySwapMax=8G`` to the expected code-server
+  directives. Bounds swap blast-radius from a leaky VS Code extension host
+  (claude-code#19223 — Anthropic's Claude Code extension grew RSS to 15.7
+  GiB over hours of idle in code-server). See
+  ``docs/research/20260525_oom_protection_findings/FINDINGS.md`` for the
+  cgroup memory-protection rationale.
 """
 
 from __future__ import annotations
@@ -33,6 +41,7 @@ _DEFAULT_OOMD_DROPIN = Path("/etc/systemd/oomd.conf.d/gpumod.conf")
 EXPECTED_CODE_SERVER_DIRECTIVES: dict[str, str] = {
     "MemoryMin": "1G",
     "MemoryLow": "2G",
+    "MemorySwapMax": "8G",
     "OOMScoreAdjust": "-900",
     "ManagedOOMMemoryPressure": "avoid",
     "ManagedOOMSwap": "avoid",

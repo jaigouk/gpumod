@@ -51,6 +51,7 @@ _CORRECT_CS = (
     "[Service]\n"
     "MemoryMin=1G\n"
     "MemoryLow=2G\n"
+    "MemorySwapMax=8G\n"
     "OOMScoreAdjust=-900\n"
     "ManagedOOMMemoryPressure=avoid\n"
     "ManagedOOMSwap=avoid\n"

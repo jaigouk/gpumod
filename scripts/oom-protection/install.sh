@@ -68,7 +68,7 @@ echo "  restarted: systemd-oomd"
 
 echo "=== Verify ==="
 echo "code-server drop-in installed:"
-cat "$CS_DEST" | grep -E '^(MemoryMin|MemoryLow|OOMScoreAdjust|ManagedOOMMemoryPressure|ManagedOOMSwap)='
+cat "$CS_DEST" | grep -E '^(MemoryMin|MemoryLow|MemorySwapMax|OOMScoreAdjust|ManagedOOMMemoryPressure|ManagedOOMSwap)='
 echo ""
 echo "oomd drop-in installed:"
 cat "$OOMD_DEST" | grep -E '^Default'
