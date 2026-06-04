@@ -18,8 +18,31 @@ QUIESCE_SECS=20
 echo "=== $(date -Iseconds) ensuring blank mode (VRAM isolation) ==="
 uv run gpumod mode switch blank
 
+archive_prior() {
+    # gpumod-t84m: archive any existing result/log/artifacts for $model to
+    # the next available .runN slot before launching a fresh run. Idempotent —
+    # if no current data exists (fresh-state launch), the function returns
+    # without renaming anything. Mirrors the rerun_q8.sh / rerun_26b_a4b.sh
+    # pattern so re-launching this driver never silently overwrites data.
+    local model="$1"
+    if [ ! -f "$OUT/result_${model}.json" ]; then
+        return 0
+    fi
+    local n=1
+    while [ -e "$OUT/result_${model}.run${n}.json" ] \
+       || [ -e "$OUT/run_${model}.run${n}.log" ] \
+       || [ -e "$OUT/artifacts/${model}.run${n}" ]; do
+        n=$((n + 1))
+    done
+    echo "=== $(date -Iseconds) archiving current ${model} data → run${n} ==="
+    mv "$OUT/result_${model}.json" "$OUT/result_${model}.run${n}.json"
+    [ -f "$OUT/run_${model}.log" ]   && mv "$OUT/run_${model}.log"   "$OUT/run_${model}.run${n}.log"
+    [ -d "$OUT/artifacts/${model}" ] && mv "$OUT/artifacts/${model}" "$OUT/artifacts/${model}.run${n}"
+}
+
 run_one() {
     local model="$1" port="$2"
+    archive_prior "$model"
     echo "=== $(date -Iseconds) starting service $model on port $port ==="
     uv run gpumod service start "$model"
     echo "=== waiting for /health on $port ==="
