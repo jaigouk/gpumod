@@ -19,26 +19,26 @@ class TestMetricsCollectorProtocol:
 
     def test_protocol_exists(self) -> None:
         """MetricsCollector protocol is defined."""
-        from gpumod.benchmarks.qwen35.runner import MetricsCollector
+        from gpumod.benchmarks.coding.runner import MetricsCollector
 
         assert MetricsCollector is not None
 
     def test_protocol_has_measure_vram(self) -> None:
         """MetricsCollector has measure_vram method."""
-        from gpumod.benchmarks.qwen35.runner import MetricsCollector
+        from gpumod.benchmarks.coding.runner import MetricsCollector
 
         # Check protocol has the method defined
         assert hasattr(MetricsCollector, "measure_vram")
 
     def test_protocol_has_record_generation(self) -> None:
         """MetricsCollector has record_generation method."""
-        from gpumod.benchmarks.qwen35.runner import MetricsCollector
+        from gpumod.benchmarks.coding.runner import MetricsCollector
 
         assert hasattr(MetricsCollector, "record_generation")
 
     def test_protocol_has_get_iteration_metrics(self) -> None:
         """MetricsCollector has get_iteration_metrics method."""
-        from gpumod.benchmarks.qwen35.runner import MetricsCollector
+        from gpumod.benchmarks.coding.runner import MetricsCollector
 
         assert hasattr(MetricsCollector, "get_iteration_metrics")
 
@@ -53,7 +53,7 @@ class TestBenchmarkRunnerWithMetrics:
 
     def test_accepts_optional_metrics_collector(self) -> None:
         """BenchmarkRunner accepts optional metrics_collector parameter."""
-        from gpumod.benchmarks.qwen35.runner import BenchmarkConfig, BenchmarkRunner
+        from gpumod.benchmarks.coding.runner import BenchmarkConfig, BenchmarkRunner
 
         config = BenchmarkConfig(model_id="test-model", iterations=1)
 
@@ -69,7 +69,7 @@ class TestBenchmarkRunnerWithMetrics:
     @pytest.mark.asyncio
     async def test_measures_vram_before_iteration(self) -> None:
         """Runner measures VRAM before each iteration starts."""
-        from gpumod.benchmarks.qwen35.runner import BenchmarkConfig, BenchmarkRunner
+        from gpumod.benchmarks.coding.runner import BenchmarkConfig, BenchmarkRunner
 
         config = BenchmarkConfig(model_id="test-model", iterations=1)
         mock_collector = MagicMock()
@@ -92,7 +92,7 @@ class TestBenchmarkRunnerWithMetrics:
     @pytest.mark.asyncio
     async def test_records_generation_metrics(self) -> None:
         """Runner records metrics for each generation."""
-        from gpumod.benchmarks.qwen35.runner import BenchmarkConfig, BenchmarkRunner
+        from gpumod.benchmarks.coding.runner import BenchmarkConfig, BenchmarkRunner
 
         config = BenchmarkConfig(model_id="test-model", iterations=1)
         mock_collector = MagicMock()
@@ -114,7 +114,7 @@ class TestBenchmarkRunnerWithMetrics:
     @pytest.mark.asyncio
     async def test_works_without_collector(self) -> None:
         """Runner works correctly without metrics collector (graceful degradation)."""
-        from gpumod.benchmarks.qwen35.runner import BenchmarkConfig, BenchmarkRunner
+        from gpumod.benchmarks.coding.runner import BenchmarkConfig, BenchmarkRunner
 
         config = BenchmarkConfig(model_id="test-model", iterations=1)
 
@@ -140,7 +140,7 @@ class TestBenchmarkResultWithMetrics:
 
     def test_result_includes_metrics(self) -> None:
         """BenchmarkResult can include iteration_metrics field."""
-        from gpumod.benchmarks.qwen35.scoring import BenchmarkResult, LevelResult
+        from gpumod.benchmarks.coding.scoring import BenchmarkResult, LevelResult
 
         level_results = [
             LevelResult(level=1, name="Test", points=25, passed=True),
@@ -173,7 +173,7 @@ class TestReportWithMetrics:
     @pytest.mark.asyncio
     async def test_report_includes_metrics_stats(self) -> None:
         """Report includes aggregated statistics for metrics."""
-        from gpumod.benchmarks.qwen35.runner import BenchmarkConfig, BenchmarkRunner
+        from gpumod.benchmarks.coding.runner import BenchmarkConfig, BenchmarkRunner
 
         config = BenchmarkConfig(model_id="test-model", iterations=2)
 
@@ -211,7 +211,7 @@ class TestReportWithMetrics:
     @pytest.mark.asyncio
     async def test_report_metrics_empty_without_collector(self) -> None:
         """Report has empty metrics when no collector provided."""
-        from gpumod.benchmarks.qwen35.runner import BenchmarkConfig, BenchmarkRunner
+        from gpumod.benchmarks.coding.runner import BenchmarkConfig, BenchmarkRunner
 
         config = BenchmarkConfig(model_id="test-model", iterations=1)
         runner = BenchmarkRunner(config)
@@ -237,14 +237,14 @@ class TestDefaultMetricsCollector:
 
     def test_default_collector_exists(self) -> None:
         """DefaultMetricsCollector implementation exists."""
-        from gpumod.benchmarks.qwen35.metrics_collector import DefaultMetricsCollector
+        from gpumod.benchmarks.coding.metrics_collector import DefaultMetricsCollector
 
         collector = DefaultMetricsCollector()
         assert collector is not None
 
     def test_measure_vram_returns_int_or_none(self) -> None:
         """measure_vram returns int or None."""
-        from gpumod.benchmarks.qwen35.metrics_collector import DefaultMetricsCollector
+        from gpumod.benchmarks.coding.metrics_collector import DefaultMetricsCollector
 
         collector = DefaultMetricsCollector()
         result = collector.measure_vram()
@@ -253,7 +253,7 @@ class TestDefaultMetricsCollector:
 
     def test_record_generation_stores_data(self) -> None:
         """record_generation stores generation data."""
-        from gpumod.benchmarks.qwen35.metrics_collector import DefaultMetricsCollector
+        from gpumod.benchmarks.coding.metrics_collector import DefaultMetricsCollector
 
         collector = DefaultMetricsCollector()
 
@@ -269,7 +269,7 @@ class TestDefaultMetricsCollector:
 
     def test_get_iteration_metrics_and_reset(self) -> None:
         """get_iteration_metrics returns data and resets for next iteration."""
-        from gpumod.benchmarks.qwen35.metrics_collector import DefaultMetricsCollector
+        from gpumod.benchmarks.coding.metrics_collector import DefaultMetricsCollector
 
         collector = DefaultMetricsCollector()
 
@@ -285,7 +285,7 @@ class TestDefaultMetricsCollector:
 
     def test_calculates_mean_tps_across_generations(self) -> None:
         """Calculates mean TPS across multiple generations in iteration."""
-        from gpumod.benchmarks.qwen35.metrics_collector import DefaultMetricsCollector
+        from gpumod.benchmarks.coding.metrics_collector import DefaultMetricsCollector
 
         collector = DefaultMetricsCollector()
 
@@ -302,7 +302,7 @@ class TestDefaultMetricsCollector:
         # gpumod-76l.3: non-MTP runs do not pass draft_n / draft_n_accepted.
         # Output must NOT carry MTP keys so README tables for non-MTP models
         # stay clean.
-        from gpumod.benchmarks.qwen35.metrics_collector import DefaultMetricsCollector
+        from gpumod.benchmarks.coding.metrics_collector import DefaultMetricsCollector
 
         collector = DefaultMetricsCollector()
         collector.record_generation(tokens=100, duration_seconds=0.5, ttft_seconds=0.1)
@@ -318,7 +318,7 @@ class TestDefaultMetricsCollector:
         # - total_draft_n (sum across generations)
         # - total_draft_accepted (sum across generations)
         # - mean_draft_acceptance (mean of per-call acceptance ratio)
-        from gpumod.benchmarks.qwen35.metrics_collector import DefaultMetricsCollector
+        from gpumod.benchmarks.coding.metrics_collector import DefaultMetricsCollector
 
         collector = DefaultMetricsCollector()
         # Gen 1: 44 drafted, 41 accepted => 93.2%
@@ -349,7 +349,7 @@ class TestDefaultMetricsCollector:
         # Edge case: MTP can emit a request where no drafts were generated
         # (e.g. very short response). Acceptance ratio for that call is
         # treated as 0.0 so it cannot raise ZeroDivisionError.
-        from gpumod.benchmarks.qwen35.metrics_collector import DefaultMetricsCollector
+        from gpumod.benchmarks.coding.metrics_collector import DefaultMetricsCollector
 
         collector = DefaultMetricsCollector()
         collector.record_generation(

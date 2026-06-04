@@ -4,7 +4,7 @@ Provides a concrete LLMClient implementation that talks to llama.cpp's
 OpenAI-compatible API endpoint.
 
 Usage:
-    from gpumod.benchmarks.qwen35.llm_client import LlamaCppClient
+    from gpumod.benchmarks.coding.llm_client import LlamaCppClient
 
     client = LlamaCppClient(base_url="http://localhost:8080")
     response = await client.generate("Write a function", temperature=0.6)

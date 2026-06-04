@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gpumod.benchmarks.qwen35.performance_metrics import (
+from gpumod.benchmarks.coding.performance_metrics import (
     PerformanceMetrics,
     measure_latency,
     measure_tps,

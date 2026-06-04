@@ -1,6 +1,8 @@
-# Qwen3.5 Coding Benchmark Suite
+# Coding Benchmark Suite
 
-Benchmark suite for evaluating Qwen3.5 models on coding tasks with proper methodology.
+Benchmark suite for evaluating chat-completion models on coding tasks (5 levels, pytest-validated).
+
+Originally built for Qwen 3.5 (hence the historical examples and naming below); now used across Qwen 3.5 / Qwen 3.6 / Gemma 4 with per-model sampler config and the same v2 methodology.
 
 ## Background
 
@@ -52,7 +54,7 @@ From [llama.cpp MoE Guide](https://huggingface.co/blog/Doctor-Shotgun/llamacpp-m
 ## Module Structure
 
 ```
-src/gpumod/benchmarks/qwen35/
+src/gpumod/benchmarks/coding/
 ├── README.md              # This file
 ├── __init__.py
 ├── sampler_config.py      # THINKING_CODING, NON_THINKING presets
@@ -68,9 +70,9 @@ src/gpumod/benchmarks/qwen35/
 ## Usage
 
 ```python
-from gpumod.benchmarks.qwen35.sampler_config import THINKING_CODING
-from gpumod.benchmarks.qwen35.server_config import DEFAULT_24GB
-from gpumod.benchmarks.qwen35.runner import BenchmarkConfig, BenchmarkRunner
+from gpumod.benchmarks.coding.sampler_config import THINKING_CODING
+from gpumod.benchmarks.coding.server_config import DEFAULT_24GB
+from gpumod.benchmarks.coding.runner import BenchmarkConfig, BenchmarkRunner
 
 # Configure benchmark
 config = BenchmarkConfig(

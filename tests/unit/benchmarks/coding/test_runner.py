@@ -6,13 +6,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from gpumod.benchmarks.qwen35.runner import (
+from gpumod.benchmarks.coding.runner import (
     DEFAULT_CONTEXT_SIZE,
     DEFAULT_ITERATIONS,
     BenchmarkConfig,
     BenchmarkRunner,
 )
-from gpumod.benchmarks.qwen35.sampler_config import THINKING_CODING
+from gpumod.benchmarks.coding.sampler_config import THINKING_CODING
 
 
 class TestBenchmarkConfig:

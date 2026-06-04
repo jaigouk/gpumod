@@ -15,13 +15,13 @@ class TestLevelDefinition:
 
     def test_level_definition_exists(self) -> None:
         """LevelDefinition dataclass exists in levels module."""
-        from gpumod.benchmarks.qwen35.levels import LevelDefinition
+        from gpumod.benchmarks.coding.levels import LevelDefinition
 
         assert LevelDefinition is not None
 
     def test_level_has_detailed_prompt(self) -> None:
         """Level definition has detailed prompt (500+ chars)."""
-        from gpumod.benchmarks.qwen35.levels import LevelDefinition
+        from gpumod.benchmarks.coding.levels import LevelDefinition
 
         level = LevelDefinition(
             level=1,
@@ -35,7 +35,7 @@ class TestLevelDefinition:
 
     def test_level_has_test_code(self) -> None:
         """Level definition includes pytest test code."""
-        from gpumod.benchmarks.qwen35.levels import LevelDefinition
+        from gpumod.benchmarks.coding.levels import LevelDefinition
 
         level = LevelDefinition(
             level=1,
@@ -58,13 +58,13 @@ class TestPytestValidator:
 
     def test_validator_exists(self) -> None:
         """PytestValidator class exists."""
-        from gpumod.benchmarks.qwen35.levels import PytestValidator
+        from gpumod.benchmarks.coding.levels import PytestValidator
 
         assert PytestValidator is not None
 
     def test_validate_returns_result_with_passed(self) -> None:
         """Validator returns result with passed flag."""
-        from gpumod.benchmarks.qwen35.levels import PytestValidator
+        from gpumod.benchmarks.coding.levels import PytestValidator
 
         validator = PytestValidator()
 
@@ -85,7 +85,7 @@ def test_add():
 
     def test_validate_returns_partial_score(self) -> None:
         """Validator returns partial score based on test pass rate."""
-        from gpumod.benchmarks.qwen35.levels import PytestValidator
+        from gpumod.benchmarks.coding.levels import PytestValidator
 
         validator = PytestValidator()
 
@@ -114,7 +114,7 @@ def test_subtract():
 
     def test_validate_handles_syntax_errors(self) -> None:
         """Validator handles code with syntax errors gracefully."""
-        from gpumod.benchmarks.qwen35.levels import PytestValidator
+        from gpumod.benchmarks.coding.levels import PytestValidator
 
         validator = PytestValidator()
 
@@ -134,7 +134,7 @@ def test_broken():
 
     def test_validate_has_timeout(self) -> None:
         """Validator times out on infinite loops."""
-        from gpumod.benchmarks.qwen35.levels import PytestValidator
+        from gpumod.benchmarks.coding.levels import PytestValidator
 
         validator = PytestValidator(timeout_seconds=1)
 
@@ -166,7 +166,7 @@ class TestValidationResult:
 
     def test_result_has_required_fields(self) -> None:
         """ValidationResult has all required fields."""
-        from gpumod.benchmarks.qwen35.levels import ValidationResult
+        from gpumod.benchmarks.coding.levels import ValidationResult
 
         result = ValidationResult(
             passed=True,
@@ -193,21 +193,21 @@ class TestLevelRegistry:
 
     def test_registry_exists(self) -> None:
         """LEVEL_REGISTRY exists in levels module."""
-        from gpumod.benchmarks.qwen35.levels import LEVEL_REGISTRY
+        from gpumod.benchmarks.coding.levels import LEVEL_REGISTRY
 
         assert LEVEL_REGISTRY is not None
         assert isinstance(LEVEL_REGISTRY, dict)
 
     def test_registry_has_default_levels(self) -> None:
         """Registry has default levels (1-5)."""
-        from gpumod.benchmarks.qwen35.levels import LEVEL_REGISTRY
+        from gpumod.benchmarks.coding.levels import LEVEL_REGISTRY
 
         assert 1 in LEVEL_REGISTRY
         assert 5 in LEVEL_REGISTRY
 
     def test_can_register_new_level(self) -> None:
         """Can register a new level without modifying runner."""
-        from gpumod.benchmarks.qwen35.levels import (
+        from gpumod.benchmarks.coding.levels import (
             LevelDefinition,
             register_level,
         )
@@ -223,7 +223,7 @@ class TestLevelRegistry:
 
         register_level(custom_level)
 
-        from gpumod.benchmarks.qwen35.levels import LEVEL_REGISTRY
+        from gpumod.benchmarks.coding.levels import LEVEL_REGISTRY
 
         assert 99 in LEVEL_REGISTRY
         assert LEVEL_REGISTRY[99].name == "Custom Level"
@@ -233,7 +233,7 @@ class TestLevelRegistry:
 
     def test_get_level_returns_definition(self) -> None:
         """get_level() returns LevelDefinition by level number."""
-        from gpumod.benchmarks.qwen35.levels import get_level
+        from gpumod.benchmarks.coding.levels import get_level
 
         level = get_level(1)
 
@@ -251,7 +251,7 @@ class TestDefaultLevelPrompts:
 
     def test_level_1_has_detailed_prompt(self) -> None:
         """Level 1 (Basic Queue) has detailed prompt."""
-        from gpumod.benchmarks.qwen35.levels import get_level
+        from gpumod.benchmarks.coding.levels import get_level
 
         level = get_level(1)
 
@@ -260,7 +260,7 @@ class TestDefaultLevelPrompts:
 
     def test_level_1_has_test_code(self) -> None:
         """Level 1 has pytest test code."""
-        from gpumod.benchmarks.qwen35.levels import get_level
+        from gpumod.benchmarks.coding.levels import get_level
 
         level = get_level(1)
 
@@ -269,7 +269,7 @@ class TestDefaultLevelPrompts:
 
     def test_all_levels_have_valid_prompts(self) -> None:
         """All default levels (1-5) have valid prompts."""
-        from gpumod.benchmarks.qwen35.levels import LEVEL_REGISTRY
+        from gpumod.benchmarks.coding.levels import LEVEL_REGISTRY
 
         for level_num in [1, 2, 3, 4, 5]:
             level = LEVEL_REGISTRY[level_num]

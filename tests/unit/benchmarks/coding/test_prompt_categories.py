@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from gpumod.benchmarks.qwen35.prompt_categories import (
+from gpumod.benchmarks.coding.prompt_categories import (
     PromptCategory,
     generate_prompt,
 )

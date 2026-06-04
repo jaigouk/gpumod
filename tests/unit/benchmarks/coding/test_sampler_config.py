@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from gpumod.benchmarks.qwen35.sampler_config import (
+from gpumod.benchmarks.coding.sampler_config import (
     GEMMA_CODING,
     NON_THINKING,
     THINKING_CODING,

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from gpumod.benchmarks.qwen35.server_config import (
+from gpumod.benchmarks.coding.server_config import (
     DEFAULT_16GB,
     DEFAULT_24GB,
     get_server_config,

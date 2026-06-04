@@ -1,7 +1,8 @@
-"""Sampler configuration presets for Qwen3.5 models.
+"""Sampler configuration presets for chat-completion models.
 
-Based on official Qwen recommendations:
-https://huggingface.co/Qwen/Qwen3.5-35B-A3B
+Originally built for Qwen 3.5 (THINKING_CODING / NON_THINKING per
+https://huggingface.co/Qwen/Qwen3.5-35B-A3B) and extended for Gemma 4
+(GEMMA_CODING per https://huggingface.co/google/gemma-4-12B-it).
 """
 
 from __future__ import annotations

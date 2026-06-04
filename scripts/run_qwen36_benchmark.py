@@ -28,19 +28,19 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from gpumod.benchmarks.qwen35.levels import (
+from gpumod.benchmarks.coding.levels import (
     LEVEL_REGISTRY,
     PytestValidator,
     get_level,
 )
-from gpumod.benchmarks.qwen35.llm_client import LlamaCppClient
-from gpumod.benchmarks.qwen35.metrics_collector import DefaultMetricsCollector
-from gpumod.benchmarks.qwen35.sampler_config import (
+from gpumod.benchmarks.coding.llm_client import LlamaCppClient
+from gpumod.benchmarks.coding.metrics_collector import DefaultMetricsCollector
+from gpumod.benchmarks.coding.sampler_config import (
     GEMMA_CODING,
     THINKING_CODING,
     SamplerConfig,
 )
-from gpumod.benchmarks.qwen35.scoring import calculate_confidence_interval, calculate_stats
+from gpumod.benchmarks.coding.scoring import calculate_confidence_interval, calculate_stats
 
 DEFAULT_OUTPUT_DIR = Path("docs/benchmarks/20260423_qwen36_gemma4_comparison")
 

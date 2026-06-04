@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from gpumod.benchmarks.qwen35.scoring import (
+from gpumod.benchmarks.coding.scoring import (
     BenchmarkResult,
     LevelResult,
     calculate_confidence_interval,

@@ -26,9 +26,9 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from gpumod.benchmarks.qwen35.levels import PytestValidator, get_level
-from gpumod.benchmarks.qwen35.llm_client import LlamaCppClient
-from gpumod.benchmarks.qwen35.sampler_config import THINKING_CODING
+from gpumod.benchmarks.coding.levels import PytestValidator, get_level
+from gpumod.benchmarks.coding.llm_client import LlamaCppClient
+from gpumod.benchmarks.coding.sampler_config import THINKING_CODING
 
 
 def extract_code(response: str) -> str:
