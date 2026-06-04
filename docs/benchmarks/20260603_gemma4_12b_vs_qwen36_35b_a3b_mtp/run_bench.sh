@@ -12,6 +12,12 @@ cd "$(dirname "$0")/../../.."
 OUT="docs/benchmarks/20260603_gemma4_12b_vs_qwen36_35b_a3b_mtp"
 QUIESCE_SECS=20
 
+# VRAM isolation per .claude/CLAUDE.md "Running Long Benchmarks": stop all
+# gpumod-tracked services before the first model start. Idempotent — if mode
+# is already blank, this is a no-op.
+echo "=== $(date -Iseconds) ensuring blank mode (VRAM isolation) ==="
+uv run gpumod mode switch blank
+
 run_one() {
     local model="$1" port="$2"
     echo "=== $(date -Iseconds) starting service $model on port $port ==="

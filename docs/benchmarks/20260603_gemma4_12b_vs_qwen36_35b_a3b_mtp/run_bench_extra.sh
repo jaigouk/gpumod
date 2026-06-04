@@ -25,6 +25,12 @@ if [ "$SIZE_BYTES" -lt "$MIN_BYTES" ]; then
     exit 1
 fi
 
+# VRAM isolation per .claude/CLAUDE.md "Running Long Benchmarks": stop all
+# gpumod-tracked services before the first model start. Idempotent — if mode
+# is already blank, this is a no-op.
+echo "=== $(date -Iseconds) ensuring blank mode (VRAM isolation) ==="
+uv run gpumod mode switch blank
+
 run_one() {
     local model="$1" port="$2"
     echo "=== $(date -Iseconds) starting service $model on port $port ==="
