@@ -21,7 +21,7 @@ import asyncio
 import json
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -35,7 +35,11 @@ from gpumod.benchmarks.qwen35.levels import (
 )
 from gpumod.benchmarks.qwen35.llm_client import LlamaCppClient
 from gpumod.benchmarks.qwen35.metrics_collector import DefaultMetricsCollector
-from gpumod.benchmarks.qwen35.sampler_config import THINKING_CODING
+from gpumod.benchmarks.qwen35.sampler_config import (
+    GEMMA_CODING,
+    THINKING_CODING,
+    SamplerConfig,
+)
 from gpumod.benchmarks.qwen35.scoring import calculate_confidence_interval, calculate_stats
 
 DEFAULT_OUTPUT_DIR = Path("docs/benchmarks/20260423_qwen36_gemma4_comparison")
@@ -51,6 +55,10 @@ class ModelConfig:
     file: str
     port: int
     service_id: str
+    # gpumod-h6gs: per-model sampler. Defaults to Qwen's THINKING_CODING so
+    # existing entries behave unchanged. Gemma 4 overrides with GEMMA_CODING
+    # (temp=1.0, top_p=0.95, top_k=64) per Google's model card recommendation.
+    sampler: SamplerConfig = field(default_factory=lambda: THINKING_CODING)
 
 
 MODELS: dict[str, ModelConfig] = {
@@ -133,6 +141,52 @@ MODELS: dict[str, ModelConfig] = {
         file="gemma-4-E4B-it-BF16.gguf",
         port=7098,
         service_id="gemma4-e4b-bf16",
+    ),
+    # gpumod-h6gs: Gemma 4 12B presets, non-speculative (no Gemma 4 12B MTP
+    # drafter exists upstream; ggml-org/llama.cpp PR #23398 WIP).
+    "gemma4-12b-q4": ModelConfig(
+        id="gemma4-12b-q4",
+        name="Gemma 4 12B IT UD-Q4_K_XL",
+        architecture="dense-12B",
+        repo="unsloth/gemma-4-12b-it-GGUF",
+        quant="UD-Q4_K_XL",
+        file="gemma-4-12b-it-UD-Q4_K_XL.gguf",
+        port=7106,
+        service_id="gemma4-12b-q4",
+        sampler=GEMMA_CODING,
+    ),
+    "gemma4-12b-q5": ModelConfig(
+        id="gemma4-12b-q5",
+        name="Gemma 4 12B IT Q5_K_M",
+        architecture="dense-12B",
+        repo="unsloth/gemma-4-12b-it-GGUF",
+        quant="Q5_K_M",
+        file="gemma-4-12b-it-Q5_K_M.gguf",
+        port=7107,
+        service_id="gemma4-12b-q5",
+        sampler=GEMMA_CODING,
+    ),
+    "gemma4-12b-q8": ModelConfig(
+        id="gemma4-12b-q8",
+        name="Gemma 4 12B IT UD-Q8_K_XL",
+        architecture="dense-12B",
+        repo="unsloth/gemma-4-12b-it-GGUF",
+        quant="UD-Q8_K_XL",
+        file="gemma-4-12b-it-UD-Q8_K_XL.gguf",
+        port=7108,
+        service_id="gemma4-12b-q8",
+        sampler=GEMMA_CODING,
+    ),
+    "gemma4-26b-a4b-q4": ModelConfig(
+        id="gemma4-26b-a4b-q4",
+        name="Gemma 4 26B-A4B IT UD-IQ4_XS",
+        architecture="moe-26B-A4B",
+        repo="unsloth/gemma-4-26B-A4B-it-GGUF",
+        quant="UD-IQ4_XS",
+        file="gemma-4-26B-A4B-it-UD-IQ4_XS.gguf",
+        port=7109,
+        service_id="gemma4-26b-a4b-q4",
+        sampler=GEMMA_CODING,
     ),
 }
 
@@ -247,7 +301,7 @@ class ArchitectureBenchmark:
             config={
                 "base_url": self.base_url,
                 "iterations": self.iterations,
-                "sampler": THINKING_CODING.to_dict(),
+                "sampler": self.model.sampler.to_dict(),
                 "levels": list(LEVEL_REGISTRY.keys()),
             },
             iterations=iteration_results,
@@ -278,7 +332,7 @@ class ArchitectureBenchmark:
                 response = await self.client.generate(
                     level_def.prompt,
                     max_tokens=self.max_tokens,
-                    **THINKING_CODING.to_dict(),
+                    **self.model.sampler.to_dict(),
                 )
             except Exception as e:
                 response = f"ERROR: {e}"
@@ -515,6 +569,10 @@ def parse_args() -> argparse.Namespace:
             "qwen36-35b-a3b-mtp-iq4xs-preserve",
             "qwen35-35b-a3b-heretic-mtp-q3kl-preserve",
             "gemma4-e4b",
+            "gemma4-12b-q4",
+            "gemma4-12b-q5",
+            "gemma4-12b-q8",
+            "gemma4-26b-a4b-q4",
             "all",
         ],
         required=True,

@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from gpumod.benchmarks.qwen35.sampler_config import (
+    GEMMA_CODING,
     NON_THINKING,
     THINKING_CODING,
     get_config,
@@ -54,6 +55,28 @@ class TestSamplerConfigValues:
     def test_non_thinking_repetition_penalty(self) -> None:
         assert NON_THINKING.repetition_penalty == 1.0
 
+    # gpumod-h6gs: GEMMA_CODING matches Google's Gemma 4 recommendation
+    # (https://huggingface.co/google/gemma-4-12B-it). The same sampler is
+    # recommended for instruction-following, coding, and reasoning — unlike
+    # Qwen, which differentiates between thinking-coding and non-thinking.
+    def test_gemma_coding_temperature(self) -> None:
+        assert GEMMA_CODING.temperature == 1.0
+
+    def test_gemma_coding_top_p(self) -> None:
+        assert GEMMA_CODING.top_p == 0.95
+
+    def test_gemma_coding_top_k(self) -> None:
+        assert GEMMA_CODING.top_k == 64
+
+    def test_gemma_coding_min_p(self) -> None:
+        assert GEMMA_CODING.min_p == 0.0
+
+    def test_gemma_coding_presence_penalty(self) -> None:
+        assert GEMMA_CODING.presence_penalty == 0.0
+
+    def test_gemma_coding_repetition_penalty(self) -> None:
+        assert GEMMA_CODING.repetition_penalty == 1.0
+
 
 class TestSamplerConfigModel:
     """Test SamplerConfig dataclass behavior."""
@@ -86,6 +109,10 @@ class TestGetConfig:
     def test_get_non_thinking(self) -> None:
         config = get_config("non_thinking")
         assert config == NON_THINKING
+
+    def test_get_gemma_coding(self) -> None:
+        config = get_config("gemma_coding")
+        assert config == GEMMA_CODING
 
     def test_get_invalid_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown config"):

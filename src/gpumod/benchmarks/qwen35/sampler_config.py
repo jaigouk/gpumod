@@ -59,10 +59,25 @@ NON_THINKING = SamplerConfig(
     repetition_penalty=1.0,
 )
 
+# Google-recommended settings for Gemma 4 (all use cases, including coding).
+# Per the google/gemma-4-12B-it model card the same sampler is recommended
+# for instruction-following, coding, and reasoning. Differs from Qwen's
+# THINKING_CODING (temp 0.6, top_k 20) — Gemma's thinking-mode is tuned for
+# broader exploration during CoT and converges in the final answer.
+GEMMA_CODING = SamplerConfig(
+    temperature=1.0,
+    top_p=0.95,
+    top_k=64,
+    min_p=0.0,
+    presence_penalty=0.0,
+    repetition_penalty=1.0,
+)
+
 # Registry of available configs
 _CONFIGS: dict[str, SamplerConfig] = {
     "thinking_coding": THINKING_CODING,
     "non_thinking": NON_THINKING,
+    "gemma_coding": GEMMA_CODING,
 }
 
 
