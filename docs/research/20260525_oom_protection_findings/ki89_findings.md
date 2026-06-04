@@ -6,13 +6,13 @@
 
 ## TL;DR
 
-`DEFAULT_MMAP_OVERHEAD_FACTOR` in [src/gpumod/preflight/ram_check.py](../../../src/gpumod/preflight/ram_check.py) lowered from `1.1` to `0.9`. The 1024 MB `DEFAULT_MIN_FREE_MB` floor stays. Required RAM for a service start drops from `model_size × 1.1 + 1024 MB` to `model_size × 0.9 + 1024 MB`. For the 17,365 MB MTP preserve preset that's **20,125 MB → 16,652 MB** (≈3.5 GiB lower).
+`DEFAULT_MMAP_OVERHEAD_FACTOR` in [src/gpumod/preflight/ram_check.py](https://github.com/jaigouk/gpumod/blob/main/src/gpumod/preflight/ram_check.py) lowered from `1.1` to `0.9`. The 1024 MB `DEFAULT_MIN_FREE_MB` floor stays. Required RAM for a service start drops from `model_size × 1.1 + 1024 MB` to `model_size × 0.9 + 1024 MB`. For the 17,365 MB MTP preserve preset that's **20,125 MB → 16,652 MB** (≈3.5 GiB lower).
 
 End-to-end verified: `gpumod mode switch hermes-agent` succeeds from 19 GiB MemAvailable WITHOUT any operator `drop_caches` step.
 
 ## Why the relaxation is safe
 
-The original 1.1× factor was empirically calibrated in gpumod-x7rv against the `cudaHostAlloc`-hang failure class. That class is GONE as of gpumod-56md commit `4131207` — [llamacpp.service.j2](../../../src/gpumod/templates/systemd/llamacpp.service.j2) now sets `GGML_CUDA_NO_PINNED=1` unconditionally, bypassing `cudaMallocHost` and the contiguous-high-order-page requirement entirely.
+The original 1.1× factor was empirically calibrated in gpumod-x7rv against the `cudaHostAlloc`-hang failure class. That class is GONE as of gpumod-56md commit `4131207` — [llamacpp.service.j2](https://github.com/jaigouk/gpumod/blob/main/src/gpumod/templates/systemd/llamacpp.service.j2) now sets `GGML_CUDA_NO_PINNED=1` unconditionally, bypassing `cudaMallocHost` and the contiguous-high-order-page requirement entirely.
 
 With pinning gone, the residual cost of a load is:
 

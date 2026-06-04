@@ -97,7 +97,7 @@ This is exactly the multi-turn benefit Unsloth documents ("could increase accura
 
 Hermes-agent (chat + tool-calling) is multi-turn by nature. The benchmarked numbers from `result_qwen36-35b-a3b-mtp-iq4xs.json` carry over unchanged for production use with `preserve_thinking:true`. The swap therefore lands with the agent-appropriate flag rather than the benchmark-time flag, with zero regression risk on single-shot quality.
 
-Concretely, [presets/llm/qwen36-35b-a3b-mtp-iq4xs.yaml](presets/llm/qwen36-35b-a3b-mtp-iq4xs.yaml) gets its extra_args updated:
+Concretely, [presets/llm/qwen36-35b-a3b-mtp-iq4xs.yaml](https://github.com/jaigouk/gpumod/blob/main/presets/llm/qwen36-35b-a3b-mtp-iq4xs.yaml) gets its extra_args updated:
 
 ```diff
 - extra_args: "--parallel 1 --threads 16 --spec-type draft-mtp --spec-draft-n-max 2 --chat-template-kwargs '{\"enable_thinking\":true}'"
@@ -120,4 +120,4 @@ The template proof handles correctness. A 1-iteration smoke is the only remainin
 - [unsloth/Qwen3.6-35B-A3B-MTP-GGUF model card](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF)
 - llama.cpp source: `common/chat.h:190-192`, `common/chat.cpp:548-553`
 - Chat template extraction: `/tmp/extract_template.py` against the MTP GGUF
-- Baseline benchmark: [docs/benchmarks/20260524_qwen36_mtp_vs_a3b/README.md](docs/benchmarks/20260524_qwen36_mtp_vs_a3b/README.md)
+- Baseline benchmark: [20260524 Qwen3.6 MTP vs Non-MTP](../benchmarks/20260524_qwen36_mtp_vs_a3b/README.md)

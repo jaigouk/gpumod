@@ -142,7 +142,7 @@ The Qwen baseline used to be defended as "statistically equivalent on mean, ~2-3
 | `run_gemma4-*.log` | Per-model benchmark stdout (gitignored per `*.log`) |
 | `artifacts/<model>/iter_NN/` | Per-iteration, per-level generated code and validation output |
 
-Per-bench drivers are superseded by the central [`scripts/run_coding_benchmark.sh`](../../../scripts/run_coding_benchmark.sh) (gpumod-4omn) — same patterns, one script, options instead of per-dir wrappers. The local `run_bench{,_extra}.sh` are kept because they document the exact model list and 26B size guard for this benchmark.
+Per-bench drivers are superseded by the central [`scripts/run_coding_benchmark.sh`](https://github.com/jaigouk/gpumod/blob/main/scripts/run_coding_benchmark.sh) (gpumod-4omn) — same patterns, one script, options instead of per-dir wrappers. The local `run_bench{,_extra}.sh` are kept because they document the exact model list and 26B size guard for this benchmark.
 
 ## References
 

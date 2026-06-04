@@ -102,7 +102,7 @@ Heretic was ~9% faster wall-clock despite -1.8% TPS, because per-iteration token
 
 The bench's 4-extra-L1-failures result raised the question: **is this a model competence regression, or noise from the bench's multi-level conversation accumulation?**
 
-To answer it, we ran the same L1 prompt **20 times standalone** against each service (fresh chat context per attempt — no prior turns, no preserve_thinking carry-over). Same sampler (`THINKING_CODING`), same code extractor + validator the main runner uses. See [scripts/heretic_l1_smoke.py](../../../scripts/heretic_l1_smoke.py).
+To answer it, we ran the same L1 prompt **20 times standalone** against each service (fresh chat context per attempt — no prior turns, no preserve_thinking carry-over). Same sampler (`THINKING_CODING`), same code extractor + validator the main runner uses. See [scripts/heretic_l1_smoke.py](https://github.com/jaigouk/gpumod/blob/main/scripts/heretic_l1_smoke.py).
 
 ### L1 Smoke Results
 
@@ -182,6 +182,6 @@ To statistically prove a real competence delta would require ~100+ smoke attempt
 ## References
 
 - [Prior bench: Qwen3.6 MTP vs non-MTP](../20260524_qwen36_mtp_vs_a3b/README.md) — baseline preserve row was first established here
-- [heretic_l1_smoke.py](../../../scripts/heretic_l1_smoke.py) — standalone L1 flake-rate script
+- [heretic_l1_smoke.py](https://github.com/jaigouk/gpumod/blob/main/scripts/heretic_l1_smoke.py) — standalone L1 flake-rate script
 - [llmfan46/Qwen3.5-…-MTP-Preserved-GGUF](https://huggingface.co/llmfan46/Qwen3.5-35B-A3B-uncensored-heretic-v2-Native-MTP-Preserved-GGUF)
 - [Unsloth Qwen3.5 docs](https://unsloth.ai/docs/models/qwen3.5)
