@@ -75,7 +75,12 @@ class TestSamplerConfigValues:
         assert GEMMA_CODING.presence_penalty == 0.0
 
     def test_gemma_coding_repetition_penalty(self) -> None:
-        assert GEMMA_CODING.repetition_penalty == 1.0
+        # gpumod-eods: 1.05 (not the Google default 1.0) to break degeneration
+        # loops at temp=1.0 — see iter_06 in gpumod-h6gs run 2 where the model
+        # got stuck repeating "If __ename__ import requests" until the response
+        # budget was exhausted. 1.05 is the lowest value that breaks the loop
+        # without measurably suppressing legitimate code repetition.
+        assert GEMMA_CODING.repetition_penalty == 1.05
 
 
 class TestSamplerConfigModel:

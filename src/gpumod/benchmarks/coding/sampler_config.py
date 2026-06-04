@@ -65,13 +65,20 @@ NON_THINKING = SamplerConfig(
 # for instruction-following, coding, and reasoning. Differs from Qwen's
 # THINKING_CODING (temp 0.6, top_k 20) — Gemma's thinking-mode is tuned for
 # broader exploration during CoT and converges in the final answer.
+#
+# gpumod-eods: repetition_penalty=1.05 (NOT Google's default 1.0) — breaks
+# degeneration loops at temp=1.0 without measurably suppressing legitimate
+# code repetition. Observed in gpumod-h6gs run 2 iter_06 where the 12B Q8
+# repeated "If __ename__ import requests" 6+ times until token budget was
+# exhausted. 1.05 is the lowest non-trivial value; standard llama.cpp
+# guidance for catching runaway repetition without quality cost.
 GEMMA_CODING = SamplerConfig(
     temperature=1.0,
     top_p=0.95,
     top_k=64,
     min_p=0.0,
     presence_penalty=0.0,
-    repetition_penalty=1.0,
+    repetition_penalty=1.05,
 )
 
 # Registry of available configs
