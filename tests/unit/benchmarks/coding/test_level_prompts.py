@@ -86,3 +86,50 @@ class TestLevel2PromptStripsDistractors:
         assert "process_job" in prompt
         assert "Callable" in prompt
         assert "bool" in prompt
+
+
+class TestLevel5PromptRequiresComposition:
+    """L5 prompt must ask for a meaningful composition task, not a trivial one.
+
+    Diagnosed in gpumod-pdtn: the prior L5 asked for multi-file refactor but
+    the PytestValidator only writes a single solution.py, and the L5 tests
+    only checked `from solution import JobQueue/Job`. Trivially-passable.
+
+    New L5 asks for three composable classes (Job dataclass, RetryPolicy
+    class, JobQueue orchestrator) within a single file.
+    """
+
+    def test_l5_prompt_requires_three_classes(self) -> None:
+        from gpumod.benchmarks.coding.levels import get_level
+
+        prompt = get_level(5).prompt
+        assert "Job" in prompt
+        assert "RetryPolicy" in prompt
+        assert "JobQueue" in prompt
+
+    def test_l5_prompt_specifies_single_file_target(self) -> None:
+        """The validator only saves one file — prompt must match."""
+        from gpumod.benchmarks.coding.levels import get_level
+
+        prompt = get_level(5).prompt
+        prompt_lower = prompt.lower()
+        # Either "single file" or an explicit "solution.py" reference
+        assert any(phrase in prompt_lower for phrase in ["single file", "solution.py"])
+
+    def test_l5_prompt_does_not_ask_for_multi_file(self) -> None:
+        """Prior 'queue/core.py + queue/retry.py + queue/priority.py' framing
+        was incompatible with the single-file validator. Must not return."""
+        from gpumod.benchmarks.coding.levels import get_level
+
+        prompt = get_level(5).prompt
+        forbidden = ["queue/__init__.py", "queue/core.py", "queue/retry.py", "queue/priority.py"]
+        for f in forbidden:
+            assert f not in prompt, f"L5 prompt must not request multi-file path {f!r}"
+
+    def test_l5_prompt_forbids_external_imports(self) -> None:
+        from gpumod.benchmarks.coding.levels import get_level
+
+        prompt = get_level(5).prompt
+        forbidders = ["only the standard library", "no external libraries", "no external packages"]
+        prompt_lower = prompt.lower()
+        assert any(f in prompt_lower for f in forbidders)

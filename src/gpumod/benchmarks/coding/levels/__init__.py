@@ -419,47 +419,85 @@ def test_uses_lock():
     assert "Lock" in source or "lock" in source
 """
 
-_LEVEL_5_PROMPT = """Refactor the monolithic job queue into multiple files.
+_LEVEL_5_PROMPT = """Refactor the job queue into three composable classes in solution.py.
 
-Take this single-file implementation and split it into a proper package structure:
+Define these three classes:
 
-Current structure (single file):
-```python
-# queue.py - everything in one file
-class Job: ...
-class JobQueue: ...
-class PriorityQueue: ...
-def process_with_retry(): ...
-```
+1. `Job` — dataclass with fields `id: str`, `data: dict`, `priority: int = 0`,
+   `retries: int = 0`. Use `@dataclass` from the standard library.
+2. `RetryPolicy` — encapsulates retry-with-backoff:
+   - `__init__(self, max_attempts: int = 4)`
+   - `run(self, fn: Callable, data) -> tuple[bool, int]` — calls `fn(data)`, retries
+     on any exception until success or `max_attempts` reached, returns
+     `(success, attempts_made)`. Do NOT actually sleep.
+3. `JobQueue` — orchestrates Jobs using RetryPolicy:
+   - `add_job(self, job_id: str, data: dict, priority: int = 0) -> None`
+   - `process_job(self, job_id: str, processor: Callable) -> bool` — must USE
+     RetryPolicy (compose, don't reimplement retry logic).
+   - `get_next_job(self) -> tuple[str, dict] | None` — return the highest-priority
+     job's (id, data); FIFO order within the same priority.
 
-Target structure:
-```
-queue/
-├── __init__.py      # Exports: JobQueue, Job
-├── core.py          # Job dataclass, basic queue operations
-├── retry.py         # Retry logic with exponential backoff
-└── priority.py      # Priority queue implementation
-```
-
-Requirements:
-1. Maintain all existing functionality
-2. Proper imports between modules
-3. Clean public API in __init__.py
-4. Each module has a single responsibility
-
-Provide the content of each file.
+Use only the standard library — do not import external packages.
+Write only the Python code, no explanations.
 """
 
 _LEVEL_5_TESTS = """
-def test_can_import_from_package():
+import inspect
+
+def test_job_dataclass_has_required_fields():
+    from solution import Job
+    j = Job(id="t1", data={"x": 1})
+    assert j.id == "t1"
+    assert j.data == {"x": 1}
+    assert j.priority == 0
+    assert j.retries == 0
+
+def test_retry_policy_succeeds_within_max_attempts():
+    from solution import RetryPolicy
+    policy = RetryPolicy()
+    call_count = [0]
+    def fail_first_two(data):
+        call_count[0] += 1
+        if call_count[0] < 3:
+            raise Exception("fail")
+        return "ok"
+    success, attempts = policy.run(fail_first_two, {})
+    assert success is True
+    assert attempts == 3
+
+def test_retry_policy_returns_false_after_max_attempts():
+    from solution import RetryPolicy
+    policy = RetryPolicy()
+    def always_fail(data):
+        raise Exception("always")
+    success, attempts = policy.run(always_fail, {})
+    assert success is False
+    assert attempts == 4
+
+def test_job_queue_process_job_composes_retry_policy():
+    from solution import JobQueue, RetryPolicy
+    queue = JobQueue()
+    queue.add_job("j1", {"val": 1})
+    call_count = [0]
+    def fail_once(data):
+        call_count[0] += 1
+        if call_count[0] < 2:
+            raise Exception("once")
+        return "ok"
+    assert queue.process_job("j1", fail_once) is True
+    assert call_count[0] == 2
+    # Compose, don't reimplement: JobQueue source must reference RetryPolicy
+    src = inspect.getsource(JobQueue)
+    assert "RetryPolicy" in src
+
+def test_job_queue_priority_ordering():
     from solution import JobQueue
     queue = JobQueue()
-    assert queue is not None
-
-def test_job_class_exported():
-    from solution import Job
-    job = Job("test", {})
-    assert job is not None
+    queue.add_job("normal", {"k": 1}, priority=0)
+    queue.add_job("critical", {"k": 2}, priority=2)
+    queue.add_job("high", {"k": 3}, priority=1)
+    nxt = queue.get_next_job()
+    assert nxt is not None and nxt[0] == "critical"
 """
 
 
@@ -507,7 +545,7 @@ register_level(
 register_level(
     LevelDefinition(
         level=5,
-        name="Multi-file Refactor",
+        name="Compose Job + RetryPolicy + JobQueue",
         points=10,
         prompt=_LEVEL_5_PROMPT,
         test_code=_LEVEL_5_TESTS,
