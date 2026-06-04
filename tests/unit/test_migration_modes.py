@@ -25,8 +25,10 @@ RTX_4090_VRAM_MB = 24000
 
 EXPECTED_MODES: dict[str, dict[str, object]] = {
     "code": {
-        "services": ["vllm-embedding-code", "qwen3-coder-multi-p3"],
-        "description": "Coding mode with Qwen3-Coder (3 parallel slots) and code embedding",
+        "services": ["vllm-embedding-code", "gemma4-26b-a4b-q4"],
+        # Description is a long YAML folded-scalar — not a single line. We
+        # assert structural properties instead in TestModeDescriptions.
+        "description": None,
     },
     "rag": {
         "services": ["vllm-embedding-code", "vllm-embedding"],
@@ -105,10 +107,18 @@ class TestModeServiceLists:
             f"{mode_id}: services {data['services']} != {expected}"
         )
 
-    def test_code_uses_multi_slot_preset(self) -> None:
-        """Code mode should use 3-slot parallel preset."""
+    def test_code_uses_gemma4_26b_quality_preset(self) -> None:
+        """Code mode uses the Gemma 4 26B-A4B quality leader (gpumod-yxzt).
+
+        Replaced the prior multi-slot Qwen3-Coder invariant: the
+        gemma4-26b-a4b-q4 preset is single-agent (parallel 1), which is a
+        deliberate trade-off — code mode now optimises for per-reply quality
+        (100/100 on the v2 coding benchmark) over concurrent capacity. To
+        restore multi-agent: introduce gemma4-26b-a4b-q4-multi (parallel 3)
+        and update this assertion.
+        """
         code = _load_mode_yaml("code")
-        assert "qwen3-coder-multi-p3" in code["services"]
+        assert "gemma4-26b-a4b-q4" in code["services"]
 
     def test_blank_has_no_services(self) -> None:
         """Blank mode should have no services for benchmarking."""
@@ -142,7 +152,9 @@ class TestModeVramFit:
         )
 
     EXPECTED_VRAM: dict[str, int] = {
-        "code": 22500,
+        # 'code' is gemma4-26b-a4b-q4 (18000) + vllm-embedding-code (2500) = 20500
+        # after the gpumod-yxzt swap from qwen3-coder-multi-p3.
+        "code": 20500,
         "rag": 7500,
         "hacker": 22500,
         "speak": 22000,
@@ -170,4 +182,9 @@ class TestModeDescriptions:
     def test_description_matches(self, mode_id: str) -> None:
         data = _load_mode_yaml(mode_id)
         expected = EXPECTED_MODES[mode_id]["description"]
+        if expected is None:
+            # Mode uses a long folded-scalar description; the exact text is
+            # prose, not a stable invariant. test_has_description covers
+            # the non-emptiness requirement.
+            return
         assert data["description"] == expected
