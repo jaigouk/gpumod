@@ -8,6 +8,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import pytest
 
 
@@ -79,6 +81,42 @@ class TestGetLlamacppVersion:
             await checker.get_llamacpp_version()
 
         assert any("version" in record.message.lower() for record in caplog.records)
+
+
+class TestVersionDetectionSubprocess:
+    """Tests for the live subprocess path of version detection (gpumod-220l).
+
+    Until 2026-06-04 no test exercised the real fork/exec/read cycle —
+    every test set ``_mock_version_output`` explicitly, masking two bugs:
+      1. The ``hasattr()`` gate in ``_get_version_output`` was always True
+         because ``__init__`` set the attribute to None, making the
+         subprocess path dead code in production.
+      2. ``llama-server --version`` writes to stderr; the subprocess
+         captured stdout only, so the parsed string was empty even after
+         bug #1 was fixed.
+
+    PATH-injected stub forces a real fork/exec — mocking
+    ``asyncio.create_subprocess_exec`` would have hidden bug #2.
+    """
+
+    async def test_version_detection_reads_real_subprocess_stderr(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Live subprocess path runs and parses a stderr-written version banner."""
+        import os
+
+        from gpumod.compatibility import CompatibilityChecker
+
+        stub = tmp_path / "llama-server"
+        stub.write_text("#!/bin/sh\necho 'version: 9500 (abc123)' >&2\n")
+        stub.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+
+        checker = CompatibilityChecker()
+        # Intentionally NOT setting _mock_version_output — exercise the live path.
+        version = await checker.get_llamacpp_version()
+
+        assert version == 9500
 
 
 class TestArchitectureMatrix:

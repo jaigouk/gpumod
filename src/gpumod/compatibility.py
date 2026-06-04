@@ -70,11 +70,15 @@ class CompatibilityChecker:
     result in warnings, not errors.
     """
 
+    # Tests set this attribute to bypass the live subprocess call.
+    # Intentionally NOT initialized in __init__: doing so makes
+    # hasattr(self, "_mock_version_output") always True and turns the
+    # subprocess path into dead code (gpumod-220l, fix #1).
+    _mock_version_output: str | None
+
     def __init__(self, matrix_path: Path | None = None) -> None:
         self._cached_version: int | None = None
         self._version_checked: bool = False
-        # For testing - allows mocking subprocess output
-        self._mock_version_output: str | None = None
         # Load architecture support matrix
         self._matrix: Mapping[str, ArchSupport] = self._load_matrix(matrix_path)
 
@@ -139,11 +143,14 @@ class CompatibilityChecker:
         import asyncio
 
         try:
+            # llama-server writes its version banner to stderr, not stdout.
+            # Merge stderr into the stdout pipe so VERSION_PATTERN can match
+            # (gpumod-220l, fix #2).
             proc = await asyncio.create_subprocess_exec(
                 "llama-server",
                 "--version",
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
             return stdout.decode().strip()
