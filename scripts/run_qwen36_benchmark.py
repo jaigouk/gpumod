@@ -28,6 +28,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from gpumod.benchmarks.coding.code_extraction import extract_code
 from gpumod.benchmarks.coding.levels import (
     LEVEL_REGISTRY,
     PytestValidator,
@@ -384,7 +385,7 @@ class ArchitectureBenchmark:
                 draft_n_accepted=draft_n_accepted,
             )
 
-            code = self._extract_code(extract_source)
+            code = extract_code(extract_source)
             validation_result = self.validator.validate(code, level_def.test_code)
             passed = validation_result.passed
             points = level_def.points if passed else 0
@@ -429,27 +430,6 @@ class ArchitectureBenchmark:
             timestamp=datetime.now(UTC).isoformat(),
         )
 
-    def _extract_code(self, response: str) -> str:
-        if not response:
-            return ""
-
-        if "```python" in response:
-            parts = response.split("```python")
-            if len(parts) > 1:
-                code_part = parts[1].split("```")[0]
-                return code_part.strip()
-
-        if "```" in response:
-            parts = response.split("```")
-            if len(parts) > 1:
-                code_part = parts[1]
-                lines = code_part.strip().split("\n")
-                if lines and not lines[0].startswith(("def ", "class ", "import ", "from ")):
-                    lines = lines[1:]
-                return "\n".join(lines).strip()
-
-        return response.strip()
-
     def _save_artifacts(self, run: BenchmarkRun) -> None:
         model_id = run.model.id
         artifacts_dir = self.output_dir / "artifacts" / model_id
@@ -469,7 +449,7 @@ class ArchitectureBenchmark:
                 with open(response_path, "w") as f:
                     f.write(level.response)
 
-                code = self._extract_code(level.response)
+                code = extract_code(level.response)
                 code_path = iter_dir / f"L{level.level}_code.py"
                 with open(code_path, "w") as f:
                     f.write(code)
