@@ -237,28 +237,17 @@ def test_get_result_returns_none_for_unknown():
     assert result is None
 """
 
-_LEVEL_2_PROMPT = """Extend the job queue with retry logic and exponential backoff.
+_LEVEL_2_PROMPT = """Extend the JobQueue class with a retry method.
 
-Requirements:
-1. Add a `process_job(job_id: str, processor: Callable) -> bool` method
-2. If the processor raises an exception, retry up to 3 times
-3. Use exponential backoff between retries: 1s, 2s, 4s (can be simulated)
-4. Track retry count for each job
-5. Return True if job succeeded, False if all retries exhausted
+Add `process_job(job_id: str, processor: Callable) -> bool`. Behavior:
 
-Example:
-```python
-queue = JobQueue()
-queue.add_job("job1", {"url": "https://example.com"})
+1. Call `processor(data)` where `data` is the dict passed to `add_job(job_id, data)`.
+2. On any exception from the processor, retry. Make up to 4 total attempts (initial + 3 retries).
+3. Track the retry count per job. Use exponential backoff (delays of 1s, 2s, 4s).
+4. Do NOT actually sleep — record the delays as data.
+5. Return True on the first successful attempt. Return False if all 4 attempts raise.
 
-def fetch_url(data):
-    # May raise on network error
-    return requests.get(data["url"])
-
-success = queue.process_job("job1", fetch_url)
-```
-
-The backoff delays can be stored/tracked rather than actually sleeping.
+Use only the standard library — do not import external packages.
 Write only the Python code, no explanations.
 """
 
