@@ -25,7 +25,7 @@ RTX_4090_VRAM_MB = 24000
 
 EXPECTED_MODES: dict[str, dict[str, object]] = {
     "code": {
-        "services": ["vllm-embedding-code", "gemma4-26b-a4b-q4"],
+        "services": ["vllm-embedding-code", "gemma4-26b-a4b-q4-multi"],
         # Description is a long YAML folded-scalar — not a single line. We
         # assert structural properties instead in TestModeDescriptions.
         "description": None,
@@ -107,18 +107,17 @@ class TestModeServiceLists:
             f"{mode_id}: services {data['services']} != {expected}"
         )
 
-    def test_code_uses_gemma4_26b_quality_preset(self) -> None:
-        """Code mode uses the Gemma 4 26B-A4B quality leader (gpumod-yxzt).
+    def test_code_uses_gemma4_26b_multi_preset(self) -> None:
+        """Code mode uses the Gemma 4 26B-A4B multi-slot preset (gpumod-8xaq).
 
-        Replaced the prior multi-slot Qwen3-Coder invariant: the
-        gemma4-26b-a4b-q4 preset is single-agent (parallel 1), which is a
-        deliberate trade-off — code mode now optimises for per-reply quality
-        (100/100 on the v2 coding benchmark) over concurrent capacity. To
-        restore multi-agent: introduce gemma4-26b-a4b-q4-multi (parallel 3)
-        and update this assertion.
+        Restored multi-agent capacity after the temporary single-slot swap
+        (gpumod-yxzt). The gemma4-26b-a4b-q4-multi preset runs N=3
+        cont-batching slots at 128K context each — Phase 2 of the capacity
+        spike measured 132 TPS aggregate, only 7% TPS regression vs N=1 but
+        with the TL + Dev + QA tool-heavy workflow concurrency.
         """
         code = _load_mode_yaml("code")
-        assert "gemma4-26b-a4b-q4" in code["services"]
+        assert "gemma4-26b-a4b-q4-multi" in code["services"]
 
     def test_blank_has_no_services(self) -> None:
         """Blank mode should have no services for benchmarking."""
@@ -152,9 +151,10 @@ class TestModeVramFit:
         )
 
     EXPECTED_VRAM: dict[str, int] = {
-        # 'code' is gemma4-26b-a4b-q4 (18000) + vllm-embedding-code (2500) = 20500
-        # after the gpumod-yxzt swap from qwen3-coder-multi-p3.
-        "code": 20500,
+        # 'code' is gemma4-26b-a4b-q4-multi (20000) + vllm-embedding-code (2500)
+        # = 22500 after the gpumod-8xaq swap to the multi-slot preset.
+        # Was 20500 (single-slot gemma) before gpumod-8xaq.
+        "code": 22500,
         "rag": 7500,
         "hacker": 22500,
         "speak": 22000,

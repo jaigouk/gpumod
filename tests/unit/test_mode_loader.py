@@ -238,10 +238,10 @@ class TestProductionModes:
 
         code_mode = next(m for m in modes if m.id == "code")
         vram = mode_loader.calculate_vram(code_mode, presets)
-        # gpumod-yxzt: code mode now uses gemma4-26b-a4b-q4 (18000) +
-        # vllm-embedding-code (2500). Was 22500 with the prior
-        # qwen3-coder-multi-p3 preset (20000) + embedding.
-        assert vram == 20500
+        # gpumod-8xaq: code mode uses gemma4-26b-a4b-q4-multi (20000) +
+        # vllm-embedding-code (2500). Was 20500 with gemma4-26b-a4b-q4
+        # (single-slot, gpumod-yxzt) before the multi-slot productionization.
+        assert vram == 22500
 
         speak_mode = next(m for m in modes if m.id == "speak")
         vram = mode_loader.calculate_vram(speak_mode, presets)
