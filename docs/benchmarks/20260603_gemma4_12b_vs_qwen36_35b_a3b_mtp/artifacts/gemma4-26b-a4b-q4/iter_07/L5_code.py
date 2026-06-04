@@ -1,19 +1,22 @@
 from dataclasses import dataclass, field
-        from typing import Any, List
+        from typing import Any, Deque
         from collections import deque
 
-        @dataclass(order=True) # order=True allows comparison for PriorityQueue
+        @dataclass(order=True)
         class Job:
-            priority: int
+            priority: int = 10  # Default priority
             id: str = field(compare=False)
             payload: Any = field(compare=False)
 
         class JobQueue:
             def __init__(self):
-                self._queue = deque()
+                self._queue: Deque[Job] = deque()
+
             def push(self, job: Job):
                 self._queue.append(job)
+
             def pop(self) -> Job:
                 return self._queue.popleft()
-            def is_empty(self) -> bool:
-                return len(self._queue) == 0
+
+            def __len__(self):
+                return len(self._queue)

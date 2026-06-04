@@ -1,18 +1,18 @@
 from dataclasses import dataclass, field
         from typing import Any, List
 
-        @dataclass
+        @dataclass(order=True)
         class Job:
-            id: str
-            data: Any
-            priority: int = 0
+            priority: int
+            job_id: str = field(compare=False)
+            payload: Any = field(compare=False)
 
         class JobQueue:
             def __init__(self):
-                self._jobs = []
+                self._queue = []
             def push(self, job: Job):
-                self._jobs.append(job)
+                self._queue.append(job)
             def pop(self) -> Job:
-                return self._jobs.pop(0)
+                return self._queue.pop(0)
             def is_empty(self) -> bool:
-                return len(self._jobs) == 0
+                return len(self._queue) == 0

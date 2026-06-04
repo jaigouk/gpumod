@@ -117,6 +117,28 @@ Q5 is the clear knee of the curve: nearly all of Q8's quality gain (Q8 is only +
 
 The 26B-A4B's 4B-active MoE routing makes it the fastest end-to-end despite being the largest model on disk. The 12B Q8 is the slowest — verbose thinking compounds with slower per-token TPS.
 
+### Reproducibility Check (Run 2 of Q8 and 26B-A4B)
+
+Both Gemma 4 models that landed surprising numbers in run 1 were re-run with `rerun_q8.sh` / `rerun_26b_a4b.sh` (n=15 each, identical config, b9500 binary). Outcome: **both runs reproduce within sample variance — the run 1 conclusions hold.**
+
+| Model | Run 1 mean ± σ | Run 2 mean ± σ | Δ mean | Run 1 95% CI | Run 2 95% CI | CI overlap |
+|---|---:|---:|---:|---|---|:-:|
+| `gemma4-12b-q8` | 88.33 ± 15.31 | **87.67 ± 14.98** | -0.67 | [80.6, 96.1] | [80.1, 95.3] | ✅ |
+| `gemma4-26b-a4b-q4` | 94.67 ± 5.16 | **94.00 ± 5.07** | -0.67 | [92.0, 97.3] | [91.4, 96.6] | ✅ |
+
+Same -0.67 mean delta on both models is sample-variance noise, not a systematic shift. The 26B-A4B lead over 12B Q8 is reproducible: 94.00 vs 87.67 across the second pair of n=15 runs, with non-overlapping 95% CIs (26B-A4B [91.4, 96.6] sits cleanly above 12B Q8 [80.1, 95.3]'s upper bound only marginally).
+
+Run 2 score distributions:
+
+| Model | Scores (run 2, 15 iters) |
+|---|---|
+| Gemma 4 12B Q8 (run 2) | **100**, 65, 75, **100**, 75, 75, 60, **100**, 90, **100**, 75, **100**, **100**, **100**, **100** |
+| Gemma 4 26B-A4B (run 2) | **100**, 90, 90, 90, 90, 90, 90, 90, 90, **100**, 90, **100**, **100**, **100**, **100** |
+
+Run 2 archives live at `result_*.run1.json` / `run_*.run1.log` / `artifacts/*.run1/` (the script archives the prior "current" data as run1 and writes new data to the unsuffixed paths). The 26B-A4B `artifacts/*.run1/` is empty by design — the per-iter detail was already in the published run 1 result.json before the rerun, and we cleared the artifacts dir before re-running to avoid mixing in-progress state.
+
+**Sampler / yaml flag note.** Between run 1 (02:37) and run 2 (14:21–15:30), `presets/llm/gemma4-*.yaml` gained `--temp 1.0 --top-p 0.95 --top-k 64` in `extra_args` (Unsloth defaults). This **did not** affect benchmark scoring: the runner sets `GEMMA_CODING = SamplerConfig(temperature=1.0, top_p=0.95, top_k=64, ...)` per-request via `**self.model.sampler.to_dict()` in `scripts/run_qwen36_benchmark.py`, overriding any llama-server boot defaults. The yaml flags only affect non-benchmark direct chat. Confirmed by inspecting `result_*.run1.json`, which records the same sampler dict run 1 was already using.
+
 ## Methodology Caveats
 
 - **MTP asymmetry, not by choice.** Qwen baseline uses MTP speculative decoding (+24% TPS measured). No Gemma 4 variant tested here has any MTP path available:
@@ -155,13 +177,19 @@ Swap candidates exist (Gemma 12B Q5 for a low-VRAM mode, 26B-A4B for a quality-f
 |---|---|
 | `result_gemma4-12b-q4.json` | 15-iter result, Gemma 4 12B UD-Q4_K_XL |
 | `result_gemma4-12b-q5.json` | 15-iter result, Gemma 4 12B Q5_K_M |
-| `result_gemma4-12b-q8.json` | 15-iter result, Gemma 4 12B UD-Q8_K_XL |
-| `result_gemma4-26b-a4b-q4.json` | 15-iter result, Gemma 4 26B-A4B UD-IQ4_XS |
+| `result_gemma4-12b-q8.json` | 15-iter run 2 result, Gemma 4 12B UD-Q8_K_XL (reproducibility check, b9500) |
+| `result_gemma4-12b-q8.run1.json` | 15-iter run 1 result, Gemma 4 12B UD-Q8_K_XL (b9297, original) |
+| `result_gemma4-26b-a4b-q4.json` | 15-iter run 2 result, Gemma 4 26B-A4B UD-IQ4_XS (reproducibility check, b9500) |
+| `result_gemma4-26b-a4b-q4.run1.json` | 15-iter run 1 result, Gemma 4 26B-A4B UD-IQ4_XS (b9297, original) |
 | `run_bench.sh` | Driver for Q4 + Q5 sequential run |
 | `run_bench_extra.sh` | Driver for Q8 + 26B-A4B sequential run (added mid-benchmark) |
+| `rerun_q8.sh` | Re-run driver for gemma4-12b-q8 (archives current → .run1, then fresh n=15) |
+| `rerun_26b_a4b.sh` | Re-run driver for gemma4-26b-a4b-q4 (same archive-and-rerun pattern) |
 | `run.log`, `run_extra.log` | Combined stdout from each driver |
-| `run_gemma4-*.log` | Per-model benchmark stdout (per-iteration scores live here) |
-| `artifacts/<model>/iter_NN/` | Per-iteration, per-level generated code and validation output |
+| `run_gemma4-*.log` | Per-model benchmark stdout (current run) |
+| `run_gemma4-*.run1.log` | Per-model benchmark stdout (run 1 archive) |
+| `artifacts/<model>/iter_NN/` | Per-iteration, per-level generated code and validation output (current run) |
+| `artifacts/<model>.run1/iter_NN/` | Per-iteration archive from run 1 |
 
 ## References
 

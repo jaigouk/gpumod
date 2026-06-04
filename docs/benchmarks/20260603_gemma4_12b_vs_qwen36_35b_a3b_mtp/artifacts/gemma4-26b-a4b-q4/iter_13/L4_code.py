@@ -4,7 +4,7 @@ class JobQueue:
     def __init__(self):
         self.jobs = {}
         self.results = {}
-        # A lock to protect access to the shared dictionaries
+        # A single lock to protect access to both internal dictionaries
         self._lock = threading.Lock()
 
     def add_job(self, job_id, data):
@@ -13,57 +13,56 @@ class JobQueue:
         return job_id
 
     def process_job(self, job_id, processor):
-        # 1. ATOMIC CHECK AND REMOVE
-        # We use the lock to check if the job exists and remove it 
-        # immediately so no other thread can pick up the same job.
+        # 1. Attempt to "claim" the job. 
+        # We use a lock to ensure only one thread can extract a specific job.
         with self._lock:
             if job_id not in self.jobs:
                 return False
             
-            # .pop() removes the item and returns it in one atomic-like step 
-            # within our lock, preventing other threads from seeing it.
+            # pop() removes the job from the queue immediately so 
+            # no other thread can attempt to process it.
             data = self.jobs.pop(job_id)
 
-        # 2. PROCESSING (OUTSIDE THE LOCK)
-        # We execute the processor outside the lock. This allows other 
-        # threads to call add_job or process_job for DIFFERENT IDs 
-        # while this one is working.
+        # 2. Perform the heavy lifting OUTSIDE the lock.
+        # This allows other threads to call add_job or process other jobs
+        # while this thread is busy calculating.
         result = processor(data)
 
-        # 3. ATOMIC RESULT STORAGE
-        # We re-acquire the lock only to write the result.
+        # 3. Save the result.
+        # We must re-acquire the lock to safely write to the results dictionary.
         with self._lock:
             self.results[job_id] = result
-            
+        
         return True
 
     def get_result(self, job_id):
         with self._lock:
             return self.results.get(job_id)
 
-# --- Testing the fix ---
+# --- Example Usage / Test ---
 if __name__ == "__main__":
     import time
 
     def slow_processor(data):
-        time.sleep(0.1)  # Simulate heavy work
+        time.sleep(1)  # Simulate heavy work
         return data * 2
 
     queue = JobQueue()
+    
+    # Add a job
     queue.add_job(1, 10)
-    queue.add_job(1, 10) # Attempting to add same ID is fine, but process_job logic handles it
 
-    def worker(job_id):
-        success = queue.process_job(job_id, slow_processor)
-        print(f"Job {job_id} processed: {success}")
+    def worker():
+        success = queue.process_job(1, slow_processor)
+        print(f"Worker {threading.current_thread().name} success: {success}")
 
-    # Create two threads attempting to process the same job ID
-    t1 = threading.Thread(target=worker, args=(1,))
-    t2 = threading.Thread(target=worker, args=(1,))
+    # Start two threads trying to process the SAME job
+    t1 = threading.Thread(target=worker, name="A")
+    t2 = threading.Thread(target=worker, name="B")
 
     t1.start()
     t2.start()
     t1.join()
     t2.join()
 
-    print(f"Result for job 1: {queue.get_result(1)}")
+    print(f"Final Result for Job 1: {queue.get_result(1)}")

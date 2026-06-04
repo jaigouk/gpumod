@@ -4,6 +4,7 @@ class JobQueue:
     def __init__(self):
         self.jobs = {}
         self.results = {}
+        # A lock to protect access to the shared dictionaries
         self._lock = threading.Lock()
 
     def add_job(self, job_id, data):
@@ -12,24 +13,19 @@ class JobQueue:
         return job_id
 
     def process_job(self, job_id, processor):
-        # 1. Attempt to "claim" the job atomically
+        # 1. Extract the data and remove it from the jobs dict atomically.
+        # This prevents multiple threads from picking up the same job.
         with self._lock:
             if job_id not in self.jobs:
                 return False
-            # pop() removes the item and returns it, preventing other 
-            # threads from seeing this job_id in self.jobs
             data = self.jobs.pop(job_id)
 
-        # 2. Execute the processor OUTSIDE the lock.
-        # This allows other threads to process other jobs concurrently.
-        try:
-            result = processor(data)
-            processing_successful = True
-        except Exception as e:
-            result = e
-            processing_successful = False
+        # 2. Run the processor OUTSIDE the lock.
+        # If we held the lock here, no other thread could add or process jobs
+        # while this specific job is running.
+        result = processor(data)
 
-        # 3. Write the result back to the dictionary safely
+        # 3. Store the result atomically.
         with self._lock:
             self.results[job_id] = result
             
@@ -39,30 +35,37 @@ class JobQueue:
         with self._lock:
             return self.results.get(job_id)
 
-# --- Verification Example ---
+# --- Demonstration of usage ---
 if __name__ == "__main__":
     import time
-
-    queue = JobQueue()
 
     def slow_processor(data):
         time.sleep(1)  # Simulate heavy work
         return data * 2
 
-    # Add a job
+    queue = JobQueue()
     queue.add_job(1, 10)
+    queue.add_job(2, 20)
 
-    # Simulate two threads trying to process the same job ID simultaneously
-    def worker():
-        success = queue.process_job(1, slow_processor)
-        print(f"Thread {threading.current_thread().name} success: {success}")
+    def worker(job_id):
+        print(f"Starting job {job_id}")
+        if queue.process_job(job_id, slow_processor):
+            print(f"Finished job {job_id}")
+        else:
+            print(f"Job {job_id} failed or already taken")
 
-    t1 = threading.Thread(target=worker, name="A")
-    t2 = threading.Thread(target=worker, name="B")
+    # Create threads to process jobs
+    t1 = threading.Thread(target=worker, args=(1,))
+    t2 = threading.Thread(target=worker, args=(1,)) # Attempting to process same job
+    t3 = threading.Thread(target=worker, args=(2,))
 
     t1.start()
     t2.start()
+    t3.start()
+
     t1.join()
     t2.join()
+    t3.join()
 
-    print(f"Final Result: {queue.get_result(1)}")
+    print(f"Result for job 1: {queue.get_result(1)}")
+    print(f"Result for job 2: {queue.get_result(2)}")

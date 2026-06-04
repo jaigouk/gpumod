@@ -1,4 +1,5 @@
 from collections import deque
+    from typing import Dict, Any, Optional
 
     class JobQueue:
         def __init__(self):
@@ -9,14 +10,15 @@ from collections import deque
             self._queue.append((job_id, data))
             return job_id
 
-        def process_next_job(self):
+        def process_next_job(self, worker_func):
+            """Processes the next job in the queue using the provided worker function."""
             if not self._queue:
                 return None
+            
             job_id, data = self._queue.popleft()
-            # Mock processing: just return the data back or something simple
-            result = {"status": "completed", "original_data": data}
+            result = worker_func(data)
             self._results[job_id] = result
             return result
 
-        def get_result(self, job_id: str) -> dict | None:
+        def get_result(self, job_id: str) -> Optional[dict]:
             return self._results.get(job_id)

@@ -6,13 +6,16 @@ import heapq
             self._counter = 0
 
         def add_job(self, name: str, data: dict, priority: int = 0):
-            # Use negative priority for max-heap behavior with heapq (min-heap)
-            # Use counter to maintain FIFO for same priority
+            # We use -priority because heapq is a min-heap,
+            # but we want higher priority numbers to come first.
+            # self._counter ensures FIFO for jobs with the same priority.
             heapq.heappush(self._queue, (-priority, self._counter, name, data))
             self._counter += 1
 
         def get_next_job(self) -> tuple[str, dict] | None:
             if not self._queue:
                 return None
+            
+            # Pop the element with the lowest (-priority, counter)
             _, _, name, data = heapq.heappop(self._queue)
             return name, data

@@ -10,12 +10,12 @@ from collections import deque
             self._queue.append((job_id, data))
             return job_id
 
-        def process_next(self, worker_func):
+        def process_next_job(self, worker_func):
             if not self._queue:
                 return
             job_id, data = self._queue.popleft()
             result = worker_func(data)
             self._results[job_id] = result
 
-        def get_result(self, job_id: str) -> Optional[Dict[str, Any]]:
+        def get_result(self, job_id: str) -> Optional[dict]:
             return self._results.get(job_id)

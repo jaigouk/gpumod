@@ -1,35 +1,22 @@
-import threading
-    from collections import deque
-    import time
+from collections import deque
+    from typing import Dict, Any, Optional
 
     class JobQueue:
         def __init__(self):
             self._queue = deque()
             self._results = {}
-            self._lock = threading.Lock()
-            self._condition = threading.Condition(self._lock)
-            self._worker_thread = threading.Thread(target=self._process_jobs, daemon=True)
-            self._worker_thread.start()
 
         def add_job(self, job_id: str, data: dict) -> str:
-            with self._lock:
-                self._queue.append((job_id, data))
-                self._condition.notify()
+            self._queue.append((job_id, data))
             return job_id
 
-        def get_result(self, job_id: str) -> dict | None:
-            with self._lock:
-                return self._results.get(job_id)
+        def process_next(self, worker_func):
+            if not self._queue:
+                return None
+            job_id, data = self._queue.popleft()
+            result = worker_func(data)
+            self._results[job_id] = result
+            return result
 
-        def _process_jobs(self):
-            while True:
-                with self._lock:
-                    while not self._queue:
-                        self._condition.wait()
-                    job_id, data = self._queue.popleft()
-
-                # Simulate processing
-                result = {"status": "completed", "original_data": data}
-
-                with self._lock:
-                    self._results[job_id] = result
+        def get_result(self, job_id: str) -> Optional[dict]:
+            return self._results.get(job_id)

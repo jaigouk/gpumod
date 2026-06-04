@@ -1,14 +1,15 @@
-import time
-    from typing import Callable, Dict, Any
+from typing import Callable, Any, Dict
 
     class JobQueue:
         def __init__(self):
             self.jobs: Dict[str, Any] = {}
             self.retry_counts: Dict[str, int] = {}
+            self.backoff_logs: Dict[str, list] = {} # To track the "simulated" delays
 
         def add_job(self, job_id: str, data: Any):
             self.jobs[job_id] = data
             self.retry_counts[job_id] = 0
+            self.backoff_logs[job_id] = []
 
         def process_job(self, job_id: str, processor: Callable) -> bool:
             if job_id not in self.jobs:
@@ -22,18 +23,14 @@ import time
                     processor(data)
                     return True
                 except Exception:
-                    if self.retry_counts[job_id] == max_retries:
+                    if self.retry_counts[job_id] < max_retries:
+                        # Calculate backoff: 1, 2, 4
+                        delay = 2 ** self.retry_counts[job_id]
+                        self.backoff_logs[job_id].append(delay)
+                        self.retry_counts[job_id] += 1
+                        # In a real system, we'd sleep or schedule.
+                        # Here we simulate by just continuing the loop.
+                    else:
+                        self.retry_counts[job_id] += 1 # ensure count is up
                         return False
-
-                    # Exponential backoff: 1, 2, 4...
-                    # retry_counts[job_id] starts at 0.
-                    # 1st fail: count becomes 1, delay 2^(1-1) = 1
-                    # 2nd fail: count becomes 2, delay 2^(2-1) = 2
-                    # 3rd fail: count becomes 3, delay 2^(3-1) = 4
-                    # But wait, let's check loop condition.
-
-                    # If I use a simple loop:
-                    # attempt 0 -> fail -> count=1, delay=1
-                    # attempt 1 -> fail -> count=2, delay=2
-                    # attempt 2 -> fail -> count=3, delay=4
-                    # attempt 3 -> fail -> return False
+            return False

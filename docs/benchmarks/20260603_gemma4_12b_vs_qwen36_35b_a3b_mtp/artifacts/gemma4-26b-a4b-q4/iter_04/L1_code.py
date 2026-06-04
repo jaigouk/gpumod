@@ -1,35 +1,22 @@
 from collections import deque
-    from typing import Dict, Optional, Any
 
     class JobQueue:
         def __init__(self):
-            self._queue = deque()
-            self._jobs = {}
+            self.queue = deque()
+            self.results = {}
 
         def add_job(self, job_id: str, data: dict) -> str:
-            self._queue.append(job_id)
-            self._jobs[job_id] = {
-                "data": data,
-                "result": None,
-                "completed": False
-            }
+            self.queue.append((job_id, data))
             return job_id
 
-        def process_next(self):
-            if not self._queue:
-                return
+        def process_next(self): # Necessary to satisfy FIFO and "processing" requirement
+            if not self.queue:
+                return None
+            job_id, data = self.queue.popleft()
+            # Simulate processing
+            result = {"status": "completed", "original_data": data}
+            self.results[job_id] = result
+            return result
 
-            job_id = self._queue.popleft()
-            job = self._jobs[job_id]
-
-            # Simulating processing: just return the data back or modify it
-            # In a real scenario, this would be a task runner.
-            # For this implementation, we'll just "complete" it.
-            job["result"] = {"status": "completed", "processed_data": job["data"]}
-            job["completed"] = True
-
-        def get_result(self, job_id: str) -> Optional[dict]:
-            job = self._jobs.get(job_id)
-            if job and job["completed"]:
-                return job["result"]
-            return None
+        def get_result(self, job_id: str) -> dict | None:
+            return self.results.get(job_id)
