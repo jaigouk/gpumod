@@ -1,34 +1,33 @@
-from typing import Callable, Any, Dict
+from typing import Callable, Dict, Any
 
-    class JobQueue:
-        def __init__(self):
-            self.jobs = {}
-            self.retry_counts = {}
-            self.backoff_schedule = [1, 2, 4]
+class JobQueue:
+    def __init__(self):
+        self.jobs: Dict[str, Dict[str, Any]] = {}
 
-        def add_job(self, job_id: str, data: Dict[str, Any]):
-            self.jobs[job_id] = data
-            self.retry_counts[job_id] = 0
+    def add_job(self, job_id: str, data: Dict[str, Any]) -> None:
+        self.jobs[job_id] = data
 
-        def process_job(self, job_id: str, processor: Callable[[Dict[str, Any]]]) -> bool:
-            if job_id not in self.jobs:
-                return False
-
-            data = self.jobs[job_id]
-            max_retries = 3
-
-            for attempt in range(max_retries + 1):
-                try:
-                    processor(data)
-                    self.retry_counts[job_id] = 0
-                    return True
-                except Exception as e:
-                    self.retry_counts[job_id] += 1
-                    if self.retry_counts[job_id] > max_retries:
-                        break
-                    # Simulate backoff logic
-                    # delay = self.backoff_schedule[self.retry_counts[job_id] - 1]
-                    # print(f"Retrying {job_id} in {delay}s...")
-
-            self.retry_counts[job_id] = 0 # Reset or keep? Requirements say "Track retry count", usually implies clearing on success/failure or keeping it for the next time.
+    def process_job(self, job_id: str, Processor: Callable[[Dict[str, Any]]]) -> bool:
+        if job_id not in self.jobs:
             return False
+
+        data = self.jobs[job_id]
+
+        if "retry_count" not in data:
+            data["retry_count"] = 0
+        if "delays" not in data:
+            data["delays"] = []
+
+        for attempt in range(4):
+            try:
+                Processor(data)
+                return True
+            except Exception:
+                if attempt < 3:
+                    data["retry_count"] += 1
+                    delay = 2 ** attempt
+                    data["delays"].append(delay)
+                else:
+                    break
+
+        return False

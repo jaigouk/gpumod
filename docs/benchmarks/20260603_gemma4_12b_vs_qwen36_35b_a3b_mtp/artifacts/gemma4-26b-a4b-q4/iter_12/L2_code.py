@@ -1,19 +1,29 @@
-max_retries = 3
-        data = self.jobs.get(job_id)
-        if not data: return False
+from typing import Callable, Dict, Any
 
-        for attempt in range(max_retries + 1):
+class JobQueue:
+    def __init__(self):
+        self.jobs: Dict[str, Dict[str, Any]] = {}
+
+    def add_job(self, job_id: str, data: Dict[str, Any]) -> None:
+        self.jobs[job_id] = data
+
+    def process_job(self, job_id: str, processor: Callable[[Dict[str, Any]], Any]) -> bool:
+        if job_id not in self.jobs:
+            return False
+
+        data = self.jobs[job_id]
+        max_attempts = 4
+
+        for attempt in range(max_attempts):
             try:
                 processor(data)
                 return True
-            except Exception as e:
-                if attempt < max_retries:
-                    # Calculate delay: 1, 2, 4
+            except Exception:
+                if attempt < max_attempts - 1:
+                    # Exponential backoff: 2^0=1, 2^1=2, 2^2=4
                     delay = 2 ** attempt
-                    # Since we aren't actually sleeping per requirements "can be simulated"
-                    # and "delays can be stored/tracked rather than actually sleeping"
-                    # I'll just keep track or simulate the logic.
-                    self.retry_counts[job_id] = attempt + 1
-                    # Log/Simulate delay here
+                    data['retry_count'] = attempt + 1
+                    data['delay'] = delay
                 else:
                     return False
+        return False

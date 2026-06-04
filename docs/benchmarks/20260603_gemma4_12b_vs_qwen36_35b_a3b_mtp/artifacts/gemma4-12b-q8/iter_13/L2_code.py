@@ -1,19 +1,32 @@
-def process_job(self, job_id, processor):
+from typing import Dict, Callable, Any
+
+class JobQueue:
+    def __init__(self):
+        self.jobs: Dict[str, Dict[str, Any]] = {}
+        self.retry_counts: Dict[str, int] = {}
+
+    def add_job(self, job_id: str, data: Dict[str, Any]):
+        self.jobs[job_id] = data
+        self.retry_counts[job_id] = 0
+
+    def process_job(self, job_id: str, processor: Callable[[Dict[str, Any]], Any]) -> bool:
         if job_id not in self.jobs:
             return False
-        
-        job_data = self.jobs[job_id]
-        max_retries = 3
-        
-        for attempt in range(max_retries + 1):
+
+        data = self.jobs[job_id]
+
+        for attempt in range(4):
             try:
-                processor(job_data)
+                processor(data)
                 return True
-            except Exception as e:
-                if attempt < max_retries:
-                    # Backoff logic
-                    delay = 2 ** attempt # 2^0=1, 2^1=2, 2^2=4
-                    self.retries[job_id] = attempt + 1
-                    # Simulation of sleep: print(f"Retrying {job_id} in {delay}s")
+            except Exception:
+                if attempt < 3:
+                    self.retry_counts[job_id] += 1
+                    # Backoff: 1s (2^0), 2s (2^1), 4s (2^2)
+                    delay = 2 ** (self.retry_counts[job_id] - 1)
+                    if "delays" not in data:
+                        data["delays"] = []
+                    data["delays"]append(delay)
                 else:
                     return False
+        return False

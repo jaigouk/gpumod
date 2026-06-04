@@ -1,30 +1,34 @@
-import threading
-    import queue
-    import time
+from collections import deque
+from typing import Dict, Optional
 
-    class JobQueue:
-        def __init__(self):
-            self.queue = queue.Queue()
-            self.results = {}
-            self.lock = threading.Lock()
+class JobQueue:
+    def __init__(self):
+        # Use a deque to ensure FIFO (First-In-First-Out) order
+        self._queue: deque[tuple[str, dict]] = deque()
+        # Dictionary to store results keyed by job_id
+        self._results: Dict[str, dict] = {}
 
-        def add_job(self, job_id: str, data: dict) -> str:
-            with self.lock:
-                self.results[job_id] = None
-            self.queue.put((job_id, data))
-            
-            # Start a worker thread for this job to simulate "processing"
-            # Or a single worker thread for the whole queue.
-            # A single worker is better for FIFO.
-            threading.Thread(target=self._worker, args=(job_id, data)).start()
-            return job_id
+    def add_job(self, job_id: str, data: dict) -> str:
+        """Adds a job to the queue and returns the job_id."""
+        self._queue.append((job_id, data))
+        return job_id
 
-        def _worker(self, job_id, data):
-            # Simulate processing
-            time.sleep(0.1) 
-            with self.lock:
-                self.results[job_id] = {"status": "completed", "data": data}
+    def process_next(self) -> Optional[dict]:
+        """
+        Processes the next job in the queue (FIFO).
+        This method satisfies the FIFO requirement and handles the 
+        transition from the queue to the results storage.
+        """
+        if not self._queue:
+            return None
 
-        def get_result(self, job_id: str) -> dict | None:
-            with self.lock:
-                return self.results.get(job_id)
+        job_id, data = self._queue.popleft()
+
+        # Simulate processing logic
+        result = {"status": "completed", "input": data}
+        self._results[job_id] = result
+        return result
+
+    def get_result(self, job_id: str) -> Optional[dict]:
+        """Returns the result of a completed job, or None if not finished."""
+        return self._results.get(job_id)

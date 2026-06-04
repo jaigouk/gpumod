@@ -1,14 +1,33 @@
-max_retries = 3
-        retries_done = self.jobs[job_id]['retries']
-        for attempt in range(max_retries + 1):
+from typing import Callable, Dict, Any
+
+class JobQueue:
+    def __init__(self):
+        self.jobs: Dict[str, Dict[str, Any]] = {}
+
+    def add_job(self, job_id: str, data: dict):
+        self.jobs[job_id] = {
+            "data": data,
+            "retries": 0,
+            "delay_history": []
+        }
+
+    def process_job(self, job_id: str, processor: Callable[[dict], Any]) -> bool:
+        if job_id not in self.jobs:
+            return False
+
+        job = self.jobs[job_id]
+        data = job["data"]
+
+        for attempt in range(4):
             try:
-                processor(self.jobs[job_id]['data'])
-                self.jobs[job_id]['retries'] = 0 # Reset or keep? Usually reset on success.
+                processor(data)
                 return True
             except Exception:
-                if attempt < max_retries:
-                    self.jobs[job_id]['retries'] += 1
-                    backoff = 2 ** (self.jobs[job_id]['retries'] - 1)
-                    # Log backoff or just continue
+                if attempt < 3:
+                    delay = 2 ** job["retries"]
+                    job["delay_history"].append(delay)
+                    job["retries"] += 1
                 else:
-                    return False
+                    break
+
+        return False

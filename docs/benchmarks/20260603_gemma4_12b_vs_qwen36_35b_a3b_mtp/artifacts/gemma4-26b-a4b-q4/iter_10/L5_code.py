@@ -1,23 +1,66 @@
-from dataclasses import dataclass, field
-    from typing import Any, Deque
-    from collections import deque
+from dataclasses import dataclass
+from typing import Callable
+import heapq
 
-    @dataclass(order=False) # order=False because we handle priority manually
-    class Job:
-        id: str
-        payload: Any
-        priority: int = 0
-        retries: int = 0
+@dataclass
+class Job:
+    id: str
+    data: dict
+    priority: int = 0
+    retries: int = 0
 
-    class JobQueue:
-        def __init__(self):
-            self._queue: Deque[Job] = deque()
+class RetryPolicy:
+    def __init__(self, max_attempts: int = 4):
+        self.max_attempts = max_attempts
 
-        def push(self, job: Job):
-            self._queue.append(job)
+    def run(self, fn: Callable, data: dict) -> tuple[bool, int]:
+        attempts_made = 0
+        for _ in range(self.max_attempts):
+            attempts_made += 1
+            try:
+                fn(data)
+                return True, attempts_made
+            except Exception:
+                continue
+        return False, attempts_made
 
-        def pop(self) -> Job:
-            return self._queue.popleft()
+class JobQueue:
+    def __init__(self):
+        self._jobs: dict[str, Job] = {}
+        self._heap = []
+        self._counter = 0
+        self._retry_policy = RetryPolicy()
 
-        def is_empty(self) -> bool:
-            return len(self._queue) == 0
+    def add_job(self, job_id: str, data: dict, priority: int = 0) -> None:
+        job = Job(id=job_id, data=data, priority=priority)
+        self._jobs[job_id] = job
+        self._counter += 1
+        # Use -priority for max-heap behavior (highest priority first)
+        # Use self._counter for FIFO order within the same priority
+        heapq.heappush(self._heap, (-priority, self._counter, job_id))
+
+    def process_job(self, job_id: str, processor: Callable) -> bool:
+        if job_id not in self._jobs:
+            return False
+
+        job = self._jobs[job_id]
+        success, attempts = self._retry_policy.run(processor, job.data)
+
+        if success:
+            del self._jobs[job_id]
+            return True
+        return False
+
+    def get_next_job(self) -> tuple[str, dict] | None:
+        while self._heap:
+            # Peek at the top of the heap
+            _, _, job_id = self._heap[0]
+
+            # If the job is still in the registry, it hasn't been processed/removed
+            if job_id in self._jobs:
+                job = self._jobs[job_id]
+                return job.id, job.data
+            else:
+                # Lazy removal: if the job is no longer in _jobs, it was processed
+                heapq.heappop(self._heap)
+        return None

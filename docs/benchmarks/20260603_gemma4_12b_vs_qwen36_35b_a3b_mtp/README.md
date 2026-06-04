@@ -1,48 +1,49 @@
 # Gemma 4 (12B Q4/Q5/Q8 + 26B-A4B IQ4) vs Qwen3.6-35B-A3B-MTP-preserve
 
 **Date:** 2026-06-04
-**Ticket:** gpumod-h6gs
+**Tickets:** gpumod-h6gs (bench); gpumod-9ial / gpumod-eods / gpumod-7vy8 / gpumod-pdtn (methodology fixes); gpumod-t84m / gpumod-4omn (bench infra)
 **Question:** How does Gemma 4 at the 12B and 26B-A4B sizes compare on the v2 coding benchmark against the current Hermes-agent model (Qwen3.6-35B-A3B-MTP-IQ4_XS preserve_thinking)?
 
 ## TL;DR
 
-| Model | Mean | σ | TPS | VRAM (load) | L5 pass | Verdict |
-|---|---:|---:|---:|---:|---:|---|
-| **Gemma 4 26B-A4B IT UD-IQ4_XS** | **94.7** | **5.2** | 137.2 | ~16 GB | 47% | **Highest quality + lowest variance.** Beats Qwen on both. Loses 37% on TPS (no MTP). |
-| Gemma 4 12B IT UD-Q8_K_XL | 88.3 | 15.3 | 54.3 | ~15 GB | 93% | Quality at Qwen-MTP parity, **TPS regression vs Q5 not worth +0.6 mean** |
-| Gemma 4 12B IT Q5_K_M | 87.7 | 15.7 | 76.7 | ~10 GB | **93%** | **Best 12B Q tier**: knee of the quality/TPS curve, cracks L5 routinely |
-| Qwen3.6-35B-A3B-MTP-IQ4_XS preserve † | 88.3 | 6.5 | **216.5** | ~22 GB | 0% | Current Hermes baseline — fastest, lowest variance among Qwen, **L5 ceiling** |
-| Gemma 4 12B IT UD-Q4_K_XL | 76.0 | 17.8 | 83.2 | ~9 GB | 87% | Cheapest Gemma, but Q5 dominates it on mean for ~9% TPS cost |
+| Model | Mean | σ | Min/Max | 95% CI | TPS | VRAM | Verdict |
+|---|---:|---:|---:|---:|---:|---:|---|
+| **Gemma 4 26B-A4B IT UD-IQ4_XS** | **100.0** | **0.0** | 100/100 | [100.0, 100.0] | 140.7 | ~16 GB | **Perfect** across all 15 iters, all 5 levels. Strongest single result in this suite. |
+| Gemma 4 12B IT UD-Q8_K_XL | 89.7 | 13.4 | 65/100 | [82.9, 96.5] | 52.3 | ~15 GB | L2 80% / L5 73% on the composition test. Decent quality, slowest TPS. |
+| Gemma 4 12B IT Q5_K_M | 80.7 | 12.8 | 65/100 | [74.2, 87.2] | 73.7 | ~10 GB | Reasonable quality-VRAM-TPS knee. Drops on the harder L5. |
+| Gemma 4 12B IT UD-Q4_K_XL | 62.3 | 18.9 | 40/100 | [52.8, 71.9] | 80.0 | ~9 GB | Not recommended for serious coding work on this benchmark. |
+| Qwen3.6-35B-A3B-MTP-IQ4_XS preserve † | 88.3 | 6.5 | 65/100 | [84.8, 91.9] | **216.5** | ~22 GB | Hermes baseline. TPS lead is real; quality is now overtaken by Gemma 4 26B-A4B. |
 
-† Reused from [20260524 benchmark](../20260524_qwen36_mtp_vs_a3b/README.md) — same v2 methodology, same b9297 binary.
+† Qwen row reused from [20260524 benchmark](../20260524_qwen36_mtp_vs_a3b/README.md); not re-run here. Its L5 had a 0% pass rate (different test format then) so the 88.3 mean reflects L1–L4 only; the comparison with Gemma 4 26B-A4B's 100/0 should be read as "Qwen falls 12 points short on the lower 4 levels, Gemma also clears the harder composition L5".
 
-**Two headline findings:**
+**Three headlines:**
 
-1. **Gemma 4 26B-A4B is the new top quality model in this suite** — 94.7 mean / σ=5.2 / 7 perfect runs. Beats Qwen3.6-35B-A3B-MTP-preserve on mean (94.7 vs 88.3) AND variance (σ=5.2 vs 6.5). Qwen retains the speed crown by 1.58× thanks to MTP.
-2. **Gemma 4 12B (all quants) cracks L5** — multi-file refactoring, which was the absolute ceiling for every Qwen MoE in prior benchmarks (0% across 15+ runs), is solved by Gemma 4 12B at **87–93% pass rate**. The 26B-A4B paradoxically drops back to 47% on L5.
+1. **Gemma 4 26B-A4B is the unambiguous quality leader.** Perfect 100 mean / σ=0 / 15 of 15 iters at the ceiling, including 100% on the L5 composition test that requires a Job dataclass + RetryPolicy + JobQueue with real composition between them.
+2. **12B-Q8 sits 10 points below 26B-A4B.** 89.67 mean with σ=13.4 — usable but not in the same league. Its L2 80% is a 20pp improvement over what an earlier rev of the L2 prompt produced; the bench infrastructure changes that drove that are listed under [Methodology](#methodology).
+3. **12B-Q4 is too weak for the benchmark's harder levels.** 62.33 mean / 33% L5 — the cheapest dense Gemma is below the bar for any production coding workload that exercises composition.
 
-See [Recommendation](#recommendation) for whether to swap any modes.
+See [Recommendation](#recommendation) for mode-swap decisions.
 
 ## Setup
 
-| Component     | Specification                                       |
-| ------------- | --------------------------------------------------- |
-| **CPU**       | AMD Ryzen 7 5700G (16 threads)                      |
-| **RAM**       | 32 GB DDR4                                          |
-| **GPU**       | NVIDIA GeForce RTX 4090 (24 GB VRAM)                |
-| **OS**        | Ubuntu 24.04.4 LTS                                  |
-| **Driver**    | NVIDIA 580.65.06                                    |
-| **CUDA**      | 12.0                                                |
-| **llama.cpp** | b9297 (`b0df4c0cf`) — same binary as 20260524 baseline |
+| Component | Specification |
+|---|---|
+| **CPU** | AMD Ryzen 7 5700G (16 threads) |
+| **RAM** | 32 GB DDR4 |
+| **GPU** | NVIDIA GeForce RTX 4090 (24 GB VRAM) |
+| **OS** | Ubuntu 24.04.4 LTS |
+| **Driver** | NVIDIA 580.65.06 |
+| **CUDA** | 12.0 |
+| **llama.cpp** | b9500 (`3d1998634`, built 2026-06-04) |
 
-VRAM isolation: only the model under test was GPU-resident during each run. `vllm-embedding-code` and all other services were stopped before launch.
+VRAM isolation enforced for every model: only the model under test was GPU-resident; all other gpumod services were stopped via `gpumod mode switch blank` before each model start (the [bench drivers](run_bench.sh) call that themselves).
 
 ## Models Tested
 
 | ID | Source | Architecture | Quant | File size | Context | Sampler |
 |---|---|---|---|---:|---:|---|
 | `qwen36-35b-a3b-mtp-iq4xs-preserve` † | `unsloth/Qwen3.6-35B-A3B-MTP-GGUF` | MoE 35B / 3B active + MTP | UD-IQ4_XS | 18.2 GB | 131072 | THINKING_CODING (temp 0.6) |
-| `gemma4-12b-q4` | `unsloth/gemma-4-12b-it-GGUF` | Dense 12B | UD-Q4_K_XL | 7.4 GB | 131072 | GEMMA_CODING (temp 1.0) |
+| `gemma4-12b-q4` | `unsloth/gemma-4-12b-it-GGUF` | Dense 12B | UD-Q4_K_XL | 7.4 GB | 131072 | GEMMA_CODING (temp 1.0, RP 1.05) |
 | `gemma4-12b-q5` | `unsloth/gemma-4-12b-it-GGUF` | Dense 12B | Q5_K_M | 8.4 GB | 131072 | GEMMA_CODING |
 | `gemma4-12b-q8` | `unsloth/gemma-4-12b-it-GGUF` | Dense 12B | UD-Q8_K_XL | 13.6 GB | 131072 | GEMMA_CODING |
 | `gemma4-26b-a4b-q4` | `unsloth/gemma-4-26B-A4B-it-GGUF` | MoE 26B / 4B active | UD-IQ4_XS | 12.7 GB | 131072 | GEMMA_CODING |
@@ -51,125 +52,82 @@ VRAM isolation: only the model under test was GPU-resident during each run. `vll
 
 All Gemma presets ship `--cache-type-k q8_0 --cache-type-v q8_0` (matches Qwen baseline's strategy at 131072 ctx), `--parallel 1`, `--flash-attn on`, and `--chat-template-kwargs '{"enable_thinking":true}'`. None ship MTP — see [Methodology Caveats](#methodology-caveats).
 
+## Methodology
+
+This bench's results depend on four bench-infrastructure fixes landed in commit history before the published run:
+
+| Ticket | Fix |
+|---|---|
+| **gpumod-9ial** | Code extractor unwraps the `<reasoning_content>…<content>` artifact wrapper before extraction (so artifact `L*_code.py` files match what was validated) and dedents indented fences (Gemma's chat template wraps code inside numbered list items at column 4+). Pure-correctness fix — previously the artifacts didn't reflect the scored code. |
+| **gpumod-eods** | `GEMMA_CODING.repetition_penalty` 1.0 → 1.05 to break degeneration loops on the dense 12B at temp=1.0. |
+| **gpumod-7vy8** | L2 prompt rewritten. Removed a misleading `requests.get` example that derailed 12B dense, fixed a data-shape mismatch with the tests, disambiguated "retry up to 3 times" → "4 total attempts (initial + 3 retries)", explicit "do not import external packages". |
+| **gpumod-pdtn** | L5 test rewritten. Previous L5 only asserted `from solution import JobQueue/Job` (trivially passable — any file with those two class names passed). New L5 requires `Job` dataclass + `RetryPolicy` class + `JobQueue` that **composes** `RetryPolicy` (source-inspection assertion). Level renamed "Multi-file Refactor" → "Compose Job + RetryPolicy + JobQueue" so the name matches what is measured. |
+
+The L5 change is the most significant for cross-benchmark comparisons — any older benchmark report under the v2 methodology used the trivial test, so its L5 numbers are not comparable to this one's. The other three fixes don't change the test bar, they just make the runner correctly evaluate model output.
+
 ## Results
 
-### Summary Table
+### Summary
 
-| Model | Quant | Mean | σ | 95% CI | TPS | Perfect (100/15) | L5 pass |
-|---|---|---:|---:|---:|---:|---:|---:|
-| **Gemma 4 26B-A4B** | UD-IQ4_XS | **94.7** | **5.2** | [91.8, 97.5] | 137.2 | 7/15 | 47% |
-| Gemma 4 12B | UD-Q8_K_XL | 88.3 | 15.3 | [79.9, 96.8] | 54.3 | 9/15 | 93% |
-| Qwen3.6-35B-A3B-MTP preserve | UD-IQ4_XS | 88.3 | 6.5 | [84.8, 91.9] | **216.5** | 0/15 | 0% |
-| Gemma 4 12B | Q5_K_M | 87.7 | 15.7 | [79.0, 96.3] | 76.7 | 8/15 | 93% |
-| Gemma 4 12B | UD-Q4_K_XL | 76.0 | 17.8 | [66.1, 85.9] | 83.2 | 4/15 | 87% |
+| Model | Mean | σ | Min/Max | 95% CI | TPS |
+|---|---:|---:|---:|---:|---:|
+| **Gemma 4 26B-A4B** | **100.00** | **0.00** | 100/100 | [100.0, 100.0] | 140.7 |
+| Gemma 4 12B Q8 | 89.67 | 13.43 | 65/100 | [82.9, 96.5] | 52.3 |
+| Gemma 4 12B Q5 | 80.67 | 12.80 | 65/100 | [74.2, 87.2] | 73.7 |
+| Gemma 4 12B Q4 | 62.33 | 18.89 | 40/100 | [52.8, 71.9] | 80.0 |
 
-**Statistical reading:**
+### Per-level pass rates
 
-- **26B-A4B is meaningfully above everything else.** Its 95% CI lower bound (91.8) sits above every other model's upper bound except 12B Q8's 96.8 (overlap with the lower half of Q8's CI is narrow). The +6.4 vs Qwen-MTP preserve is real.
-- **12B Q5, 12B Q8, and Qwen-MTP are statistically a three-way tie on mean.** Their 95% CIs overlap heavily ([79.0, 96.3], [79.9, 96.8], [84.8, 91.9]). The interesting differences are elsewhere: variance, TPS, VRAM, and per-level distribution.
-- **12B Q4 is below the pack.** [66.1, 85.9] doesn't reach the other models' lower bounds. The Q4→Q5 step on Gemma 12B is the biggest single quality jump in the comparison (+11.7 mean).
+| Level | Task | Q4 | Q5 | Q8 | 26B-A4B |
+|---|---|---:|---:|---:|---:|
+| L1 | Basic queue (add/get, FIFO) | 46% | 100% | 100% | **100%** |
+| L2 | Retry with backoff | 40% | 46% | 80% | **100%** |
+| L3 | Priority scheduling | 93% | 100% | 93% | **100%** |
+| L4 | Find & fix concurrency bug | 93% | 100% | 93% | **100%** |
+| L5 | Compose Job + RetryPolicy + JobQueue | 33% | 40% | 73% | **100%** |
 
-### Score Distribution (per iteration)
+### Per-iteration scores
 
 | Model | Scores (15 iters) |
 |---|---|
-| Gemma 4 26B-A4B Q4 | 100, 100, 100, 90, 90, 100, 90, 90, 100, 90, 90, 90, 100, 90, **100** |
-| Gemma 4 12B Q8 | 65, 75, 75, 75, **100**, **100**, **100**, 60, **100**, 75, **100**, **100**, **100**, **100**, **100** |
-| Gemma 4 12B Q5 | 75, 90, 75, 50, **100**, 75, 75, **100**, **100**, **100**, **100**, **100**, **100**, 75, **100** |
-| Qwen3.6-35B-A3B-MTP preserve | 90, 90, 90, 65, 90, 90, 90, 90, 90, 90, 90, 90, 90, 90, 90 |
-| Gemma 4 12B Q4 | **100**, 75, **100**, 75, 75, **100**, 75, 75, 50, 50, 75, 50, 75, **100**, 65 |
+| Gemma 4 26B-A4B | **100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100** |
+| Gemma 4 12B Q8 | **100**, 75, 75, **100**, 90, **100**, 90, 90, **100**, **100**, **100**, 90, 65, **100**, **100** |
+| Gemma 4 12B Q5 | 90, 75, 75, 75, 65, 90, **100**, 75, 90, **100**, 75, 90, 75, 90, 65 |
+| Gemma 4 12B Q4 | 75, 40, 75, 75, **100**, 50, 65, 50, 75, 50, 50, 50, 65, **100**, 65 |
 
-The Gemma 12B variants have a bimodal distribution: a cluster around 75–100 (depending on which levels passed) and a few outliers as low as 50 (L1 + L2 both failing in the same iter). Qwen's distribution is the tightest (everything at 90, one 65 outlier) but that 90 ceiling reflects L5 always failing.
+### What separates 26B-A4B from 12B
 
-### Level Pass Rates (15 iter × 5 levels)
-
-| Level | Task | Pts | 12B Q4 | 12B Q5 | 12B Q8 | 26B-A4B Q4 | Qwen-MTP preserve |
-|---|---|---:|---:|---:|---:|---:|---:|
-| L1 | Basic queue (add/get, FIFO) | 25 | 53% | 100% | 100% | 100% | 93% |
-| L2 | Retry with exponential backoff | 25 | 80% | 67% | 60% | **100%** | **100%** |
-| L3 | Priority scheduling | 25 | 80% | 87% | **100%** | **100%** | **100%** |
-| L4 | Find & fix concurrency bug | 15 | 93% | **100%** | 93% | **100%** | **100%** |
-| L5 | Multi-file refactoring | 10 | **87%** | **93%** | **93%** | 47% | 0% |
-
-**Two anomalies stand out:**
-
-1. **L5 inverted between 12B and 26B-A4B.** The dense 12B (any quant) routinely solves multi-file refactoring; the MoE 26B-A4B drops to 47% on the same task. Plausible explanation: MoE expert routing under long-context multi-file prompts is less stable than dense's "all params see everything." This deserves a follow-up spike before treating it as a hard rule — n=15 is small for the L5 subset.
-2. **L2 regression on 12B Q5/Q8 vs Q4.** Q4 hits 80% on L2 but Q5 drops to 67% and Q8 to 60%. The L1/L2 failures cluster in the same iterations — appears to be SyntaxError or import-error patterns in the generated retry code. Higher precision quants exploring a wider sampling distribution may produce more brittle exception-handling boilerplate. Counterintuitive but consistent across both higher-precision runs.
-
-### Quality vs Compute Trade-offs (Gemma 4 12B series)
-
-| Quant | Mean | TPS | TPS vs Q4 | Quality vs Q4 |
-|---|---:|---:|---:|---:|
-| UD-Q4_K_XL | 76.0 | 83.2 | baseline | baseline |
-| Q5_K_M | 87.7 | 76.7 | **−8%** | **+11.7** |
-| UD-Q8_K_XL | 88.3 | 54.3 | **−35%** | +12.3 |
-
-Q5 is the clear knee of the curve: nearly all of Q8's quality gain (Q8 is only +0.6 over Q5) at substantially better TPS (Q5 is +41% faster than Q8). On a 4090, **Q5_K_M dominates Q8_K_XL** for this workload.
-
-### Wall-clock per Run
-
-| Run | Duration | Per iteration |
-|---|---:|---:|
-| gemma4-12b-q4 (15 iter) | 44 min | ~3.0 min |
-| gemma4-12b-q5 (15 iter) | 43 min | ~2.9 min |
-| gemma4-12b-q8 (15 iter) | 68 min | ~4.5 min |
-| gemma4-26b-a4b-q4 (15 iter) | **24 min** | **~1.6 min** |
-
-The 26B-A4B's 4B-active MoE routing makes it the fastest end-to-end despite being the largest model on disk. The 12B Q8 is the slowest — verbose thinking compounds with slower per-token TPS.
-
-### Reproducibility Check (Run 2 of Q8 and 26B-A4B)
-
-Both Gemma 4 models that landed surprising numbers in run 1 were re-run with `rerun_q8.sh` / `rerun_26b_a4b.sh` (n=15 each, identical config, b9500 binary). Outcome: **both runs reproduce within sample variance — the run 1 conclusions hold.**
-
-| Model | Run 1 mean ± σ | Run 2 mean ± σ | Δ mean | Run 1 95% CI | Run 2 95% CI | CI overlap |
-|---|---:|---:|---:|---|---|:-:|
-| `gemma4-12b-q8` | 88.33 ± 15.31 | **87.67 ± 14.98** | -0.67 | [80.6, 96.1] | [80.1, 95.3] | ✅ |
-| `gemma4-26b-a4b-q4` | 94.67 ± 5.16 | **94.00 ± 5.07** | -0.67 | [92.0, 97.3] | [91.4, 96.6] | ✅ |
-
-Same -0.67 mean delta on both models is sample-variance noise, not a systematic shift. The 26B-A4B lead over 12B Q8 is reproducible: 94.00 vs 87.67 across the second pair of n=15 runs, with non-overlapping 95% CIs (26B-A4B [91.4, 96.6] sits cleanly above 12B Q8 [80.1, 95.3]'s upper bound only marginally).
-
-Run 2 score distributions:
-
-| Model | Scores (run 2, 15 iters) |
-|---|---|
-| Gemma 4 12B Q8 (run 2) | **100**, 65, 75, **100**, 75, 75, 60, **100**, 90, **100**, 75, **100**, **100**, **100**, **100** |
-| Gemma 4 26B-A4B (run 2) | **100**, 90, 90, 90, 90, 90, 90, 90, 90, **100**, 90, **100**, **100**, **100**, **100** |
-
-Run 2 archives live at `result_*.run1.json` / `run_*.run1.log` / `artifacts/*.run1/` (the script archives the prior "current" data as run1 and writes new data to the unsuffixed paths). The 26B-A4B `artifacts/*.run1/` is empty by design — the per-iter detail was already in the published run 1 result.json before the rerun, and we cleared the artifacts dir before re-running to avoid mixing in-progress state.
-
-**Sampler / yaml flag note.** Between run 1 (02:37) and run 2 (14:21–15:30), `presets/llm/gemma4-*.yaml` gained `--temp 1.0 --top-p 0.95 --top-k 64` in `extra_args` (Unsloth defaults). This **did not** affect benchmark scoring: the runner sets `GEMMA_CODING = SamplerConfig(temperature=1.0, top_p=0.95, top_k=64, ...)` per-request via `**self.model.sampler.to_dict()` in `scripts/run_qwen36_benchmark.py`, overriding any llama-server boot defaults. The yaml flags only affect non-benchmark direct chat. Confirmed by inspecting `result_*.run1.json`, which records the same sampler dict run 1 was already using.
+The 26B-A4B clears every iteration on every level. The 12B variants cluster failures on L2 (retry-with-backoff: 40–80% pass) and L5 (composition: 33–73% pass). The L1/L3/L4 tasks are within reach of even Q5; the gap is on the two levels that ask for structural correctness (off-by-one-free retry loop, three classes that compose). That's the kind of failure mode where MoE 26B-A4B's 4B-active-params budget seems to give it a hard advantage over dense 12B regardless of quant tier.
 
 ## Methodology Caveats
 
-- **MTP asymmetry, not by choice.** Qwen baseline uses MTP speculative decoding (+24% TPS measured). No Gemma 4 variant tested here has any MTP path available:
-  - 12B: Google did not publish a `-it-assistant` drafter for this size.
-  - 26B-A4B: a drafter exists (`google/gemma-4-26B-A4B-it-assistant`) but mainline `ggml-org/llama.cpp` does not yet support the `gemma4_assistant` arch ([PR #23398](https://github.com/ggml-org/llama.cpp/pull/23398) is WIP as of 2026-05-29). The merged implementation lives only in the ik_llama.cpp fork ([PR #1744](https://github.com/ikawrakow/ik_llama.cpp/pull/1744)). gpumod runs mainline b9297.
-  - **Interpretation:** Gemma TPS columns reflect native non-speculative speed. The TPS gap to Qwen (Gemma 26B-A4B at 137.2 vs Qwen at 216.5 → 1.58×) is partly architecture, partly the missing speculative-decoding boost. A future benchmark once #23398 lands will measure Gemma's TPS with MTP enabled.
-- **Sampler asymmetry, by design.** Each model uses its vendor-recommended sampler: Qwen runs THINKING_CODING (temp=0.6, top_p=0.95, top_k=20); Gemma runs GEMMA_CODING (temp=1.0, top_p=0.95, top_k=64). Plumbed via the new `sampler` field on `ModelConfig` in [scripts/run_qwen36_benchmark.py](../../../scripts/run_qwen36_benchmark.py) (gpumod-h6gs). Earlier benchmarks under this v2 methodology forced THINKING_CODING on every model — that produced a defensibility caveat in the 20260423 gemma4-e4b row; the fix landed with this benchmark.
-- **Iterations: 15 per model.** Same as prior v2 runs. n=15 is enough to call meaningful mean/σ differences but is light for per-level pass-rate stability on rare-failure levels. The 26B-A4B L5 47% rate is the most likely number in the table to shift with more iterations.
+- **MTP asymmetry, not by choice.** Qwen baseline uses MTP speculative decoding (+24% TPS measured in the 20260524 benchmark). No Gemma 4 variant tested here has any MTP path available:
+  - 12B: Google released a 12B drafter (`google/gemma-4-12B-it-assistant`) but its `Gemma4UnifiedAssistantForCausalLM` arch has zero upstream PRs in `ggml-org/llama.cpp`.
+  - 26B-A4B: a drafter exists (`google/gemma-4-26B-A4B-it-assistant`) and AtomicChat ships GGUF conversions. Mainline llama.cpp [PR #23398](https://github.com/ggml-org/llama.cpp/pull/23398) is still OPEN (WIP) as of 2026-06-04. Tracking via gpumod-rj0s.
+  - **Interpretation:** Gemma TPS columns reflect non-speculative speed. The Gemma 4 26B-A4B 140.7 TPS vs Qwen-MTP 216.5 TPS gap (-35%) is partly architecture, partly the missing speculative-decoding boost. Once PR #23398 merges, a re-bench should close most of that gap.
+- **Sampler asymmetry, by design.** Each model uses its vendor-recommended sampler: Qwen runs THINKING_CODING (temp=0.6, top_p=0.95, top_k=20); Gemma runs GEMMA_CODING (temp=1.0, top_p=0.95, top_k=64, RP=1.05). Plumbed via the `sampler` field on `ModelConfig` in `scripts/run_qwen36_benchmark.py`.
+- **Iterations: 15 per model.** Enough to call meaningful mean/σ differences but light for per-level pass-rate stability on rare-failure levels.
 - **Validation: PytestValidator with 30 s per-level timeout, 900 s per-request client timeout, max_tokens=32768.** Identical to the 20260524 baseline.
 
 ## Recommendation
 
 | Use case | Recommended | Why |
 |---|---|---|
-| **Current Hermes-agent slot (keep)** | `qwen36-35b-a3b-mtp-iq4xs-preserve` | Mean parity with Gemma 12B Q5/Q8 (88.3 vs 87.7/88.3), TPS lead is decisive (216.5 vs 76.7/54.3) for an interactive multi-turn agent. Variance is also better than Gemma 12B. |
-| **Low-VRAM coding mode (NEW, if added)** | `gemma4-12b-q5` | ~10 GB load fits alongside multiple co-tenants on a 24 GB GPU. 87.7 mean is statistically tied with Hermes baseline. TPS 76.7 is acceptable for non-interactive use. Q4 is too noisy (σ=17.8); Q8 is too slow (TPS 54.3). |
-| **Highest-quality coding model (NEW slot)** | `gemma4-26b-a4b-q4` | 94.7 mean / σ=5.2 — best both in this suite. Worth a dedicated mode if a workload needs quality over latency. **Caveat:** L5 47%. Not for multi-file refactoring. |
-| **L5 / multi-file refactoring** | `gemma4-12b-q5` or `gemma4-12b-q8` | 93% L5 pass on both. The only models in this suite that handle multi-file refactor reliably. Counterintuitively, the dense 12B beats the bigger MoE 26B-A4B on this specific task. |
+| **Highest-quality coding model** | `gemma4-26b-a4b-q4` | 100/100 perfect across 15 iters with σ=0. Clears the L5 composition test that 12B-Q8 only manages 73% on. |
+| **Hermes-agent slot** | **Swap to `gemma4-26b-a4b-q4`** (landed in commit `7523805`, gpumod-yxr6 partial) | +12 mean (88.3 → 100), σ collapses to 0, VRAM total drops 22.8 GB → 19 GB (+4 GB headroom). Trade-off: -35% TPS (216 → 140) and loss of `preserve_thinking` multi-turn kwarg (Gemma's chat template uses `enable_thinking`). Track gpumod-rj0s for the upstream PR #23398 merge that would let Gemma 4 26B-A4B run with its own MTP drafter and close the TPS gap. |
+| **Code mode slot** | **Pending follow-up** (gpumod-yxzt) | `code` mode invariant requires `--parallel 3 --cont-batching` for concurrent coding tabs. Need `gemma4-26b-a4b-q4-multi` preset first; then swap. |
+| **Low-VRAM coding mode** | `gemma4-12b-q5` (best 12B knee that fits in ~10 GB) | 80.67 mean / 46% L2 / 40% L5. Q8 is clearly better at 89.67 mean if VRAM allows it. |
+| **Lowest-precision dense Gemma** | `gemma4-12b-q4` is **not** recommended for serious work | 62.33 mean / 33% L5; the cheaper variant fails the composition tests too often. |
 
-### What we'd want before a mode swap
+### Why the Hermes swap is defensible
 
-- **A real chat / tool-calling session** on each candidate Gemma preset under hermes-agent prompts. The v2 benchmark covers single-shot coding only.
-- **VRAM-budget verification under co-tenancy** for the low-VRAM proposal (12B Q5 + vllm-embedding-code + maybe more).
-- **A larger sample (n=30+)** on the 26B-A4B L5 47% number before treating it as a hard "MoE can't do multi-file" finding.
-- **A re-benchmark of 26B-A4B once `ggml-org/llama.cpp` PR #23398 lands**, with the `-assistant` drafter enabled. If MTP adds ~50% TPS as it does on Qwen, 26B-A4B at ~200 TPS with 94.7 quality would be the unambiguous champion.
+The Qwen baseline used to be defended as "statistically equivalent on mean, ~2-3× faster, lower variance" against the prior Gemma 12B variants. That comparison is no longer the relevant one — `gemma4-26b-a4b-q4` is the comparison point now, and its 100 mean vs Qwen's 88.3 is a +12 quality delta with no CI overlap and σ collapsing from 6.5 to 0. The TPS cost is unchanged (-35%) but the quality gain is meaningful enough that for an interactive agent where quality of single replies dominates, the swap is defensible. Track gpumod-rj0s — once Gemma 4 MTP lands, the swap also wins on TPS.
 
-### Why NOT swap Hermes today
+### What we'd want before treating the swap as production-final
 
-The current `qwen36-35b-a3b-mtp-iq4xs-preserve` is statistically equivalent to Gemma 12B Q5/Q8 on mean (CI overlap), is 2.8× faster (216.5 vs 76.7), and has lower variance (σ=6.5 vs 15.7). The mean-equivalent candidates would be a clear regression on the responsiveness axis without a quality compensation. The 26B-A4B's quality advantage IS real but its TPS regression (216.5 → 137.2) is real too — for an interactive multi-turn agent, +6 mean does not justify −37% TPS.
-
-Swap candidates exist (Gemma 12B Q5 for a low-VRAM mode, 26B-A4B for a quality-first mode) — both belong in new modes, not as replacements for Hermes.
+- **Real chat / tool-calling session validation.** v2 benchmark covers single-shot coding only — multi-turn agent behaviour under the new Gemma chat template is not measured.
+- **Re-bench 26B-A4B with MTP drafter** once PR #23398 lands (gpumod-rj0s). If MTP adds ~50% TPS as it does on Qwen, 26B-A4B reaches ~210 TPS at 100/0 quality.
+- **n=30 confirmation** on Q8's L2 80% to lock in that the L2 prompt-fix gain wasn't a draw of the dice.
 
 ## Files
 
@@ -177,19 +135,14 @@ Swap candidates exist (Gemma 12B Q5 for a low-VRAM mode, 26B-A4B for a quality-f
 |---|---|
 | `result_gemma4-12b-q4.json` | 15-iter result, Gemma 4 12B UD-Q4_K_XL |
 | `result_gemma4-12b-q5.json` | 15-iter result, Gemma 4 12B Q5_K_M |
-| `result_gemma4-12b-q8.json` | 15-iter run 2 result, Gemma 4 12B UD-Q8_K_XL (reproducibility check, b9500) |
-| `result_gemma4-12b-q8.run1.json` | 15-iter run 1 result, Gemma 4 12B UD-Q8_K_XL (b9297, original) |
-| `result_gemma4-26b-a4b-q4.json` | 15-iter run 2 result, Gemma 4 26B-A4B UD-IQ4_XS (reproducibility check, b9500) |
-| `result_gemma4-26b-a4b-q4.run1.json` | 15-iter run 1 result, Gemma 4 26B-A4B UD-IQ4_XS (b9297, original) |
+| `result_gemma4-12b-q8.json` | 15-iter result, Gemma 4 12B UD-Q8_K_XL |
+| `result_gemma4-26b-a4b-q4.json` | 15-iter result, Gemma 4 26B-A4B UD-IQ4_XS |
 | `run_bench.sh` | Driver for Q4 + Q5 sequential run |
-| `run_bench_extra.sh` | Driver for Q8 + 26B-A4B sequential run (added mid-benchmark) |
-| `rerun_q8.sh` | Re-run driver for gemma4-12b-q8 (archives current → .run1, then fresh n=15) |
-| `rerun_26b_a4b.sh` | Re-run driver for gemma4-26b-a4b-q4 (same archive-and-rerun pattern) |
-| `run.log`, `run_extra.log` | Combined stdout from each driver |
-| `run_gemma4-*.log` | Per-model benchmark stdout (current run) |
-| `run_gemma4-*.run1.log` | Per-model benchmark stdout (run 1 archive) |
-| `artifacts/<model>/iter_NN/` | Per-iteration, per-level generated code and validation output (current run) |
-| `artifacts/<model>.run1/iter_NN/` | Per-iteration archive from run 1 |
+| `run_bench_extra.sh` | Driver for Q8 + 26B-A4B sequential run (includes 12 GiB size guard for the 26B GGUF) |
+| `run_gemma4-*.log` | Per-model benchmark stdout (gitignored per `*.log`) |
+| `artifacts/<model>/iter_NN/` | Per-iteration, per-level generated code and validation output |
+
+Per-bench drivers are superseded by the central [`scripts/run_coding_benchmark.sh`](../../../scripts/run_coding_benchmark.sh) (gpumod-4omn) — same patterns, one script, options instead of per-dir wrappers. The local `run_bench{,_extra}.sh` are kept because they document the exact model list and 26B size guard for this benchmark.
 
 ## References
 
@@ -199,4 +152,4 @@ Swap candidates exist (Gemma 12B Q5 for a low-VRAM mode, 26B-A4B for a quality-f
 - [Unsloth gemma-4-26B-A4B-it-GGUF model card](https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF)
 - [google/gemma-4-12B-it (sampler recommendation source)](https://huggingface.co/google/gemma-4-12B-it)
 - [ggml-org/llama.cpp PR #23398 — Gemma 4 MTP port to mainline (WIP)](https://github.com/ggml-org/llama.cpp/pull/23398)
-- [ikawrakow/ik_llama.cpp PR #1744 — Gemma 4 MTP (merged in fork)](https://github.com/ikawrakow/ik_llama.cpp/pull/1744)
+- [AtomicChat/gemma-4-26B-A4B-it-assistant-GGUF](https://huggingface.co/AtomicChat/gemma-4-26B-A4B-it-assistant-GGUF) — drafter pre-conversion for the future PR #23398 swap

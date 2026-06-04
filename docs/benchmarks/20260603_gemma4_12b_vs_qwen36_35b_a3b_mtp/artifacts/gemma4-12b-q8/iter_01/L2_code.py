@@ -1,29 +1,34 @@
+from typing import Callable, Dict, Any
+
 class JobQueue:
-            def __init__(self):
-                self.jobs = {}
-                self.retry_counts = {}
+    def __init__(self):
+        self.jobs: Dict[str, Dict[str, Any]] = {}
 
-            def add_job(self, job_id, data):
-                self.jobs[job_id] = data
-                self.retry_counts[job_id] = 0
+    def add_job(self, job_id: str, data: dict):
+        self.jobs[job_id] = {
+            "data": data,
+            "retries": 0
+        }
 
-            def process_job(self, job_id, processor):
-                data = self.jobs.get(job_id)
-                if not data:
+    def process_job(self, job_id: str, processor: Callable) -> bool:
+        if job_id not in self.jobs:
+            return False
+
+        job_entry = self.jobs[job_id]
+        data = job_entry["data"]
+
+        for attempt in range(4):
+            try:
+                processor(data)
+                return True
+            except Exception:
+                if attempt < 3:
+                    job_entry["retries"] += 1
+                    delay = 2 ** (job_entry["retries"] - 1)
+
+                    if "delays" not in data:
+                        data["delays"] = []
+                    data["delays"].append(delay)
+                else:
                     return False
-                
-                max_retries = 3
-                for attempt in range(max_retries + 1): # Attempt 0 is first try, then retries
-                    # Wait, "retry up to 3 times" means 4 total attempts?
-                    # Usually: Attempt 1 (fail) -> Retry 1 (fail) -> Retry 2 (fail) -> Retry 3 (fail) -> Fail.
-                    # Total attempts = 1 + max_retries = 4.
-                    try:
-                        processor(data)
-                        return True
-                    except Exception:
-                        if attempt < max_retries:
-                            self.retry_counts[job_id] += 1
-                            delay = 2 ** (self.retry_counts[job_id] - 1)
-                            print(f"Retry {self.retry_counts[job_id]} for {job_id} after {delay}s")
-                        else:
-                             return False
+        return False

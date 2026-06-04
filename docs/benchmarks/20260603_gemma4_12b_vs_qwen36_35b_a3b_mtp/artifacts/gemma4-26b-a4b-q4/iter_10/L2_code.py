@@ -1,33 +1,29 @@
 from typing import Callable, Dict, Any
 
-    class JobQueue:
-        def __init__(self):
-            self.jobs: Dict[str, Any] = {}
-            self.retry_counts: Dict[str, int] = {}
-            self.backoff_delays: Dict[str, int] = {} # To store the delay used
+class JobQueue:
+    def __init__(self):
+        self.jobs: Dict[str, Dict[str, Any]] = {}
 
-        def add_job(self, job_id: str, data: Any):
-            self.jobs[job_id] = data
-            self.retry_counts[job_id] = 0
+    def add_job(self, job_id: str, data: Dict[str, Any]) -> None:
+        self.jobs[job_id] = data
 
-        def process_job(self, job_id: str, processor: Callable) -> bool:
-            if job_id not in self.jobs:
-                return False
-
-            max_retries = 3
-
-            while self.retry_counts[job_id] <= max_retries:
-                try:
-                    processor(self.jobs[job_id])
-                    return True
-                except Exception:
-                    if self.retry_counts[job_id] >= max_retries:
-                        return False
-
-                    # Calculate backoff: 2^0=1, 2^1=2, 2^2=4
-                    delay = 2 ** self.retry_counts[job_id]
-                    self.backoff_delays[job_id] = delay
-                    self.retry_counts[job_id] += 1
-                    # Simulating sleep as per instructions (not actually sleeping)
-
+    def process_job(self, job_id: str, processor: Callable[[Dict[str, Any]], Any]) -> bool:
+        if job_id not in self.jobs:
             return False
+
+        data = self.jobs[job_id]
+        max_attempts = 4
+        delays = [1, 2, 4]
+
+        for attempt in range(max_attempts):
+            try:
+                processor(data)
+                return True
+            except Exception:
+                if attempt < max_attempts - 1:
+                    retry_count = attempt + 1
+                    data['retry_count'] = retry_count
+                    data['delay'] = delays[attempt]
+                else:
+                    return False
+        return False

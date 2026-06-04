@@ -1,28 +1,32 @@
 from typing import Callable, Dict, Any
 
-    class JobQueue:
-        def __init__(self):
-            self.jobs: Dict[str, Any] = {}
-            self.retry_counts: Dict[str, int] = {}
+class JobQueue:
+    def __init__(self):
+        self.jobs: Dict[str, Dict[str, Any]] = {}
 
-        def add_job(self, job_id: str, data: Any):
-            self.jobs[job_id] = data
-            self.retry_counts[job_id] = 0
+    def add_job(self, job_id: str, data: Dict[str, Any]):
+        self.jobs[job_id] = {
+            "data": data,
+            "retries": 0,
+            "delays": []
+        }
 
-        def process_job(self, job_id: str, processor: Callable) -> bool:
-            max_retries = 3
-            data = self.jobs.get(job_id)
-            
-            for attempt in range(max_retries + 1):
-                try:
-                    processor(data)
-                    return True
-                except Exception:
-                    if attempt < max_retries:
-                        self.retry_counts[job_id] = attempt + 1
-                        # Logic for backoff (1, 2, 4)
-                        # Since we don't sleep, we just acknowledge the backoff exists
-                        pass
-                    else:
-                        return False
+    def process_job(self, job_id: str, processor: Callable[[Dict[str, Any]], Any]) -> bool:
+        if job_id not in self.jobs:
             return False
+
+        job = self.jobs[job_id]
+        data = job["data"]
+
+        for attempt in range(4):
+            try:
+                processor(data)
+                return True
+            except Exception:
+                if attempt < 3:
+                    job["retries"] += 1
+                    delay = 2 ** attempt
+                    job["delays"].append(delay)
+                else:
+                    break
+        return False

@@ -1,11 +1,57 @@
 from dataclasses import dataclass
-        from typing import List
-        @dataclass
-        class Job:
-            id: str
-            payload: dict
-            priority: int = 0
-        class JobQueue:
-            def __init__(self): self.items = []
-            def push(self, job): self.items.append(job)
-            def pop(self): return self.items.pop(0) if self.items else None
+from typing import Callable
+import heapq
+
+@dataclass
+class Job:
+    id: str
+    data: dict
+    priority: int = 0
+    retries: int = 0
+
+class RetryPolicy:
+    def __init__(self, max_attempts: int = 4):
+        self.max_attempts = max_attempts
+
+    def run(self, fn: Callable, data: dict) -> tuple[bool, int]:
+        attempts_made = 0
+        while attempts_made < self.max_attempts:
+            try:
+                fn(data)
+                return True, attempts_made + 1
+            except Exception:
+                attempts_made += 1
+        return False, attempts_made
+
+class JobQueue:
+    def __init__(self):
+        self.jobs = {}
+        self.queue = []
+        self.counter = 0
+        self.retry_policy = RetryPolicy()
+
+    def add_job(self, job_id: str, data: dict, priority: int = 0) -> None:
+        job = Job(id=job_id, data=data, priority=priority)
+        self.jobs[job_id] = job
+        # Use negative priority to simulate max-heap with heapq (min-heap)
+        # Counter ensures FIFO order for jobs with the same priority
+        heapq.heappush(self.queue, (-priority, self.counter, job_id))
+        self.counter += 1
+
+    def process_job(self, job_id: str, processor: Callable) -> bool:
+        job = self.jobs.get(job_id)
+        if not job:
+            return False
+
+        success, _ = self.retry_policy.run(processor, job.data)
+        return success
+
+    def get_next_job(self) -> tuple[str, dict] | None:
+        if not self.queue:
+            return None
+
+        _, _, job_id = heapq.heappop(self.queue)
+        job = self.jobs.get(job_id)
+        if job:
+            return (job.id, job.data)
+        return None

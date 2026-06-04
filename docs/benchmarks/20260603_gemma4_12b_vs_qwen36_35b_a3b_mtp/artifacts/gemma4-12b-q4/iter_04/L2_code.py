@@ -1,38 +1,32 @@
 from typing import Callable, Dict, Any
 
-    class JobQueue:
-        def __init__(self):
-            self.jobs: Dict[str, Any] = {}
-            self.retry_counts: Dict[str, int] = {}
+class JobQueue:
+    def __init__(self):
+        self.jobs: Dict[str, Dict[str, Any]] = {}
 
-        def add_job(self, job_id: str, data: Any):
-            self.jobs[job_id] = data
-            self.retry_counts[job_id] = 0
+    def add_job(self, job_id: str, data: Dict[str, Any]):
+        self.jobs[job_id] = {
+            "data": data,
+            "retries": 0,
+            "delays": []
+        }
 
-        def process_job(self, job_id: str, processor: Callable) -> bool:
-            if job_id not in self.jobs:
-                return False
-
-            max_retries = 3
-            # Note: Requirement says "retry up to 3 times".
-            # This means Attempt 0 (original), then retries 1, 2, 3.
-
-            for attempt in range(max_retries + 1):
-                try:
-                    # Call the processor with the job data
-                    data = self.jobs[job_id]
-                    processor(data)
-                    # If successful, reset retry count and return True
-                    self.retry_counts[job_id] = 0
-                    return True
-                except Exception as e:
-                    if attempt < max_retries:
-                        self.retry_counts[job_id] += 1
-                        # Backoff calculation: 1, 2, 4...
-                        # delay = 2 ** (self.retry_counts[job_id] - 1)
-                        # But since we are skipping actual sleep:
-                        pass
-                    else:
-                        # Exhausted retries
-                        return False
+    def process_job(self, job_id: str, processor: Callable[[Dict[str, Any]]]) -> bool:
+        if job_id not in self.jobs:
             return False
+
+        job = self.jobs[job_id]
+        backoffs = [1, 2, 4]
+
+        for attempt in range(4):
+            try:
+                processor(job["data"])
+                return True
+            except Exception:
+                if attempt < 3:
+                    job["retries"] += 1
+                    delay = backoffs[job["retries"] - 1]
+                    job["delays"] .append(delay)
+                else:
+                    return False
+        return False

@@ -1,22 +1,32 @@
 from collections import deque
-    from typing import Dict, Optional
+from typing import Dict, Optional
 
-    class JobQueue:
-        def __init__(self):
-            self.queue = deque()
-            self.results = {}
+class JobQueue:
+    def __init__(self):
+        self._queue: deque[str] = deque()
+        self._jobs: Dict[str, dict] = {}
+        self._results: Dict[str, dict] = {}
 
-        def add_job(self, job_id: str, data: dict) -> str:
-            self.queue.append((job_id, data))
-            self.results[job_id] = None
-            return job_id
+    def add_job(self, job_id: str, data: dict) -> str:
+        """Adds a job to the queue and returns the job_id."""
+        self._queue.append(job_id)
+        self._jobs[job_id] = data
+        return job_id
 
-        def process_next_job(self) -> None:
-            if self.queue:
-                job_id, data = self.queue.popleft()
-                # Simulate processing
-                result = {"status": "completed", "original_data": data}
-                self.results[job_id] = result
+    def process_next_job(self) -> None:
+        """
+        Processes the next job in the FIFO queue.
+        This moves the job from the internal queue to the results dictionary.
+        """
+        if self._queue:
+            job_id = self._queue.popleft()
+            job_data = self._jobs.pop(job_id)
+            # Simulate processing logic
+            self._results[job_id] = {
+                "status": "completed",
+                "data": job_data
+            }
 
-        def get_result(self, job_id: str) -> Optional[dict]:
-            return self.results.get(job_id)
+    def get_result(self, job_id: str) -> Optional[dict]]:
+        """Returns the result of a completed job, or None if not completed."""
+        return self._results.get(job_id)

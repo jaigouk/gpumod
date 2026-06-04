@@ -1,14 +1,32 @@
-max_retries = 3
-        job = self.jobs.get(job_id)
-        for attempt in range(max_retries + 1):
+from typing import Callable, Dict, Any
+
+class JobQueue:
+    def __init__(self):
+        self.jobs: Dict[str, Dict[str, Any]] = {}
+        self.retry_counts: Dict[str, int] = {}
+
+    def add_job(self, job_id: str, data: Dict[str, Any]) -> None:
+        self.jobs[job_id] = data
+        self.retry_counts[job_id] = 0
+
+    def process_job(self, job_id: str, processor: Callable[[Dict[str, Any]], Any]) -> bool:
+        if job_id not in self.jobs:
+            return False
+
+        data = self.jobs[job_id]
+        max_attempts = 4
+
+        for attempt in range(max_attempts):
             try:
-                processor(job["data"])
+                processor(data)
                 return True
             except Exception:
-                if attempt < max_retries:
-                    self.jobs[job_id]["retries"] += 1
-                    # simulate backoff
-                    delay = 2 ** (self.jobs[job_id]["retries"] - 1)
-                    # print/log delay? No, requirement says "can be simulated".
+                if attempt < max_attempts - 1:
+                    self.retry_counts[job_id] += 1
+                    # Exponential backoff: 2^0=1, 2^1=2, 2^2=4
+                    delay = 2 ** attempt
+                    data['retry_delays'] = data.get('retry_delays', []) + [delay]
                 else:
-                    return False
+                    break
+
+        return False

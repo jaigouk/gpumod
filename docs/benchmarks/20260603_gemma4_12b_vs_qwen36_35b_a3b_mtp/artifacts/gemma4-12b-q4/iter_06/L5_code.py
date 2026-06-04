@@ -1,24 +1,50 @@
-from dataclasses import dataclass, field
-        from typing import Any
-        from collections import deque
+from dataclasses import dataclass
+from typing import Callable, Dict, Tuple, Optional, List
 
-        @dataclass(order=False) # Order handled by PriorityQueue or manual impl
-        class Job:
-            id: str
-            data: Any
-            priority: int = 0
-            retries: int = 0
-            max_retries: int = 3
-            # Need __lt__ for PriorityQueue if using heapq
-            def __lt__(self, other):
-                return self.priority < other.priority
+@dataclass
+class Job:
+    id: str
+    data: dict
+    priority: int = 0
+    retries: int = 0
 
-        class JobQueue:
-            def __init__(self):
-                self._queue = deque()
-            def push(self, job: Job):
-                self._queue.append(job)
-            def pop(self) -> Job:
-                return self._queue.popleft()
-            def __len__(self):
-                return len(self._queue)
+class RetryPolicy:
+    def __init__(self, max_attempts: int = 4):
+        self.max_attempts = max_attempts
+
+    def run(self, fn: Callable, data: dict) -> tuple[bool, int]:
+        attempts = 0
+        while attempts < self.max_attempts:
+            try:
+                fn(data)
+                return (True, attempts + 1)
+            except Exception:
+                attempts += 1
+        return (False, attempts)
+
+class JobQueue:
+    def __init__(self):
+        self.jobs: List[Job] = []
+        self.retry_policy = RetryPolicy()
+
+    def add_job(self, job_id: str, data: dict, priority: int = 0) -> None:
+        new_job = Job(id=job_id, data=data, priority=priority)
+        self.jobs.append(new_job)
+
+    def get_next_job(self) -> tuple[str, dict] | None:
+        if not self.jobs:
+            return None
+
+        max_priority = max(job.priority for job in self.jobs)
+        for job in self.jobs:
+            if job.priority == max_priority:
+                return (job.id, job.data)
+        return None
+
+    def process_job(self, job_id: str, Processor: Callable) -> bool:
+        job = next((j for j in self.jobs if j.id == job_id), None)
+        if job is None:
+            return False
+
+        success, _ = self.retry_policy.run(Processor, job.data)
+        return success

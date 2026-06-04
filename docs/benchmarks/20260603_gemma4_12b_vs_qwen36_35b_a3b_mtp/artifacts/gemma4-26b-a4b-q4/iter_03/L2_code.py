@@ -1,34 +1,29 @@
-from typing import Callable, Any, Dict
+from typing import Callable
 
-    class JobQueue:
-        def __init__(self):
-            self.jobs: Dict[str, Any] = {}
-            self.retry_counts: Dict[str, int] = {}
+class JobQueue:
+    def __init__(self):
+        self.jobs = {}
 
-        def add_job(self, job_id: str, data: Any):
-            self.jobs[job_id] = data
-            self.retry_counts[job_id] = 0
+    def add_job(self, job_id: str, data: dict):
+        self.jobs[job_id] = data
 
-        def process_job(self, job_id: str, processor: Callable) -> bool:
-            if job_id not in self.jobs:
-                return False
+    def process_job(self, job_id: str, processor: Callable) -> bool:
+        if job_id not in self.jobs:
+            return False
 
-            data = self.jobs[job_id]
-            backoff_delays = [1, 2, 4]
-            
-            while True:
-                try:
-                    processor(data)
-                    return True
-                except Exception:
-                    current_retries = self.retry_counts.get(job_id, 0)
-                    
-                    if current_retries < len(backoff_delays):
-                        delay = backoff_delays[current_retries]
-                        # Simulating delay as requested
-                        # In a real app: time.sleep(delay)
-                        self.retry_counts[job_id] = current_retries + 1
-                        # Logic for "tracking" could mean logging or just incrementing
-                        continue 
-                    else:
-                        return False
+        data = self.jobs[job_id]
+        if 'delays' not in data:
+            data['delays'] = []
+
+        backoff_schedule = [1, 2, 4]
+
+        for attempt in range(4):
+            try:
+                processor(data)
+                return True
+            except Exception:
+                if attempt < 3:
+                    data['delays'].append(backoff_schedule[attempt])
+                else:
+                    return False
+        return False

@@ -1,25 +1,32 @@
 from collections import deque
-    from typing import Dict, Optional
+from typing import Dict, Optional
 
-    class JobQueue:
-        def __init__(self):
-            self.queue = deque()
-            self.results = {}
-            self.jobs = {} # To keep track of input data
+class JobQueue:
+    def __init__(self):
+        # FIFO queue to store jobs as (job_id, data)
+        self._queue: deque[tuple[str, dict]]] = deque()
+        # Dictionary to store results of completed jobs
+        self._results: Dict[str, dict] = {}
 
-        def add_job(self, job_id: str, data: dict) -> str:
-            if job_id in self.jobs or job_id in self.results:
-                raise ValueError("Job ID must be unique")
-            self.jobs[job_id] = data
-            self.queue.append(job_id)
-            return job_id
+    def add_job(self, job_id: str, data: dict) -> str:
+        """
+        Add a job to the queue and return the job_id.
+        """
+        self._queue.append((job_id, data))
+        return job_id
 
-        def process_next_job(self):
-            if self.queue:
-                job_id = self.queue.popleft()
-                # Simulate processing
-                data = self.jobs.pop(job_id)
-                self.results[job_id] = {"status": "completed", "data": data}
+    def process_next_job(self) -> None:
+        """
+        Processes the next job in the FIFO queue.
+        This method fulfills the requirement of processing jobs in order.
+        """
+        if self._queue:
+            job_id, data = self._queue.popleft()
+            # Simulate processing logic
+            self._results[job_id] = {"status": "completed", "original_data": data}
 
-        def get_result(self, job_id: str) -> Optional[dict]]:
-            return self.results.get(job_id)
+    def get_result(self, job_id: str) -> dict | None:
+        """
+        Get the result of a completed job. Returns None if not completed.
+        """
+        return self._results.get(job_id)

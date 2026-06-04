@@ -1,20 +1,20 @@
 import heapq
-    import itertools
 
-    class JobQueue:
-        def __init__(self):
-            self.queue = []
-            self.counter = itertools.count()
+class JobQueue:
+    def __init__(self):
+        self.jobs = []
+        self.counter = 0
 
-        def add_job(self, name, data, priority=0):
-            # Since heapq is a min-heap, we negate priority
-            # to make higher numbers (2, 1) come out first.
-            priority_score = -priority
-            count = next(self.counter)
-            heapq.heappush(self.queue, (priority_score, count, name, data))
+    def add_job(self, name: str, data: dict, priority: int = 0):
+        # Using negative priority because heapq is a min-heap, 
+        # but we want higher numbers to have higher priority.
+        # The counter ensures FIFO order for jobs with the same priority.
+        heapq.heappush(self.jobs, (-priority, self.counter, name, data))
+        self.counter += 1
 
-        def get_next_job(self):
-            if not self.queue:
-                return None
-            priority_score, count, name, data = heapq.heappop(self.queue)
-            return (name, data)
+    def get_next_job(self) -> tuple[str, dict] | None:
+        if not self.jobs:
+            return None
+
+        _, _, name, data = heapq.heappop(self.jobs)
+        return (name, data)

@@ -1,28 +1,34 @@
 from typing import Callable, Dict, Any
 
-    class JobQueue:
-        def __init__(self):
-            self.jobs: Dict[str, Dict[str, Any]] = {}
+class JobQueue:
+    def __init__(self):
+        self.jobs: Dict[str, Dict[str, Any]] = {}
+        self.retry_counts: Dict[str, int] = {}
 
-        def add_job(self, job_id: str, data: dict):
-            self.jobs[job_id] = {"data": data, "retries": 0}
+    def add_job(self, job_id: str, data: Dict[str, Any]) -> None:
+        self.jobs[job_id] = data
+        self.retry_counts[job_id] = 0
 
-        def process_job(self, job_id: str, processor: Callable) -> bool:
-            if job_id not in self.jobs:
-                return False
-
-            job_info = self.jobs[job_id]
-            max_retries = 3
-
-            for attempt in range(max_retries + 1):
-                try:
-                    processor(job_info["data"]))
-                    return True
-                except Exception as e:
-                    job_info["retries"] += 1
-                    if job_info["retries"] > max_retries:
-                        return False
-                    # Simulation of backoff:
-                    # delay = 2 ** (job_info["retries"] - 1)
-                    # print(f"Retrying after {delay}s...")
+    def process_job(self, job_id: str, processor: Callable[[Dict[str, Any]]]) -> bool:
+        data = self.jobs.get(job_id)
+        if data is None:
             return False
+
+        if 'delays' not in data:
+            data['delays']] = []
+
+        # Ensure the retry count starts at 0 for this processing attempt
+        self.retry_counts[job_id] = 0
+
+        for attempt in range(4):
+            try:
+                processor(data)
+                return True
+            except Exception:
+                if attempt < 3:
+                    delay = 2 ** attempt
+                    data['delays'].append(delay)
+                    self.retry_counts[job_id] = attempt + 1
+                else:
+                    return False
+        return False

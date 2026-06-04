@@ -1,29 +1,25 @@
-import threading
-    import queue
-    import time
+from collections import deque
+from typing import Dict, Optional
 
-    class JobQueue:
-        def __init__(self):
-            self.queue = queue.Queue()
-            self.results = {}
-            self.lock = threading.Lock()
+class JobQueue:
+    def __init__(self):
+        # Stores jobs in FIFO order until they are processed
+        self._queue: deque = deque()
+        # Stores the results of completed jobs
+        self._results: Dict[str, dict] = {}
 
-        def add_job(self, job_id: str, data: dict) -> str:
-            self.queue.put((job_id, data))
-            return job_id
+    def add_job(self, job_id: str, data: dict) -> str:
+        """Adds a job to the queue and returns the unique job_id."""
+        self._queue.append({"id": job_id, "data": data})
+        return job_id
 
-        def get_result(self, job_id: str) -> dict | None:
-            with self.lock:
-                return self.results.get(job_id)
+    def complete_job(self, job_id: str, result: dict) -> None:
+        """
+        Helper method to simulate completion of a job. 
+         This allows get_result to retrieve data.
+        """
+        self._results[job_id] = result
 
-        def _worker(self):
-            while True:
-                job_id, data = self.queue.get()
-                # Simulate processing
-                time.sleep(1)
-                with self.lock:
-                    self.results[job_id] = {"status": "completed", "data": data}
-                self.queue.task_done()
-
-        def start(self):
-            threading.Thread(target=self._worker, daemon=True).start()
+    def get_result(self, job_id: str) -> dict | None:
+        """Returns the result of a completed job, or None if not completed."""
+        return self._results.get(job_id)

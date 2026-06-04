@@ -1,17 +1,54 @@
-from dataclasses import dataclass, field
-        from typing import Any, List
+from dataclasses import dataclass
+from typing import Callable, Tuple, Optional, Dict, List
+import heapq
 
-        @dataclass
-        class Job:
-            id: str
-            payload: Any
-            priority: int = 0
-            retry_count: int = 0
+@dataclass
+class Job:
+    id: str
+    data: dict
+    priority: int = 0
+    retries: int = 0
 
-        class JobQueue:
-            def __init__(self):
-                self.jobs: List[Job] = []
-            def enqueue(self, job: Job):
-                self.jobs.append(job)
-            def dequeue(self) -> Job:
-                return self.jobs.pop(0) if self.jobs else None
+class RetryPolicy:
+    def __init__(self, max_attempts: int = 4):
+        self.max_attempts = max_attempts
+
+    def run(self, fn: Callable, data: dict) -> tuple[bool, int]:
+        attempts_made = 0
+        while attempts_made < self.max_attempts:
+            try:
+                fn(data)
+                return True, attempts_made + 1
+            except Exception:
+                attempts_made += 1
+        return False, attempts_made
+
+class JobQueue:
+    def __init__(self):
+        self.jobs: List[Tuple[int, int, str]] = []
+        self.job_map: Dict[str, Job] = {}
+        self.counter = 0
+        self.retry_policy = RetryPolicy()
+
+    def add_job(self, job_id: str, data: dict, priority: int = 0) -> None:
+        job = Job(id=job_id, data=data, priority=priority)
+        self.job_map[job_id] = job
+        # Use negative priority for max-heap behavior, counter for FIFO
+        heapq.heappush(self.jobs, (-priority, self.counter, job_id))
+        self.counter += 1
+
+    def process_job(self, job_id: str, processor: Callable) -> bool:
+        job = self.job_map.get(job_id)
+        if not job:
+            return False
+
+        success, _ = self.retry_policy.run(processor, job.data)
+        return success
+
+    def get_next_job(self) -> tuple[str, dict] | None:
+        if not self.jobs:
+            return None
+
+        _, _, job_id = heapq.heappop(self.jobs)
+        job = self.job_map[job_id]
+        return (job.id, job.data)

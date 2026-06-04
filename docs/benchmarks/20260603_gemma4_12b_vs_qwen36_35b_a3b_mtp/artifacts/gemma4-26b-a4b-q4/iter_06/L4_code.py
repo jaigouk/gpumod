@@ -4,7 +4,7 @@ class JobQueue:
     def __init__(self):
         self.jobs = {}
         self.results = {}
-        # A single lock to protect access to both shared dictionaries
+        # A lock to protect access to shared state (jobs and results)
         self._lock = threading.Lock()
 
     def add_job(self, job_id, data):
@@ -13,62 +13,62 @@ class JobQueue:
         return job_id
 
     def process_job(self, job_id, processor):
-        # 1. Securely retrieve and remove the job from the queue
-        # We "pop" the job while holding the lock so that no other 
-        # thread can pick up the same job_id.
+        # 1. Atomically check and "claim" the job
+        # We use pop() inside the lock so that only ONE thread can 
+        # ever retrieve this specific job_id.
         with self._lock:
             if job_id not in self.jobs:
                 return False
             data = self.jobs.pop(job_id)
 
-        # 2. Run the processor OUTSIDE the lock.
-        # This is crucial! If we held the lock here, only one thread 
-        # could process a job at a time, defeating the purpose of concurrency.
-        result = processor(data)
+        # 2. Process the job OUTSIDE the lock
+        # This allows other threads to add jobs or process other jobs 
+        # while this one is running.
+        try:
+            result = processor(data)
+            job_success = True
+        except Exception as e:
+            result = e
+            job_success = False
 
-        # 3. Securely store the result
+        # 3. Atomically write the result
         with self._lock:
             self.results[job_id] = result
-        
+
         return True
 
     def get_result(self, job_id):
         with self._lock:
             return self.results.get(job_id)
 
-# --- Implementation Test ---
+# --- Example Usage / Test ---
 if __name__ == "__main__":
     import time
 
-    def slow_processor(data):
-        time.sleep(1)  # Simulate heavy work
-        return data * 2
+    def heavy_task(n):
+        time.sleep(1)  # Simulate work
+        return n * n
 
     queue = JobQueue()
-    
-    # Add jobs
+
+    # Add some jobs
     queue.add_job(1, 10)
     queue.add_job(2, 20)
+    queue.add_job(3, 30)
 
     def worker(job_id):
-        print(f"Thread starting job {job_id}")
-        success = queue.process_job(job_id, slow_processor)
-        print(f"Thread finished job {job_id}: {success}")
+        print(f"Starting job {job_id}")
+        if queue.process_job(job_id, heavy_task):
+            print(f"Finished job {job_id}")
 
-    # Start two threads
-    t1 = threading.Thread(target=worker, args=(1,))
-    t2 = threading.Thread(target=worker, args=(2,))
-    
-    # Attempt to start a duplicate thread for job 1 to test race condition
-    t3 = threading.Thread(target=worker, args=(1,))
+    # Start multiple threads to process jobs simultaneously
+    threads = []
+    for i in range(1, 4):
+        t = threading.Thread(target=worker, args=(i,))
+        threads.append(t)
+        t.start()
 
-    t1.start()
-    t2.start()
-    t3.start()
+    for t in threads:
+        t.join()
 
-    t1.join()
-    t2.join()
-    t3.join()
-
-    print(f"Result for job 1: {queue.get_result(1)}")
-    print(f"Result for job 2: {queue.get_result(2)}")
+    print("Results:", queue.get_result(1), queue.get_result(2), queue.get_result(3))

@@ -1,317 +1,424 @@
 <reasoning_content>
-*   Input: A single-file monolithic job queue implementation.
-*   Output: A refactored multi-file package structure (`queue/`).
-*   Target structure:
-    *   `queue/__init__.py`: Public API (exports `JobQueue`, `Job`).
-    *   `queue/core.py`: Data models (`Job`) and base operations (`JobQueue`).
-    *   `queue/retry.py`: Logic for retries/backoff.
-    *   `queue/priority.py`: `PriorityQueue` implementation.
-*   Constraints: Maintain functionality, proper imports, single responsibility, clean API.
+*   Goal: Refactor a job queue into three composable classes in `solution.py`.
+    *   Classes:
+        1.  `Job` (dataclass): `id` (str), `data` (dict), `priority` (int, default 0), `retries` (int, default 0).
+        2.  `RetryPolicy`: `max_attempts` (int, default 4). Method `run(fn, data)` returns `(bool, int)`. Logic: retry on exception, no actual sleep.
+        3.  `JobQueue`:
+            *   `add_job(job_id, data, priority)`
+            *   `process_job(job_id, processor)`: Uses `RetryPolicy`.
+            *   `get_next_job()`: Returns highest priority job (id, data) using FIFO within same priority.
 
-    Since the user didn't provide the *exact* code for the "monolithic" version, I need to infer a standard, working implementation that satisfies the structure requested.
+    *   `Job`: `dataclasses.dataclass`.
+    *   `RetryPolicy`: Standard retry loop.
+    *   `JobQueue`:
+        *   Needs a way to store jobs.
+        *   Priority queue behavior: `heapq` is the standard for priority queues in Python.
+        *   `heapq` is a min-heap. Higher priority usually means higher number? Or lower number? Usually, in priority queues, a lower number means higher priority. However, the prompt says "highest-priority job". If `priority` is 0, 1, 2... usually 10 is higher than 1. But in `heapq`, `0` comes first. I will interpret "highest priority" as the one with the largest `priority` value if it's like a score, or the smallest value if it's like a rank. Looking at common patterns: `priority: int = 0`. If I use a max-heap approach or negate the value for `heapq`, I can get the highest number first.
+        *   Wait, the prompt says "FIFO order within the same priority". `heapq` doesn't guarantee FIFO. To achieve FIFO within same priority, I should include a counter/timestamp in the heap tuple.
+        *   `JobQueue` needs to store the jobs. Since `process_job` takes a `job_id`, it suggests the queue might store jobs in a way that they can be looked up by ID, or `get_next_job` pulls from the queue.
+        *   Actually, `process_job` takes `job_id`. This implies the `JobQueue` maintains a registry of jobs.
+        *   `get_next_job` returns the *next* job.
 
-    *   *Job*: A dataclass with `id`, `payload`, `retries`, etc.
-    *   *JobQueue*: A base class or standard implementation using a `collections.deque`.
-    *   *PriorityQueue*: A subclass of `JobQueue` using `heapq`.
-    *   *Retry logic*: A decorator or a helper function that takes a function and attempts it with exponential backoff.
+    *   `JobQueue` structure:
+        *   `self._jobs`: A dictionary mapping `id -> Job` (for easy lookup/management).
+        *   `self._heap`: A priority queue (`heapq`) containing `(-priority, sequence_number, job_id)`. Using negative priority turns the min-heap into a max-heap. The `sequence_number` ensures FIFO for same priority.
+        *   `self._counter`: To handle the sequence number.
 
-    *   **Step 1: `core.py`**
-        *   Imports: `dataclasses`, `typing`, `collections`.
-        *   `Job` class.
-        *   `JobQueue` class (base).
+    *   Let's re-read: `process_job(self, job_id: str, processor: Callable) -> bool`.
+        *   It needs to look up the job.
+        *   It needs to use `RetryPolicy`.
+        *   Does it remove the job? Usually, processing a job completes it. The prompt doesn't explicitly say to remove it from the internal storage, but typically `get_next_job` is how you consume it.
+        *   Wait, if `get_next_job` is used to get the job, and then `process_job` is used to process it... if `process_job` is called with an ID, it must be able to find it.
+        *   If `get_next_job` returns the job, does it *remove* it from the queue? If it doesn't, `get_next_job` will keep returning the same job. Standard queue behavior: `get_next_job` (or `pop`) removes it.
+        *   If `get_next_job` removes it, how does `process_job` find it?
+        *   Ah, perhaps `process_job` is called *on* the job that was just retrieved.
+        *   Let's look at the requirement for `process_job`: `process_job(self, job_id: str, processor: Callable)`. This is slightly unusual if `get_next_job` already removed it.
+        *   Maybe `get_next_job` *doesn't* remove it? No, that would be a "peek".
+        *   Maybe `add_job` puts it in the queue, `get_next_job` retrieves and *removes* it, and `process_job` is meant to be used by a worker? But if the worker has the `job_id`, where does it get it if it was already removed from the `JobQueue`?
+        *   Let's assume `JobQueue` manages a collection of jobs.
+        *   `add_job`: adds to a dictionary and a heap.
+        *   `get_next_job`: pops from the heap and removes from the dictionary.
+        *   `process_job`: if the job is already removed from the queue via `get_next_job`, how can `process_job` work?
+        *   Alternative: `process_job` is meant to be called while the job is *still* in the queue? No, that's not how workers work.
+        *   Re-reading: "`process_job` ... must USE RetryPolicy".
+        *   Maybe `process_job` is supposed to find the job in the internal storage, run it, and if it succeeds, remove it?
+        *   But `get_next_job` is also there.
+        *   Let's try this:
+            1. `add_job` stores job in `self._all_jobs[job_id] = Job(...)` and `self._heap.push((-priority, counter, job_id))`.
+            2. `get_next_job` pops from heap, looks up in `self._all_jobs`, and returns `(id, data)`. *Crucially*, it should probably not remove it yet if `process_job` needs it, OR `process_job` is used to process jobs *regardless* of whether they are "next".
+            3. If `get_next_job` removes the job, `process_job` must take the job as an argument or be part of a different flow.
+            4. Let's look at the signature: `process_job(self, job_id: str, processor: Callable) -> bool`. This signature implies the `JobQueue` *holds* the job.
+            5. If `get_next_job` returns the job, and `process_job` processes it, maybe `get_next_job` is a "peek" or the job remains in the queue until `process_job` is called? But that's not a queue, that's a registry.
+            6. Standard Job Queue logic:
+               - `add_job` -> queue it.
+               - `get_next_job` -> pop from queue.
+               - `process_job` -> this is where the logic gets tricky. If `get_next_job` is "pop", the job is gone. If `process_job` is the thing that does the work, it should probably be the one that removes the job.
+               - Let's assume: `get_next_job` pops the job. `process_job` is a method that takes a job ID, finds it in some "in-progress" or "pending" state, and runs it.
+               - Wait, simpler: `get_next_job` is just a way to see what's next. `process_job` is the execution.
+               - Let's assume the `JobQueue` maintains a dictionary of `id -> Job`.
+               - `add_job`: Adds to `self._jobs` and `self._heap`.
+               - `get_next_job`: Pops from `self._heap`, gets job from `self._jobs`, returns `(id, data)`. Does NOT remove from `self._jobs`? No, that's bad.
+               - Let's refine:
+                 `add_job`: `self._jobs[id] = Job(...)`, `heapq.heappush(self._heap, (-priority, count, id))`
+                 `get_next_job`: `_, _, id = heapq.heappop(self._heap)`, `job = self._jobs.pop(id)`, `return (job.id, job.data)`
+                 `process_job`: This is the problem. If `get_next_job` popped it, it's not in `self._jobs`.
 
-    *   **Step 2: `priority.py`**
-        *   Imports: `heapq`, `typing`, `.core`.
-        *   `PriorityJob` (maybe? No, the requirement says `PriorityQueue` implementation, so `Job` needs a priority attribute or `PriorityQueue` needs to handle it). Let's assume `Job` has a `priority` attribute.
-        *   `PriorityQueue` class (inherits from `JobQueue`).
+        *   Actually, many interview/coding tasks define `process_job` as a way to execute a job that is *already* in the queue.
+        *   Let's try: `process_job` finds the job in `self._jobs`. If found, it uses `RetryPolicy` to run `processor(job.data)`. If successful, it removes the job from `self._jobs` and `self._heap`? Removing from a heap is hard (requires $O(N)$ or a lazy removal strategy).
+        *   Lazy removal:
+            - `self._jobs = {id: Job}`
+            - `self._heap = [(-priority, count, id)]`
+            - `get_next_job`:
+              - while `heap[0].id` not in `self._jobs`, `heappop`.
+              - `id = heappop.id`, `job = self._jobs.pop(id)`, return `(id, data)`.
+            - `process_job`:
+              - If `job_id` in `self._jobs`:
+                - `job = self._jobs[job_id]`
+                - `success, attempts = retry_policy.run(processor, job.data)`
+                - if success: `self._jobs.pop(job_id)` (and the heap will be cleaned up lazily by `get_next_job`).
+                - return success.
 
-    *   **Step 3: `retry.py`**
-        *   Imports: `time`, `random`, `typing`, `functools`.
-        *   `process_with_retry` function.
+        *   Wait, if `process_job` removes it from `self._jobs`, and `get_next_job` also removes it from `self._jobs`, they are mutually exclusive ways of consuming the job.
+        *   `get_next_job` consumes it. `process_job` consumes it. This makes sense. One is "get the next one to work on" (pull model), the other is "execute this specific one" (push/targeted model).
 
-    *   **Step 4: `__init__.py`**
-        *   Imports from `core` and `priority`.
-        *   `__all__` definition.
+    *   Let's look at `process_job` again. `process_job(self, job_id: str, processor: Callable) -> bool`.
+        If I call `get_next_job`, I get the ID. Then I call `process_job(id, proc)`. If `get_next_job` already removed the job from `self._jobs`, `process_job` will fail to find it.
+        Therefore, `get_next_job` must *not* remove the job from `self._jobs` if `process_job` is intended to be the consumer.
+        **OR**, `get_next_job` is the consumer, and `process_job` is a method that *takes* the job and processes it, but the signature `process_job(self, job_id: str...)` strongly implies the queue is responsible for finding the job.
 
-    *   *Issue*: If `PriorityQueue` inherits from `JobQueue`, `core.py` must be able to stand alone.
-    *   *Issue*: `PriorityQueue` needs `Job` to have a priority attribute.
-    *   *Issue*: `process_with_retry` might need to know about `Job` or just be a general utility.
+        Let's look at the most logical flow for a user:
+        ```python
+        q = JobQueue()
+        q.add_job("1", {"val": 10}, priority=1)
+        job_id, data = q.get_next_job() # returns ("1", {"val": 10})
+        q.process_job(job_id, my_proc) # processes it and removes it
+        ```
+        In this flow:
+        1. `add_job` puts it in `_jobs` and `_heap`.
+        2. `get_next_job` *peeks* at the heap and returns the info, but *leaves it in* `_jobs`.
+        3. `process_job` finds it in `_jobs`, runs it, and *removes* it from `_jobs`.
+        4. `get_next_job` needs to handle the case where the top of the heap was already removed by `process_job` (lazy removal).
 
-    *Drafting `core.py`*:
+        Let's refine `get_next_job`:
+        ```python
+        def get_next_job(self):
+            while self._heap:
+                priority, count, job_id = self._heap[0]
+                if job_id in self._jobs:
+                    job = self._jobs[job_id]
+                    return job.id, job.data
+                else:
+                    heapq.heappop(self._heap)
+            return None
+        ```
+        And `process_job`:
+        ```python
+        def process_job(self, job_id, processor):
+            if job_id not in self._jobs:
+                return False
+            job = self._jobs[job_id]
+            policy = RetryPolicy() # Should the policy be per-queue or per-job? 
+                                   # Prompt says "JobQueue ... orchestrates Jobs using RetryPolicy".
+                                   # It doesn't say to instantiate it inside or pass it in.
+                                   # I'll instantiate it in __init__.
+            success, attempts = self._retry_policy.run(processor, job.data)
+            if success:
+                del self._jobs[job_id]
+                return True
+            return False
+        ```
+
+    *   Wait, `get_next_job` should probably be the one that "claims" the job? If two workers call `get_next_job`, they shouldn't get the same job. But the prompt doesn't mention concurrency/thread-safety. It's a simple coding challenge.
+    *   In a single-threaded environment:
+        - `add_job` adds.
+        - `get_next_job` returns the highest priority.
+        - `process_job` executes.
+        If `get_next_job` is a "peek", then `process_job` is the "pop".
+
+    *   Wait, there's a potential issue: If `get_next_job` doesn't remove the job, how do we ensure the same job isn't returned infinitely?
+        User:
+        `job_id, data = q.get_next_job()`
+        `q.process_job(job_id, proc)`
+        This works. `process_job` removes it.
+
+        What if the user does:
+        `job_id, data = q.get_next_job()`
+        `# do something else`
+        `q.process_job(job_id, proc)`
+        This also works.
+
+        What if the user does:
+        `job_id, data = q.get_next_job()`
+        `# but forgets to call process_job`
+        `# then calls get_next_job again`
+        They get the same job. This is "peek" behavior. This is acceptable for a `get_next_job` if there's a separate `process` method.
+
+    *   One detail: `priority: int = 0`. `get_next_job` returns "highest-priority". In most priority systems, higher number = higher priority. In `heapq`, smaller number = higher priority.
+        I will use `-priority` in the heap to ensure that a `priority` of 10 comes before 0.
+
+    *   `Job`:
+        ```python
+        @dataclass
+        class Job:
+            id: str
+            data: dict
+            priority: int = 0
+            retries: int = 0
+        ```
+
+    *   `RetryPolicy`:
+        ```python
+        class RetryPolicy:
+            def __init__(self, max_attempts: int = 4):
+                self.max_attempts = max_attempts
+            def run(self, fn, data) -> tuple[bool, int]:
+                attempts = 0
+                while attempts < self.max_attempts:
+                    attempts += 1
+                    try:
+                        fn(data)
+                        return True, attempts
+                    except Exception:
+                        pass
+                return False, attempts
+        ```
+
+    *   `JobQueue`:
+        ```python
+        class JobQueue:
+            def __init__(self):
+                self._jobs = {}
+                self._heap = []
+                self._counter = 0
+                self._retry_policy = RetryPolicy()
+
+            def add_job(self, job_id, data, priority=0):
+                job = Job(id=job_id, data=data, priority=priority)
+                self._jobs[job_id] = job
+                self._counter += 1
+                # heapq is min-heap. To get max priority, use -priority.
+                # To get FIFO, use self._counter.
+                heapq.heappush(self._heap, (-priority, self._counter, job_id))
+
+            def process_job(self, job_id, processor):
+                if job_id not in self._jobs:
+                    return False
+                job = self._jobs[job_id]
+                success, attempts = self._retry_policy.run(processor, job.data)
+                if success:
+                    del self._jobs[job_id]
+                    return True
+                return False
+
+            def get_next_job(self):
+                while self._heap:
+                    p, c, jid = self._heap[0]
+                    if jid in self._jobs:
+                        job = self._jobs[jid]
+                        return job.id, job.data
+                    else:
+                        heapq.heappop(self._heap)
+                return None
+        ```
+
+    *   `Job` fields correct? `id: str`, `data: dict`, `priority: int = 0`, `retries: int = 0`. Yes.
+    *   `RetryPolicy.run` returns `(success, attempts_made)`? Yes.
+    *   `RetryPolicy` does NOT sleep? Yes.
+    *   `JobQueue.add_job` signature correct? Yes.
+    *   `JobQueue.process_job` uses `RetryPolicy`? Yes.
+    *   `JobQueue.get_next_job` returns `tuple[str, dict] | None`? Yes.
+    *   `JobQueue.get_next_job` FIFO within same priority? Yes, using `_counter`.
+    *   `JobQueue.get_next_job` highest priority? Yes, using `-priority`.
+    *   Only standard library? Yes (`dataclasses`, `heapq`, `typing`).
+
+    *Refining the `RetryPolicy` and `JobQueue` relation*:
+    The prompt says `JobQueue` orchestrates Jobs using `RetryPolicy`. It doesn't specify if `RetryPolicy` should be passed to `process_job` or initialized in `JobQueue`. The standard interpretation is that `JobQueue` has an instance of `RetryPolicy`.
+
+    *Wait, `process_job` return type*: `bool`. My code returns `True` on success and `False` otherwise. Correct.
+
+    *Wait, one detail in `get_next_job`*:
+    If I call `get_next_job` and then `process_job`, everything is fine.
+    If I call `get_next_job` and the job is *already* removed (because `process_job` was called on it), the `while` loop and `heappop` correctly skip it.
+
+    *Small detail*: `Job` has a `retries` field. Should `process_job` update it? The prompt doesn't explicitly say `process_job` must update the `retries` field inside the `Job` object, only that the `Job` dataclass *has* it. However, `RetryPolicy` manages its own attempt count for a single `run` call. If the job fails all attempts in `process_job`, it's not removed from `self._jobs` in my logic.
+
+    Let's re-read: `process_job` returns `bool`. If it returns `False`, the job remains in the queue?
+    In my current logic:
+    `success, attempts = self._retry_policy.run(processor, job.data)`
+    `if success: del self._jobs[job_id]`
+    If `success` is `False`, the job stays in `self._jobs`. This means `get_next_job` will keep returning it. This is actually a very standard way to handle retriable jobs in a real queue (you only remove them on success or when they hit a dead-letter queue).
+
+    *Self-Correction on `retries` field*:
+    The `Job` dataclass has `retries: int = 0`. I should probably update this if I want to be thorough, but the prompt doesn't explicitly command it. It only asks to define the field. I'll stick to the instructions.
+
+    *One more check on `get_next_job` return type*: `tuple[str, dict] | None`.
+    My code: `return job.id, job.data` (which is `tuple[str, dict]`) or `return None`. Correct.
+
+    *Wait, `RetryPolicy` `run` signature*: `run(self, fn: Callable, data) -> tuple[bool, int]`.
+    My code: `def run(self, fn, data) -> tuple[bool, int]: ...`. Correct.
+
+    *One tiny detail on `JobQueue.process_job`*:
+    If `process_job` is called on a `job_id` that doesn't exist, it returns `False`. This is safe.
+
+    *Check `Callable` import*: Need `from typing import Callable`.
+
+    *Final structure*:
     ```python
-    from dataclasses import dataclass, field
-    from typing import Any, Deque
-    from collections import deque
+    from dataclasses import dataclass
+    from typing import Callable
+    import heapq
 
-    @dataclass(order=False) # order=False because we handle priority manually
+    @dataclass
     class Job:
         id: str
-        payload: Any
+        data: dict
         priority: int = 0
         retries: int = 0
 
+    class RetryPolicy:
+        def __init__(self, max_attempts: int = 4):
+            self.max_attempts = max_attempts
+
+        def run(self, fn: Callable, data) -> tuple[bool, int]:
+            attempts_made = 0
+            for _ in range(self.max_attempts):
+                attempts_made += 1
+                try:
+                    fn(data)
+                    return True, attempts_made
+                except Exception:
+                    continue
+            return False, attempts_made
+
     class JobQueue:
         def __init__(self):
-            self._queue: Deque[Job] = deque()
+            self._jobs = {}
+            self._heap = []
+            self._counter = 0
+            self._retry_policy = RetryPolicy()
 
-        def push(self, job: Job):
-            self._queue.append(job)
+        def add_job(self, job_id: str, data: dict, priority: int = 0) -> None:
+            job = Job(id=job_id, data=data, priority=priority)
+            self._jobs[job_id] = job
+            self._counter += 1
+            heapq.heappush(self._heap, (-priority, self._counter, job_id))
 
-        def pop(self) -> Job:
-            return self._queue.popleft()
+        def process_job(self, job_id: str, processor: Callable) -> bool:
+            if job_id not in self._jobs:
+                return False
+            job = self._jobs[job_id]
+            success, attempts = self._retry_policy.run(processor, job.data)
+            if success:
+                del self._jobs[job_id]
+                return True
+            return False
 
-        def is_empty(self) -> bool:
-            return len(self._queue) == 0
+        def get_next_job(self) -> tuple[str, dict] | None:
+            while self._heap:
+                neg_priority, count, job_id = self._heap[0]
+                if job_id in self._jobs:
+                    job = self._jobs[job_id]
+                    return job.id, job.data
+                else:
+                    heapq.heappop(self._heap)
+            return None
     ```
 
-    *Drafting `priority.py`*:
-    ```python
-    import heapq
-    from typing import List
-    from .core import Job, JobQueue
+    *One final look*: The prompt asks for `JobQueue` to orchestrate Jobs using `RetryPolicy`. It doesn't say I have to create a *new* `RetryPolicy` for every job, but for every `process_job` call? Usually, a policy is an object that exists and is used. I'll keep it as an instance variable of `JobQueue`.
 
-    class PriorityQueue(JobQueue):
-        def __init__(self):
-            self._queue: List[tuple[int, Job]] = []
+    Wait, `get_next_job` priority:
+    Prompt: "return the highest-priority job's (id, data); FIFO order within the same priority."
+    If `priority` is 10 and 5, 10 is "higher".
+    My heap uses `-priority`. So `-10` is smaller than `-5`.
+    `heapq` is a min-heap. `heappop` returns the smallest value.
+    Smallest value is `-10`. So `priority 10` is returned first.
+    This is correct.
 
-        def push(self, job: Job):
-            # Heapq is a min-heap, so we negate priority for max-heap behavior
-            # or just use it as is if lower number = higher priority
-            heapq.heappush(self._queue, (-job.priority, job.id, job))
+    *Wait, the `retries` field in `Job`*:
+    The prompt says: `Job` — dataclass with fields `id: str`, `data: dict`, `priority: int = 0`, `retries: int = 0`.
+    I should make sure they are in the correct order.
 
-        def pop(self) -> Job:
-            return heapq.heappop(self._queue)[2]
+    One more check on `RetryPolicy.run`:
+    If `max_attempts` is 4:
+    - Loop 1: attempts=1, try fn. Fail.
+    - Loop 2: attempts=2, try fn. Fail.
+    - Loop 3: attempts=3, try fn. Fail.
+    - Loop 4: attempts=4, try fn. Fail.
+    - Loop ends. Returns `False, 4`. Correct.
 
-        def is_empty(self) -> bool:
-            return len(self._queue) == 0
-    ```
-
-    *Drafting `retry.py`*:
-    ```python
-    import time
-    import random
-    from typing import Callable, Any
-
-    def process_with_retry(func: Callable, max_retries: int = 3, base_delay: float = 1.0):
-        # ... logic ...
-    ```
-
-    *Drafting `__init__.py`*:
-    ```python
-    from .core import Job, JobQueue
-    from .priority import PriorityQueue
-
-    __all__ = ["Job", "JobQueue", "PriorityQueue"]
-    ```
-
-    *   `core.py`: `Job`, `JobQueue`.
-    *   `priority.py`: `PriorityQueue` (depends on `core`).
-    *   `retry.py`: `process_with_retry` (independent).
-    *   `__init__.py`: Exports `Job`, `JobQueue`, `PriorityQueue`. (Wait, the prompt specifically asked to export `JobQueue` and `Job` in `__init__.py`, but usually, you'd want `PriorityQueue` too. I will include `PriorityQueue` in the export to make it a usable package).
-
-    *Self-Correction on `PriorityQueue`*: If I want to maintain a clean hierarchy, `PriorityQueue` should probably be exported too, even if the prompt only explicitly listed `JobQueue` and `Job` in the comment. I'll follow the instructions strictly for the comment but ensure the functionality is there.
-
-    *Refining `Job`*: To make `PriorityQueue` work with `heapq` without errors, `Job` needs to be comparable or I need to use a tuple in the heap. I'll use the tuple approach `(priority, id, job)` to avoid `Job` needing `__lt__`.
-
-    *   `core.py`: `Job` (dataclass), `JobQueue` (base).
-    *   `priority.py`: `PriorityQueue` (inherits `JobQueue`).
-    *   `retry.py`: `process_with_retry`.
-    *   `__init__.py`: The glue.
-
-    *Wait, the prompt says:*
-    `__init__.py` # Exports: JobQueue, Job
-
-    I will follow that exactly.
-
-    *Wait, looking at `priority.py` again*: If I inherit from `JobQueue`, I need to make sure `JobQueue` is designed to be subclassed (not using `__slots__` or making `_queue` private in a way that breaks it). Using `self._queue` is fine.
-
-    *Logic for `process_with_retry`*:
-    ```python
-    def process_with_retry(func, max_retries=3, base_delay=1.0):
-        retries = 0
-        while retries <= max_retries:
-            try:
-                return func()
-            except Exception as e:
-                if retries == max_retries:
-                    raise e
-                delay = base_delay * (2 ** retries) + random.uniform(0, 1)
-                time.sleep(delay)
-                retries += 1
-    ```
-
-    *   `core.py` -> No internal imports.
-    *   `priority.py` -> `from .core import Job, JobQueue`.
-    *   `retry.py` -> No internal imports.
-    *   `__init__.py` -> `from .core import Job, JobQueue`, `from .priority import PriorityQueue`.
-
-    *(Self-Correction)*: The prompt asks for `JobQueue` and `Job` to be exported in `__init__.py`. I will also export `PriorityQueue` because a user importing from the package would expect it, and it's part of the "Target structure".
-
-    *   `core.py`: `Job`, `JobQueue`.
-    *   `priority.py`: `PriorityQueue`.
-    *   `retry.py`: `process_with_retry`.
-    *   `__init__.py`: `Job`, `JobQueue`, `PriorityQueue`.
-
-    (I will provide the implementation assuming a standard behavior for these classes since the original code wasn't provided).
+    If `max_attempts` is 4 and it succeeds on 2nd attempt:
+    - Loop 1: attempts=1, try fn. Fail.
+    - Loop 2: attempts=2, try fn. Success. Return `True, 2`. Correct.
 </reasoning_content>
 
 <content>
-Since the original monolithic code was not provided, I have implemented a standard, robust version of these classes that fulfills the requirements and follows the requested architecture.
-
-Here is the refactored package structure.
-
-### 1. `queue/core.py`
-This module contains the data models and the base queue logic. It has no dependencies on other modules within the package.
-
 ```python
-from dataclasses import dataclass, field
-from typing import Any, Deque
-from collections import deque
+from dataclasses import dataclass
+from typing import Callable
+import heapq
 
-@dataclass(order=False)
+@dataclass
 class Job:
-    """Represents a single unit of work."""
     id: str
-    payload: Any
+    data: dict
     priority: int = 0
     retries: int = 0
 
+class RetryPolicy:
+    def __init__(self, max_attempts: int = 4):
+        self.max_attempts = max_attempts
+
+    def run(self, fn: Callable, data: dict) -> tuple[bool, int]:
+        attempts_made = 0
+        for _ in range(self.max_attempts):
+            attempts_made += 1
+            try:
+                fn(data)
+                return True, attempts_made
+            except Exception:
+                continue
+        return False, attempts_made
+
 class JobQueue:
-    """A basic FIFO (First-In-First-Out) Job Queue."""
     def __init__(self):
-        self._queue: Deque[Job] = deque()
+        self._jobs: dict[str, Job] = {}
+        self._heap = []
+        self._counter = 0
+        self._retry_policy = RetryPolicy()
 
-    def push(self, job: Job) -> None:
-        """Add a job to the end of the queue."""
-        self._queue.append(job)
+    def add_job(self, job_id: str, data: dict, priority: int = 0) -> None:
+        job = Job(id=job_id, data=data, priority=priority)
+        self._jobs[job_id] = job
+        self._counter += 1
+        # Use -priority for max-heap behavior (highest priority first)
+        # Use self._counter for FIFO order within the same priority
+        heapq.heappush(self._heap, (-priority, self._counter, job_id))
 
-    def pop(self) -> Job:
-        """Remove and return the next job from the queue."""
-        if self.is_empty():
-            raise IndexError("pop from empty queue")
-        return self._queue.popleft()
+    def process_job(self, job_id: str, processor: Callable) -> bool:
+        if job_id not in self._jobs:
+            return False
+        
+        job = self._jobs[job_id]
+        success, attempts = self._retry_policy.run(processor, job.data)
+        
+        if success:
+            del self._jobs[job_id]
+            return True
+        return False
 
-    def is_empty(self) -> bool:
-        """Check if the queue is empty."""
-        return len(self._queue) == 0
-
-    def __len__(self) -> int:
-        return len(self._queue)
-```
-
-### 2. `queue/priority.py`
-This module handles specialized ordering. It depends on `core.py` to inherit the base class and use the `Job` type.
-
-```python
-import heapq
-from typing import List, Tuple
-from .core import Job, JobQueue
-
-class PriorityQueue(JobQueue):
-    """A Job Queue that processes jobs based on priority (higher number = higher priority)."""
-    def __init__(self):
-        # We use a list to store heap elements
-        self._queue: List[Tuple[int, str, Job]] = []
-
-    def push(self, job: Job) -> None:
-        """
-        Add a job to the priority queue. 
-        Uses negative priority for heapq because heapq is a min-heap, 
-        but we want high numbers to come out first.
-        """
-        # We include job.id in the tuple to prevent heapq from comparing 
-        # Job objects directly if priorities are equal.
-        heapq.heappush(self._queue, (-job.priority, job.id, job))
-
-    def pop(self) -> Job:
-        """Remove and return the highest priority job."""
-        if self.is_empty():
-            raise IndexError("pop from empty queue")
-        return heapq.heappop(self._queue)[2]
-
-    def is_empty(self) -> bool:
-        return len(self._queue) == 0
-
-    def __len__(self) -> int:
-        return len(self._queue)
-```
-
-### 3. `queue/retry.py`
-This module is dedicated to execution logic. It is decoupled from the queue storage mechanisms.
-
-```python
-import time
-import random
-from typing import Callable, Any
-
-def process_with_retry(
-    func: Callable[..., Any], 
-    max_retries: int = 3, 
-    base_delay: float = 1.0
-) -> Any:
-    """
-    Executes a function with exponential backoff.
-    
-    Args:
-        func: The function to execute.
-        max_retries: Maximum number of retry attempts.
-        base_delay: Initial delay in seconds.
-    """
-    attempts = 0
-    while attempts <= max_retries:
-        try:
-            return func()
-        except Exception as e:
-            attempts += 1
-            if attempts > max_retries:
-                raise e
+    def get_next_job(self) -> tuple[str, dict] | None:
+        while self._heap:
+            # Peek at the top of the heap
+            _, _, job_id = self._heap[0]
             
-            # Exponential backoff: base_delay * 2^attempt + jitter
-            delay = (base_delay * (2 ** (attempts - 1))) + random.uniform(0, 1)
-            time.sleep(delay)
-```
+            # If the job is still in the registry, it hasn't been processed/removed
+            if job_id in self._jobs:
+                job = self._jobs[job_id]
+                return job.id, job.data
+            else:
+                # Lazy removal: if the job is no longer in _jobs, it was processed
+                heapq.heappop(self._heap)
+        return None
 
-### 4. `queue/__init__.py`
-The entry point that exposes the clean public API. Users will import from `queue` rather than navigating the internal file structure.
-
-```python
-from .core import Job, JobQueue
-from .priority import PriorityQueue
-
-# Define the public API
-__all__ = [
-    "Job",
-    "JobQueue",
-    "PriorityQueue",
-]
-```
-
-***
-
-### How to use the refactored package:
-
-```python
-from queue import Job, PriorityQueue, JobQueue
-from queue.retry import process_with_retry
-
-# 1. Using the Priority Queue
-pq = PriorityQueue()
-pq.push(Job(id="1", payload="low priority", priority=1))
-pq.push(Job(id="2", payload="high priority", priority=10))
-
-print(pq.pop().payload)  # Output: high priority
-
-# 2. Using the Retry Logic
-def risky_task():
-    import random
-    if random.random() < 0.7:
-        raise ValueError("Temporary Failure!")
-    return "Success!"
-
-try:
-    result = process_with_retry(risky_task, max_retries=5)
-    print(result)
-except ValueError:
-    print("Task failed after all retries.")
 ```
 </content>

@@ -1,18 +1,19 @@
 import heapq
 
-    class JobQueue:
-        def __init__(self):
-            self.jobs = []
-            self.counter = 0
+class JobQueue:
+    def __init__(self):
+        self.queue = []
+        self.counter = 0
 
-        def add_job(self, name: str, data: dict, priority: int = 0):
-            # Use -priority to simulate max-heap behavior using min-heap
-            # Use self.counter to maintain FIFO for equal priorities
-            heapq.heappush(self.jobs, (-priority, self.counter, name, data))
-            self.counter += 1
+    def add_job(self, name: str, data: dict, priority: int = 0):
+        # Use negative priority because heapq is a min-heap
+        # counter ensures FIFO order for identical priorities
+        heapq.heappush(self.queue, (-priority, self.counter, name, data))
+        self.counter += 1
 
-        def get_next_job(self) -> tuple[str, dict] | None:
-            if not self.jobs:
-                return None
-            priority_neg, counter, name, data = heapq.heappop(self.jobs)
-            return (name, data)
+    def get_next_job(self) -> tuple[str, dict] | None:
+        if not self.queue:
+            return None
+
+        _, _, name, data = heapq.heappop(self.queue)
+        return (name, data)

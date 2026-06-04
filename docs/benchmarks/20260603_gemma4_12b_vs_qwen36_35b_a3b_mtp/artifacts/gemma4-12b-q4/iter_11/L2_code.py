@@ -1,35 +1,33 @@
-from typing import Callable, Dict, Any
+from typing import Callable, Any, Dict
 
-    class JobQueue:
-        def __init__(self):
-            self.jobs: Dict[str, Any] = {}
-            self.retry_counts: Dict[str, int] = {}
+class JobQueue:
+    def __init__(self):
+        self.jobs: Dict[str, Dict[str, Any]] = {}
 
-        def add_job(self, job_id: str, data: Any):
-            self.jobs[job_id] = data
-            self.retry_counts[job_id] = 0
+    def add_job(self, job_id: str, data: Dict[str, Any]) -> None:
+        self.jobs[job_id] = {
+            "data": data,
+            "retry_count": 0,
+            "delays": []
+        }
 
-        def process_job(self, job_id: str, processor: Callable) -> bool:
-            if job_id not in self.jobs:
-                return False
+    def process_job(self, job_id: str, processor: Callable[[Dict[str, Any]], Any]]) -> bool:
+        if job_id not in self.jobs:
+            return False
 
-            max_retries = 3
-            data = self.jobs[job_id]
+        job_entry = self.jobs[job_id]
+        data = job_entry["data"]
 
-            while True:
-                try:
-                    # Assuming the processor takes the data object
-                    Processor(data)
-                    self.retry_counts[job_id] = 0 # Reset on success
-                    return True
-                except Exception as e:
-                    current_retries = self.retry_counts[job_id]
-                    if current_retries >= max_retries:
-                        return False
-
-                    self.retry_counts[job_id] += 1
-                    # Backoff calculation: 1, 2, 4...
-                    # delay = 2 ** (self.retry_counts[job_id] - 1)
-                    # Since we don't need to sleep, we just increment the count
-                    # and loop again.
-                    pass
+        for attempt in range(4):
+            try:
+                processor(data)
+                return True
+            except Exception:
+                if attempt < 3:
+                    # Exponential backoff: 1s, 2s, 4s
+                    delay = 2 ** attempt
+                    job_entry["retry_count"] += 1
+                    job_entry["delays"].append(delay)
+                else:
+                    return False
+        return False

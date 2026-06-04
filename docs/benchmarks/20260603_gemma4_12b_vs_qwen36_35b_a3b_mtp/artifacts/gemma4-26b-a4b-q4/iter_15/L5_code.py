@@ -1,25 +1,61 @@
-from dataclasses import dataclass, field
-        from typing import Any, List
+from dataclasses import dataclass
+from typing import Callable, Any
+import heapq
 
-        @dataclass(order=False) # We will handle comparison manually for priority
-        class Job:
-            id: str
-            payload: Any
-            priority: int = 0
+@dataclass
+class Job:
+    id: str
+    data: dict
+    priority: int = 0
+    retries: int = 0
 
-            def __lt__(self, other):
-                # For PriorityQueue (heapq is a min-heap, so higher priority = lower number)
-                return self.priority < other.priority
+class RetryPolicy:
+    def __init__(self, max_attempts: int = 4):
+        self.max_attempts = max_attempts
 
-        class JobQueue:
-            def __init__(self):
-                self._jobs: List[Job] = []
+    def run(self, fn: Callable, data: Any) -> tuple[bool, int]:
+        attempts = 0
+        while attempts < self.max_attempts:
+            attempts += 1
+            try:
+                fn(data)
+                return True, attempts
+            except Exception:
+                continue
+        return False, attempts
 
-            def enqueue(self, job: Job):
-                self._jobs.append(job)
+class JobQueue:
+    def __init__(self):
+        self._jobs: dict[str, Job] = {}
+        self._pq: list[tuple[int, int, str]] = []
+        self._counter = 0
+        self._retry_policy = RetryPolicy()
 
-            def dequeue(self) -> Job:
-                return self._jobs.pop(0) if self._jobs else None
+    def add_job(self, job_id: str, data: dict, priority: int = 0) -> None:
+        job = Job(id=job_id, data=data, priority=priority)
+        self._jobs[job_id] = job
+        # heapq is a min-heap. We use -priority to simulate a max-priority queue.
+        # We use self._counter to ensure FIFO order for jobs with the same priority.
+        heapq.heappush(self._pq, (-priority, self._counter, job_id))
+        self._counter += 1
 
-            def __len__(self):
-                return len(self._jobs)
+    def process_job(self, job_id: str, processor: Callable) -> bool:
+        job = self._jobs.get(job_id)
+        if not job:
+            return False
+
+        success, attempts = self._retry_policy.run(processor, job.data)
+        if success:
+            del self._jobs[job_id]
+            return True
+        else:
+            job.retries = attempts
+            return False
+
+    def get_next_job(self) -> tuple[str, dict] | None:
+        while self._pq:
+            _, _, job_id = heapq.heappop(self._pq)
+            if job_id in self._jobs:
+                job = self._jobs[job_id]
+                return job.id, job.data
+        return None
