@@ -14,6 +14,7 @@ prefix. Settings are managed by [pydantic-settings](https://docs.pydantic.dev/la
 |---------------------|------|---------|-------------|
 | `GPUMOD_DB_PATH` | `str` | `~/.config/gpumod/gpumod.db` | Path to the SQLite database file |
 | `GPUMOD_PRESETS_DIR` | `str` | Auto-resolved | Path to the built-in presets directory |
+| `GPUMOD_MODES_DIR` | `str` | Auto-resolved | Path to the built-in modes directory |
 | `GPUMOD_LOG_LEVEL` | `str` | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`) |
 | `GPUMOD_LLM_BACKEND` | `str` | `openai` | LLM provider backend (`openai`, `anthropic`, `ollama`) |
 | `GPUMOD_LLM_API_KEY` | `str` | None | API key for the LLM backend (stored as `SecretStr`) |
@@ -23,6 +24,7 @@ prefix. Settings are managed by [pydantic-settings](https://docs.pydantic.dev/la
 | `GPUMOD_RAM_MIN_FREE_MB` | `int` | `1024` | Minimum free RAM (MB) — blocks service start below this |
 | `GPUMOD_RAM_WARN_FREE_MB` | `int` | `4096` | Warn threshold (MB) — logs warning below this |
 | `GPUMOD_VRAM_SAFETY_MARGIN_MB` | `int` | `512` | Extra VRAM buffer (MB) required beyond service allocation |
+| `GPUMOD_QUIESCE_SECONDS` | `float` | `10.0` | Seconds to wait after heavy stop before allowing new heavy start (range 0-300). Helps the kernel consolidate freed pages so the next CUDA-pinned allocation doesn't hit a fragmentation hang. |
 
 ## Example: Using Ollama locally
 

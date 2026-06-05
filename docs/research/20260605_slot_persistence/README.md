@@ -76,7 +76,7 @@ extra_args: "--parallel 3 --cont-batching ... --slot-save-path $HOME/.cache/llam
 
 **Host setup requirement:** `mkdir -p ~/.cache/llama-slots` (one-time). Documented in the preset header; the systemd unit will fail loudly if missing.
 
-Wrapper pattern documented in [`modes/hermes-agent.yaml`](../../../modes/hermes-agent.yaml) comment block:
+Wrapper pattern documented in [`modes/hermes-agent.yaml`](https://github.com/jaigouk/gpumod/blob/main/modes/hermes-agent.yaml) comment block:
 
 ```bash
 # Before reconnect:

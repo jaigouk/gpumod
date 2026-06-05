@@ -116,6 +116,26 @@ gpumod mode switch chat-mode
 gpumod mode switch chat-mode --json
 ```
 
+**Drift recovery (gpumod-hrgg):** if the database already records the
+target mode as current but the systemd units have drifted (host reboot,
+manual stop, prior failed boot), `mode switch` now reconciles against the
+actual `running` set and re-issues `systemctl start` for any target
+service that's not actively running. The `Started:` block in the output
+will list each service that was launched.
+
+### mode sync
+
+Sync YAML mode files into the database. Compares each `modes/*.yaml`
+against the DB and inserts new modes or updates changed ones. Calculates
+total VRAM from member service VRAM values. **Run this after editing any
+mode YAML file or after `template install-all` re-renders service units —
+otherwise `mode switch` may target the stale service set.**
+
+```bash
+gpumod mode sync
+gpumod mode sync --json
+```
+
 ### mode create
 
 Create a new mode from existing services.
@@ -179,7 +199,19 @@ gpumod template install llama-3-1-8b
 gpumod template install llama-3-1-8b --yes
 ```
 
-The unit file is written to `~/.config/systemd/user/gpumod-{service_id}.service`.
+The unit file is written to `~/.config/systemd/user/{service_id}.service`.
+
+### template install-all
+
+Re-render every registered service against the current templates. **Mandatory
+acceptance step** for any change to `src/gpumod/templates/` or any preset
+YAML schema expectation — the test suite covers the template engine but
+not the full preset matrix; running install-all surfaces latent preset
+bugs that pytest misses (gpumod-56md lesson).
+
+```bash
+gpumod template install-all --yes
+```
 
 ## gpumod model
 

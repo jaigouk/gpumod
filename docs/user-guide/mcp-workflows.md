@@ -232,8 +232,9 @@ unit_vars:
 **3. Save and register**
 
 ```bash
-# Save the YAML, then:
-gpumod preset load presets/devstral-small.yaml
+# Save the YAML under your preset directory, then sync to the DB:
+gpumod preset sync
+# (or: gpumod init --preset-dir <dir> for an alternate preset root)
 ```
 
 **4. Verify**
@@ -409,7 +410,8 @@ This stops everything and releases VRAM. Always works.
 | `gpu_status` | Check GPU state | "What's my VRAM?" |
 | `list_services` | Show all services | "What's running?" |
 | `list_modes` | Show available modes | "What modes exist?" |
-| `switch_mode` | Change mode | "Switch to rag" |
+| `service_info` | Detailed info for one service | "Show me the qwen-embedding preset" |
+| `switch_mode` | Change mode (reconciles drift, gpumod-hrgg) | "Switch to rag" |
 | `simulate_mode` | Test VRAM fit | "Will this fit?" |
 | `start_service` | Start one service | "Start embedding" |
 | `stop_service` | Stop one service | "Stop chat model" |
@@ -420,6 +422,8 @@ This stops everything and releases VRAM. Always works.
 |------|---------|---------|
 | `search_hf_models` | Find models | "Find Qwen GGUF" |
 | `list_gguf_files` | Check quantizations | "What sizes available?" |
+| `list_model_files` | List files for any HF repo | "What's in the unsloth gemma 4 26b repo?" |
+| `model_info` | VRAM + arch detail for a registered model | "How big is gemma 4 26b at 128K ctx?" |
 | `fetch_model_config` | Get architecture | "What's the context length?" |
 | `generate_preset` | Create config | "Make a preset" |
 | `fetch_driver_docs` | Get llama.cpp/vLLM docs | "What flags available?" |
@@ -429,6 +433,9 @@ This stops everything and releases VRAM. Always works.
 | Tool | Purpose | Example |
 |------|---------|---------|
 | `consult` | Multi-step analysis | "Can I run Qwen-235B on 24GB?" |
+
+(16 tools total. Run `mcp list-tools gpumod` from your AI assistant to see
+the live list — new tools are added without breaking existing ones.)
 
 ---
 

@@ -227,6 +227,13 @@ The top-level orchestrator coordinating mode switches and status queries.
 - Coordinate service start/stop ordering
 - Detect and clean up orphan services
 - Wait for VRAM release between transitions
+- **Reconcile drift between DB current_mode and the actual running set** —
+  if the DB says "you're already in mode X" but a target service isn't
+  actively running (host reboot, manual stop, prior failed boot), the
+  service is restarted. Sleeping target services are routed to
+  `lifecycle.wake()` via `_handle_incoming_services` rather than re-launched.
+  See `switch_mode` in `services/manager.py` and the `TestSwitchWhenDbCurrentMatchesTargetButRunningDrifted`
+  test class for the partition contract (gpumod-hrgg).
 
 #### ServiceRegistry
 
@@ -290,6 +297,23 @@ Drivers implement the `ServiceDriver` ABC, abstracting runtime differences:
 | **LlamaCppDriver** | systemd         | Router (model load/unload) | `/health`    |
 | **FastAPIDriver**  | systemd         | Custom (if implemented)    | Configurable |
 | **DockerDriver**   | Docker API      | Container stop/start       | Configurable |
+
+**LlamaCppDriver — multi-slot and persistence (added 2026-06-05):**
+presets ending in `-multi` configure llama-server with `--parallel N
+--cont-batching` so a single service hosts N independent KV cache slots.
+The scheduler routes incoming HTTP requests across slots first-come-first-served;
+clients can pin via the undocumented `id_slot` passthrough on
+`/v1/chat/completions`. Capacity-frontier findings for Gemma 4 26B-A4B
+are in [docs/research/20260604_multi_agent_hermes_capacity/](../research/20260604_multi_agent_hermes_capacity/README.md).
+Slot KV cache can be persisted to disk via `--slot-save-path <dir>` and
+the `POST /slots/{id}?action=save|restore` endpoints (gpumod-8viu); the
+template engine renders this from the preset's `unit_vars.extra_args`.
+
+**LlamaCppDriver — host-stability defaults:** every llamacpp unit sets
+`GGML_CUDA_NO_PINNED=1` unconditionally in the template
+(`llamacpp.service.j2`), bypassing `cudaMallocHost` to eliminate the
+NVIDIA-driver page-fragmentation freeze class (gpumod-x7rv root cause,
+gpumod-56md fix; ~0.3% TPS regression).
 
 ---
 
