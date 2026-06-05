@@ -260,9 +260,18 @@ class TestSwitchCodeToRag:
     """Test switching from 'code' to 'rag' mode."""
 
     async def test_switch_stops_devstral_starts_rag_services(
-        self, manager: ServiceManager, mock_lifecycle: AsyncMock
+        self,
+        manager: ServiceManager,
+        mock_lifecycle: AsyncMock,
+        mock_registry: AsyncMock,
     ) -> None:
         """Switching code->rag should stop svc-devstral, start svc-rag-llm + svc-reranker."""
+
+        async def _list_running_code() -> list[Service]:
+            return CODE_SERVICES
+
+        mock_registry.list_running = AsyncMock(side_effect=_list_running_code)
+
         result = await manager.switch_mode("rag")
 
         assert result.success is True
@@ -282,9 +291,15 @@ class TestSwitchReturnsModeResult:
     """Test switch returns correct ModeResult."""
 
     async def test_switch_returns_correct_started_stopped_lists(
-        self, manager: ServiceManager
+        self, manager: ServiceManager, mock_registry: AsyncMock
     ) -> None:
         """ModeResult should contain correct started and stopped service lists."""
+
+        async def _list_running_code() -> list[Service]:
+            return CODE_SERVICES
+
+        mock_registry.list_running = AsyncMock(side_effect=_list_running_code)
+
         result = await manager.switch_mode("rag")
 
         assert result.success is True
@@ -437,6 +452,73 @@ class TestSwitchDoesNotUpdateDbOnFailure:
 
         assert result.success is False
         mock_db.set_current_mode.assert_not_called()
+
+
+class TestSwitchWhenDbCurrentMatchesTargetButRunningDrifted:
+    """Regression: gpumod-hrgg.
+
+    When DB.current_mode == target_mode but the actually running set has
+    drifted (host reboot, manual stop, crash), switch_mode must still start
+    the missing services rather than no-op'ing.
+    """
+
+    async def test_switch_starts_missing_services_when_running_set_drifted(
+        self,
+        mock_lifecycle: AsyncMock,
+        mock_vram: AsyncMock,
+        mock_sleep: AsyncMock,
+    ) -> None:
+        """Partial drift: svc-embed still running, svc-rag-llm + svc-reranker missing."""
+        db = _build_mock_db(current_mode="rag")
+        registry = _build_mock_registry()
+
+        async def _list_running_drifted() -> list[Service]:
+            return [SVC_EMBED]
+
+        registry.list_running = AsyncMock(side_effect=_list_running_drifted)
+
+        mgr = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=mock_lifecycle,
+            vram=mock_vram,
+            sleep=mock_sleep,
+            ram=_build_mock_ram(),
+        )
+
+        result = await mgr.switch_mode("rag")
+
+        assert result.success is True
+        started = {c.args[0] for c in mock_lifecycle.start.call_args_list}
+        assert started == {"svc-rag-llm", "svc-reranker"}
+        assert "svc-embed" not in started
+        mock_lifecycle.stop.assert_not_called()
+
+    async def test_switch_starts_all_target_services_when_nothing_running(
+        self,
+        mock_lifecycle: AsyncMock,
+        mock_vram: AsyncMock,
+        mock_sleep: AsyncMock,
+    ) -> None:
+        """Full drift: DB says current=rag but no services running."""
+        db = _build_mock_db(current_mode="rag")
+        registry = _build_mock_registry()
+
+        mgr = ServiceManager(
+            db=db,
+            registry=registry,
+            lifecycle=mock_lifecycle,
+            vram=mock_vram,
+            sleep=mock_sleep,
+            ram=_build_mock_ram(),
+        )
+
+        result = await mgr.switch_mode("rag")
+
+        assert result.success is True
+        started = {c.args[0] for c in mock_lifecycle.start.call_args_list}
+        assert started == {"svc-embed", "svc-rag-llm", "svc-reranker"}
+        mock_lifecycle.stop.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -972,7 +1054,14 @@ class TestVramWaitOnSwitch:
     async def test_vram_wait_uses_largest_incoming_service_vram(self) -> None:
         """VRAM wait should use the largest incoming service's vram_mb."""
         db = _build_sleepable_mock_db(current_mode="code")
-        registry = _build_sleepable_mock_registry()
+        # Incoming rag services are STOPPED so they end up in to_start
+        # and drive the VRAM-wait sizing.
+        registry = _build_sleepable_mock_registry(
+            service_states={
+                "svc-rag-llm": ServiceState.STOPPED,
+                "svc-reranker": ServiceState.STOPPED,
+            }
+        )
         lifecycle = _build_sleepable_mock_lifecycle()
         vram = _build_mock_vram()
         vram.wait_for_vram_release = AsyncMock(return_value=True)

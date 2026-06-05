@@ -196,27 +196,42 @@ class ServiceManager:
 
             # 3. Compute diff (include orphan services from prior modes)
             # Get ALL services currently running or sleeping on the system
-            running_services = await self._registry.list_running()
-            running_service_ids = {s.id for s in running_services}
+            running_or_sleeping = await self._registry.list_running()
+            running_or_sleeping_ids = {s.id for s in running_or_sleeping}
+
+            # Partition by state so 'to_start' can still include sleeping services
+            # (they get routed to wake() in _handle_incoming_services).
+            sleeping_ids: set[str] = set()
+            for svc in running_or_sleeping:
+                driver = self._registry.get_driver(svc.driver)
+                status = await driver.status(svc)
+                if status.state == ServiceState.SLEEPING:
+                    sleeping_ids.add(svc.id)
+            actively_running_ids = running_or_sleeping_ids - sleeping_ids
 
             logger.debug(
                 "Mode switch state: current_mode=%r, target_mode=%r, "
-                "current_mode_services=%s, target_services=%s, running_services=%s",
+                "current_mode_services=%s, target_services=%s, "
+                "running_or_sleeping=%s, sleeping=%s",
                 current_mode_id,
                 target_mode_id,
                 sorted(current_service_ids),
                 sorted(target_service_ids),
-                sorted(running_service_ids),
+                sorted(running_or_sleeping_ids),
+                sorted(sleeping_ids),
             )
 
-            # to_stop includes:
-            # 1. Services defined in current mode but not in target mode
-            # 2. Services actually running/sleeping that aren't in target mode (orphans)
-            to_stop = (current_service_ids | running_service_ids) - target_service_ids
-            to_start = target_service_ids - current_service_ids
+            # to_stop: services that should not be in the target mode.
+            # Includes both actively running and sleeping orphans (gpumod-77o).
+            to_stop = (current_service_ids | running_or_sleeping_ids) - target_service_ids
+
+            # to_start: target services that are not actively running.
+            # Sleeping target services ARE in to_start so they reach the
+            # SLEEPING-branch in _handle_incoming_services and get woken.
+            to_start = target_service_ids - actively_running_ids
 
             # Log orphan detection
-            orphan_services = running_service_ids - current_service_ids - target_service_ids
+            orphan_services = running_or_sleeping_ids - current_service_ids - target_service_ids
             if orphan_services:
                 logger.info(
                     "Detected orphan services from prior modes: %s",
