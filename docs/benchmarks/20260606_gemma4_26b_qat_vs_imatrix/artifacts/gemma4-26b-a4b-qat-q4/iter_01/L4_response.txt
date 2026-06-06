@@ -1,0 +1,149 @@
+<reasoning_content>
+*   A `JobQueue` class manages jobs and results using two dictionaries: `self.jobs` and `self.results`.
+    *   `add_job`: Adds a job to `self.jobs`.
+    *   `process_job`: Retrieves data from `self.jobs`, executes a `processor` function, stores the result in `self.results`, and removes the job from `self.jobs`.
+    *   `get_result`: Retrieves a result from `self.results`.
+    *   *The Problem:* Multiple threads calling `process_job` or `add_job` or `get_result` simultaneously can cause race conditions. Specifically, the user pointed out: `self.results[job_id] = result` and the deletion from `self.jobs` are not atomic relative to other operations on the shared state.
+
+    *   `self.jobs` and `self.results` are shared resources.
+    *   Python dictionaries are thread-safe for single *atomic* operations (like `dict[key] = val`) due to the Global Interpreter Lock (GIL). However, sequences of operations are *not* atomic.
+    *   *Scenario 1 (Logical Race):* If two threads call `process_job` for the *same* `job_id` simultaneously:
+        1.  Thread A checks `job_id in self.jobs` (True).
+        2.  Thread B checks `job_id in self.jobs` (True).
+        3.  Thread A gets `data`.
+        4.  Thread B gets `data`.
+        5.  Thread A executes `processor`.
+        6.  Thread B executes `processor`.
+        7.  Thread A writes to `results`.
+        8.  Thread B writes to `results` (overwrites A).
+        9.  Thread A deletes from `jobs`.
+        10. Thread B tries to delete from `jobs` $\rightarrow$ `KeyError` (because Thread A already deleted it).
+    *   *Scenario 2 (Visibility/Consistency):* `get_result` might be called while `process_job` is halfway through its logic.
+
+    *   We need a `threading.Lock` to protect the shared state (`self.jobs` and `self.results`).
+    *   *Where should the lock be applied?*
+        *   `add_job`: Needs a lock to ensure the write to `self.jobs` is safe (though GIL makes single writes safe, it's good practice to be explicit if this class is intended for heavy concurrency).
+        *   `process_job`: Needs a lock around the entire check-and-remove logic to prevent two threads from processing the same job. However, we **should not** hold the lock while executing `processor(data)`. Why? Because the `processor` function could be long-running (IO, CPU heavy). Holding a lock during a long operation turns a concurrent queue into a serial one, killing performance.
+
+    *   *Step 1:* Acquire lock.
+    *   *Step 2:* Check if `job_id` exists in `jobs`. If not, release lock and return `False`.
+    *   *Step 3:* Retrieve `data` and immediately `del self.jobs[job_id]` (to "claim" the job so no other thread can grab it).
+    *   *Step 4:* Release lock.
+    *   *Step 5:* Execute `result = processor(data)` (outside the lock).
+    *   *Step 6:* Acquire lock again.
+    *   *Step 7:* Write `self.results[job_id] = result`.
+    *   *Step 8:* Release lock.
+
+    *   `add_job`: `with self.lock: self.jobs[job_id] = data`
+    *   `process_job`:
+        ```python
+        with self.lock:
+            if job_id not in self.jobs:
+                return False
+            data = self.jobs.pop(job_id) # pop is atomic-ish and combines get+del
+        
+        result = processor(data) # LONG OPERATION - OUTSIDE LOCK
+        
+        with self.lock:
+            self.results[job_id] = result
+        ```
+    *   `get_result`: `with self.lock: return self.results.get(job_id)`
+
+    *   Use `threading.Lock`.
+    *   Include comments explaining why the lock is released during processing.
+    *   Handle the `pop` safely.
+
+    *   *Wait, what if `add_job` is called with the same `job_id` that is currently being processed?* The `pop` logic ensures that once a job is picked up, it's gone from `jobs`. If `add_job` is called again with the same ID while it's processing, it will simply be re-added. This is likely acceptable behavior for a queue, but the core "race" is preventing two threads from processing the *same* instance of a job.
+    *   *Efficiency:* Using one lock for the whole object is fine for a simple implementation. For extremely high contention, one might use separate locks for `jobs` and `results`, but for this prompt, one lock is the standard correct answer.
+</reasoning_content>
+
+<content>
+To fix the race condition, we need to ensure that the operations checking for a job's existence and removing it from the queue are **atomic**. 
+
+A common mistake is to hold the lock during the `processor(data)` call. However, if `processor` is a long-running task (like an API call or heavy computation), holding the lock would prevent other threads from adding or retrieving results, effectively making the entire queue single-threaded.
+
+The correct approach is to:
+1. **Acquire the lock** to check if the job exists and "claim" it by removing it from `self.jobs`.
+2. **Release the lock** to perform the actual processing.
+3. **Re-acquire the lock** to save the result in `self.results`.
+
+Here is the complete fixed implementation:
+
+```python
+import threading
+
+class JobQueue:
+    def __init__(self):
+        self.jobs = {}
+        self.results = {}
+        # A lock to protect access to the shared dictionaries
+        self._lock = threading.Lock()
+
+    def add_job(self, job_id, data):
+        with self._lock:
+            self.jobs[job_id] = data
+        return job_id
+
+    def process_job(self, job_id, processor):
+        # 1. Atomically check if job exists and remove it from the queue.
+        # This prevents two threads from processing the same job_id.
+        with self._lock:
+            if job_id not in self.jobs:
+                return False
+            data = self.jobs.pop(job_id)
+
+        # 2. Execute the processor OUTSIDE the lock.
+        # This allows other threads to add jobs or get results while 
+        # this thread is performing heavy computation/IO.
+        result = processor(data)
+
+        # 3. Re-acquire the lock to safely write the result.
+        with self._lock:
+            self.results[job_id] = result
+            
+        return True
+
+    def get_result(self, job_id):
+        with self._lock:
+            return self.results.get(job_id)
+
+# --- Example Usage / Test ---
+if __name__ == "__main__":
+    import time
+
+    def heavy_task(n):
+        time.sleep(1)  # Simulate work
+        return n * 2
+
+    queue = JobQueue()
+    queue.add_job(1, 10)
+    queue.add_job(2, 20)
+
+    def worker(q, j_id):
+        print(f"Thread starting job {j_id}")
+        if q.process_job(j_id, heavy_task):
+            print(f"Thread finished job {j_id}")
+
+    threads = [
+        threading.Thread(target=worker, args=(queue, 1)),
+        threading.Thread(target=worker, args=(queue, 2)),
+        # Attempting to process job 1 again should return False immediately
+        threading.Thread(target=worker, args=(queue, 1)), 
+    ]
+
+    for t in threads:
+        t.start()
+
+    for t in threads:
+        t.join()
+
+    print(f"Results: {queue.get_result(1)}")
+    print(f"Results: {queue.get_result(2)}")
+```
+
+### Key Fixes Made:
+1.  **Introduction of `self._lock`**: Added a `threading.Lock()` to synchronize access to the shared dictionaries.
+2.  **Atomic "Claiming"**: Used `self.jobs.pop(job_id)` inside the first lock block. This ensures that only one thread can ever successfully "take" a job. This prevents the `KeyError` that would occur if two threads tried to `del self.jobs[job_id]` on the same ID.
+3.  **Granular Locking**: Notice that `processor(data)` is **not** inside a `with self._lock` block. This is crucial for performance; it ensures the queue remains non-blocking for other threads while a job is being worked on.
+4.  **Thread-Safe Reads/Writes**: All access to `self.jobs`, `self.results`, and even `get_result` is wrapped in the lock to ensure memory visibility and prevent dictionary corruption during concurrent mutations.
+</content>

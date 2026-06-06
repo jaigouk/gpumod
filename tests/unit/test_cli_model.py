@@ -174,7 +174,7 @@ class TestModelInfo:
         with patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)):
             result = runner.invoke(app, ["model", "info", "nonexistent"])
 
-        assert result.exit_code == 0  # error_handler catches it
+        assert result.exit_code != 0  # gpumod-p2gj: error_handler propagates exit code 1
         assert "not found" in result.output.lower() or "error" in result.output.lower()
 
     def test_model_info_shows_vram_estimate(self) -> None:
@@ -332,7 +332,7 @@ class TestModelRemove:
         with patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)):
             result = runner.invoke(app, ["model", "remove", "nonexistent"])
 
-        assert result.exit_code == 0  # error_handler catches it
+        assert result.exit_code != 0  # gpumod-p2gj: error_handler propagates exit code 1
         assert "error" in result.output.lower() or "not found" in result.output.lower()
 
 

@@ -328,7 +328,7 @@ class TestSimulateServices:
         with patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)):
             cli_result = runner.invoke(app, ["simulate", "services", "unknown-svc"])
 
-        assert cli_result.exit_code == 0  # error_handler catches it
+        assert cli_result.exit_code != 0  # gpumod-p2gj: error_handler propagates exit code 1
         assert "error" in cli_result.output.lower() or "not found" in cli_result.output.lower()
 
 
@@ -368,5 +368,5 @@ class TestSimulateContext:
                 ["simulate", "mode", "dev-mode", "--context", "badformat"],
             )
 
-        assert cli_result.exit_code == 0  # error_handler catches it
+        assert cli_result.exit_code != 0  # gpumod-p2gj: error_handler propagates exit code 1
         assert "error" in cli_result.output.lower() or "invalid" in cli_result.output.lower()

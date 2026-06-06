@@ -172,7 +172,7 @@ class TestServiceStatus:
         with patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)):
             result = runner.invoke(app, ["service", "status", "missing"])
 
-        assert result.exit_code == 0  # error_handler catches it
+        assert result.exit_code != 0  # gpumod-p2gj: error_handler propagates exit code 1
         assert "error" in result.output.lower() or "not found" in result.output.lower()
 
     def test_service_status_json_flag(self) -> None:
@@ -220,7 +220,7 @@ class TestServiceStart:
         with patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)):
             result = runner.invoke(app, ["service", "start", "missing"])
 
-        assert result.exit_code == 0  # error_handler catches it
+        assert result.exit_code != 0  # gpumod-p2gj: error_handler propagates exit code 1
         assert "error" in result.output.lower() or "not found" in result.output.lower()
 
 
@@ -250,5 +250,5 @@ class TestServiceStop:
         with patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)):
             result = runner.invoke(app, ["service", "stop", "missing"])
 
-        assert result.exit_code == 0  # error_handler catches it
+        assert result.exit_code != 0  # gpumod-p2gj: error_handler propagates exit code 1
         assert "error" in result.output.lower() or "not found" in result.output.lower()

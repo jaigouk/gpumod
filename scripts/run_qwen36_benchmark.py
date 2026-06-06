@@ -189,6 +189,17 @@ MODELS: dict[str, ModelConfig] = {
         service_id="gemma4-26b-a4b-q4",
         sampler=GEMMA_CODING,
     ),
+    "gemma4-26b-a4b-qat-q4": ModelConfig(
+        id="gemma4-26b-a4b-qat-q4",
+        name="Gemma 4 26B-A4B IT QAT UD-Q4_K_XL",
+        architecture="moe-26B-A4B",
+        repo="unsloth/gemma-4-26B-A4B-it-qat-GGUF",
+        quant="QAT UD-Q4_K_XL",
+        file="gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        port=7110,
+        service_id="gemma4-26b-a4b-qat-q4",
+        sampler=GEMMA_CODING,
+    ),
 }
 
 
@@ -553,6 +564,7 @@ def parse_args() -> argparse.Namespace:
             "gemma4-12b-q5",
             "gemma4-12b-q8",
             "gemma4-26b-a4b-q4",
+            "gemma4-26b-a4b-qat-q4",
             "all",
         ],
         required=True,

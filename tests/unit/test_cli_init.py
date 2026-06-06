@@ -119,14 +119,19 @@ class TestErrorHandler:
     """Verify the error_handler context manager."""
 
     def test_error_handler_catches_runtime_error(self) -> None:
+        # gpumod-p2gj: error_handler prints the error AND raises typer.Exit(1)
+        # so shell automation sees a non-zero exit code.
+        import pytest
+
         from gpumod.cli import error_handler
 
         console_mock = MagicMock()
-        with error_handler(console=console_mock):
-            msg = "something went wrong"
-            raise RuntimeError(msg)
+        with pytest.raises(typer.Exit) as exc_info:  # noqa: SIM117
+            with error_handler(console=console_mock):
+                msg = "something went wrong"
+                raise RuntimeError(msg)
 
-        # Should have printed an error via console, not raised
+        assert exc_info.value.exit_code == 1
         console_mock.print.assert_called_once()
         call_args = str(console_mock.print.call_args)
         assert "something went wrong" in call_args

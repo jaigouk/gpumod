@@ -307,7 +307,7 @@ class TestPlanSuggestErrors:
             )
             result = runner.invoke(app, ["plan", "suggest"])
 
-        assert result.exit_code == 0  # error_handler catches it
+        assert result.exit_code != 0  # gpumod-p2gj: error_handler propagates exit code 1
         output = result.output.lower()
         assert "api key" in output or "api_key" in output or "not configured" in output
 
@@ -364,7 +364,7 @@ class TestPlanSuggestErrors:
             )
             result = runner.invoke(app, ["plan", "suggest"])
 
-        assert result.exit_code == 0  # error_handler catches it
+        assert result.exit_code != 0  # gpumod-p2gj: error_handler propagates exit code 1
         output = result.output.lower()
         assert "error" in output
 
@@ -393,7 +393,7 @@ class TestPlanSuggestErrors:
             )
             result = runner.invoke(app, ["plan", "suggest"])
 
-        assert result.exit_code == 0  # error_handler catches it
+        assert result.exit_code != 0  # gpumod-p2gj: error_handler propagates exit code 1
         output = result.output.lower()
         assert "error" in output or "invalid" in output
 
@@ -427,7 +427,7 @@ class TestPlanSuggestErrors:
             )
             result = runner.invoke(app, ["plan", "suggest"])
 
-        assert result.exit_code == 0  # error_handler catches it
+        assert result.exit_code != 0  # gpumod-p2gj: error_handler propagates exit code 1
         output = result.output.lower()
         assert "error" in output or "not found" in output
 
@@ -549,7 +549,7 @@ class TestPlanSuggestNoServices:
             )
             result = runner.invoke(app, ["plan", "suggest", "--mode", "nonexistent"])
 
-        assert result.exit_code == 0  # error_handler catches it
+        assert result.exit_code != 0  # gpumod-p2gj: error_handler propagates exit code 1
         output = result.output.lower()
         assert "not found" in output or "error" in output
 

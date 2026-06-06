@@ -124,7 +124,7 @@ class TestTemplateShow:
         with patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)):
             result = runner.invoke(app, ["template", "show", "nonexistent.j2"])
 
-        assert result.exit_code == 0  # error_handler catches it
+        assert result.exit_code != 0  # gpumod-p2gj: error_handler propagates exit code 1
         assert "error" in result.output.lower() or "not found" in result.output.lower()
 
     def test_template_show_json_flag(self) -> None:
@@ -206,7 +206,7 @@ class TestTemplateGenerate:
         with patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)):
             result = runner.invoke(app, ["template", "generate", "missing"])
 
-        assert result.exit_code == 0  # error_handler catches it
+        assert result.exit_code != 0  # gpumod-p2gj: error_handler propagates exit code 1
         assert "error" in result.output.lower() or "not found" in result.output.lower()
 
     def test_template_generate_with_output_file(self, tmp_path: object) -> None:
@@ -293,7 +293,7 @@ class TestTemplateInstall:
         with patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)):
             result = runner.invoke(app, ["template", "install", "svc-1", "--yes"])
 
-        assert result.exit_code == 0  # error_handler catches it
+        assert result.exit_code != 0  # gpumod-p2gj: error_handler propagates exit code 1
         # Should show a security error
         assert "error" in result.output.lower() or "unsafe" in result.output.lower()
 
@@ -304,7 +304,7 @@ class TestTemplateInstall:
         with patch("gpumod.cli.create_context", new=AsyncMock(return_value=mock_ctx)):
             result = runner.invoke(app, ["template", "install", "missing", "--yes"])
 
-        assert result.exit_code == 0  # error_handler catches it
+        assert result.exit_code != 0  # gpumod-p2gj: error_handler propagates exit code 1
         assert "error" in result.output.lower() or "not found" in result.output.lower()
 
     def test_template_install_strips_service_suffix_from_unit_name(self) -> None:

@@ -298,7 +298,10 @@ def error_handler(
     except (SystemExit, KeyboardInterrupt, typer.Exit):
         raise
     except Exception as exc:
+        # gpumod-p2gj: print the error for the human, then propagate a non-zero
+        # exit code so shell automation (set -e / $?) can detect the failure.
         console.print(f"[bold red]Error:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
 
 
 # ---------------------------------------------------------------------------
