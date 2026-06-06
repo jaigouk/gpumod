@@ -129,6 +129,21 @@ The defense stack, in priority order:
 - Swap does NOT satisfy `cudaHostAlloc` directly (page-locked memory is non-swappable), but it CAN absorb anonymous app RSS to free physical RAM for the GGUF page cache. The bd memory `swap-does-not-help-llm-loading-on-this` was corrected 2026-05-25 to clarify this.
 - `cudaHostAlloc` failures hang the driver silently; they do NOT raise OOM. Cgroup `memory.high` and `systemd-oomd` cannot catch them.
 
+## Embedding driver
+
+Embeddings on this host run under llama.cpp `--embedding`, not vLLM.
+`presets/embedding/gguf-embedding-code.yaml` (preset id
+`gguf-embedding-code`, port 8210) serves Qwen3-Embedding-0.6B Q8_0
+from `~/bin/Qwen3-Embedding-0.6B-Q8_0.gguf`. The `hermes-agent`, `code`,
+and `finetuning` modes reference it; the `rag` and `hacker` modes still
+reference the vLLM preset and are intentionally not migrated. Pooling
+mode is `--pooling last` (Qwen3-Embedding's training pooling — do not
+change without changing the model). Server returns 1024-dim L2-normalised
+vectors; callers that need shorter embeddings must slice + L2-renormalise
+client-side. See [docs/research/20260606_embedding_llamacpp_vs_vllm/FINDINGS.md](../docs/research/20260606_embedding_llamacpp_vs_vllm/FINDINGS.md)
+for the full reasoning (b4t RAM constraint, measured RSS/VRAM/cold-start
+deltas, caller audit, what we kept and what we gave up).
+
 ## Template-Touching Tickets (mandatory acceptance step)
 
 For any ticket that modifies a file under `src/gpumod/templates/`, the acceptance criteria MUST include:

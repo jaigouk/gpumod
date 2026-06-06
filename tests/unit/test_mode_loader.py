@@ -238,10 +238,11 @@ class TestProductionModes:
 
         code_mode = next(m for m in modes if m.id == "code")
         vram = mode_loader.calculate_vram(code_mode, presets)
-        # gpumod-8xaq: code mode uses gemma4-26b-a4b-q4-multi (20000) +
-        # vllm-embedding-code (2500). Was 20500 with gemma4-26b-a4b-q4
-        # (single-slot, gpumod-yxzt) before the multi-slot productionization.
-        assert vram == 22500
+        # gpumod-scie: code mode uses gemma4-26b-a4b-q4-multi (20000) +
+        # gguf-embedding-code (800, llama.cpp --embedding). Was 22500 with
+        # vllm-embedding-code (2500) and 20500 with the single-slot gemma
+        # before gpumod-8xaq.
+        assert vram == 20800
 
         speak_mode = next(m for m in modes if m.id == "speak")
         vram = mode_loader.calculate_vram(speak_mode, presets)

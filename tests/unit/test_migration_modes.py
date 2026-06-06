@@ -25,7 +25,7 @@ RTX_4090_VRAM_MB = 24000
 
 EXPECTED_MODES: dict[str, dict[str, object]] = {
     "code": {
-        "services": ["vllm-embedding-code", "gemma4-26b-a4b-q4-multi"],
+        "services": ["gguf-embedding-code", "gemma4-26b-a4b-q4-multi"],
         # Description is a long YAML folded-scalar — not a single line. We
         # assert structural properties instead in TestModeDescriptions.
         "description": None,
@@ -47,7 +47,7 @@ EXPECTED_MODES: dict[str, dict[str, object]] = {
         "description": "Empty mode with no services (for benchmarking)",
     },
     "finetuning": {
-        "services": ["vllm-embedding-code"],
+        "services": ["gguf-embedding-code"],
         "description": "Finetuning mode - minimal VRAM footprint",
     },
 }
@@ -151,15 +151,16 @@ class TestModeVramFit:
         )
 
     EXPECTED_VRAM: dict[str, int] = {
-        # 'code' is gemma4-26b-a4b-q4-multi (20000) + vllm-embedding-code (2500)
-        # = 22500 after the gpumod-8xaq swap to the multi-slot preset.
-        # Was 20500 (single-slot gemma) before gpumod-8xaq.
-        "code": 22500,
+        # 'code' is gemma4-26b-a4b-q4-multi (20000) + gguf-embedding-code (800)
+        # = 20800 after gpumod-scie swapped the embedding driver from vLLM to
+        # llama.cpp --embedding. Was 22500 with vllm-embedding-code (2500) and
+        # 20500 with the single-slot gemma before gpumod-8xaq.
+        "code": 20800,
         "rag": 7500,
         "hacker": 22500,
         "speak": 22000,
         "blank": 0,
-        "finetuning": 2500,
+        "finetuning": 800,
     }
 
     @pytest.mark.parametrize("mode_id", list(EXPECTED_VRAM.keys()))
