@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-07
 **Tickets:** gpumod-rjkx (bench); gpumod-p2gj (CLI exit-code fix landed mid-bench)
-**Question:** Does Unsloth's QAT-derived Gemma 4 26B-A4B GGUF preserve or improve on the current Hermes-agent baseline (imatrix UD-IQ4_XS), and is it worth swapping `modes/hermes-agent.yaml:28`?
+**Question:** Does Unsloth's QAT-derived Gemma 4 26B-A4B GGUF preserve or improve on the current Hermes-agent baseline (imatrix UD-IQ4_XS), and is it worth swapping [`modes/hermes-agent.yaml:28`](https://github.com/jaigouk/gpumod/blob/main/modes/hermes-agent.yaml#L28)?
 
 ## TL;DR
 
@@ -40,7 +40,7 @@ VRAM isolation enforced — `gpumod mode switch blank` stopped `vllm-embedding-c
 
 Unsloth shipped a QAT (Quantization-Aware Training) GGUF for Gemma 4 26B-A4B at [unsloth/gemma-4-26B-A4B-it-qat-GGUF](https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF) on top of `google/gemma-4-26B-A4B-it-qat-q4_0-unquantized`. Per Unsloth's [QAT docs](https://unsloth.ai/docs/models/gemma-4/qat), they ship only one quant tier (UD-Q4_K_XL) because "precisions higher than the uploaded UD-Q4_K_XL version degrade accuracy" — QAT-derived weights are most consistent at the precision the training targeted.
 
-The current Hermes-agent mode ([`modes/hermes-agent.yaml:28`](../../../modes/hermes-agent.yaml#L28)) uses `gemma4-26b-a4b-q4` (imatrix UD-IQ4_XS, 12.7 GB GGUF). That row in the 20260603 bench scored **100/100 across 15 iterations with σ=0** — a tough baseline to improve on for quality. The question for QAT is:
+The current Hermes-agent mode ([`modes/hermes-agent.yaml:28`](https://github.com/jaigouk/gpumod/blob/main/modes/hermes-agent.yaml#L28)) uses `gemma4-26b-a4b-q4` (imatrix UD-IQ4_XS, 12.7 GB GGUF). That row in the 20260603 bench scored **100/100 across 15 iterations with σ=0** — a tough baseline to improve on for quality. The question for QAT is:
 
 - Does it match imatrix's perfect quality? (Expected: yes — QAT training preserves accuracy at the target precision.)
 - Does it cost more or less TPS? (Unknown — UD-Q4_K_XL is a different K-quant block layout than IQ4_XS.)
@@ -58,8 +58,8 @@ The current Hermes-agent mode ([`modes/hermes-agent.yaml:28`](../../../modes/her
 
 Both presets ship identical flags: `--parallel 1 --threads 16 --cache-type-k q8_0 --cache-type-v q8_0 --temp 1.0 --top-p 0.95 --top-k 64 --chat-template-kwargs '{"enable_thinking":true}' --mmproj $HOME/bin/gemma-4-26B-A4B-it-mmproj-BF16.gguf`. The QAT preset reuses the imatrix repo's `mmproj-BF16.gguf` (Unsloth ships the same vision encoder in both repos; reusing the existing file keeps the multimodal path byte-identical between arms). Presets:
 
-- [`presets/llm/gemma4-26b-a4b-qat-q4.yaml`](../../../presets/llm/gemma4-26b-a4b-qat-q4.yaml) — new for this bench, port 7110, `vram_mb: 20500`
-- [`presets/llm/gemma4-26b-a4b-q4.yaml`](../../../presets/llm/gemma4-26b-a4b-q4.yaml) — Hermes baseline, port 7109, `vram_mb: 19500`
+- [`presets/llm/gemma4-26b-a4b-qat-q4.yaml`](https://github.com/jaigouk/gpumod/blob/main/presets/llm/gemma4-26b-a4b-qat-q4.yaml) — new for this bench, port 7110, `vram_mb: 20500`
+- [`presets/llm/gemma4-26b-a4b-q4.yaml`](https://github.com/jaigouk/gpumod/blob/main/presets/llm/gemma4-26b-a4b-q4.yaml) — Hermes baseline, port 7109, `vram_mb: 19500`
 
 ## Methodology
 
@@ -77,7 +77,7 @@ Validation: `PytestValidator` with 30 s per-level timeout, 900 s per-request cli
 
 QAT-specific test additions:
 
-- New entry in [`scripts/run_qwen36_benchmark.py`](../../../scripts/run_qwen36_benchmark.py) MODELS dict with `sampler=GEMMA_CODING`.
+- New entry in [`scripts/run_qwen36_benchmark.py`](https://github.com/jaigouk/gpumod/blob/main/scripts/run_qwen36_benchmark.py) MODELS dict with `sampler=GEMMA_CODING`.
 - New CLI choice `gemma4-26b-a4b-qat-q4`.
 - Driver script [`run_bench.sh`](run_bench.sh): `mode switch blank` → 15 s quiesce wait → start QAT service → wait for `/health` → 15 iters → stop. The 15 s quiesce wait is a hard-won learning from this bench's first failed launch (see [Lessons](#lessons-learned-mid-bench)).
 
@@ -129,7 +129,7 @@ Steady-state VRAM is reported after the first iteration; iter-1 was identical (w
 
 - **Imatrix baseline reused, not re-run.** TPS comparisons must allow for the fact that the imatrix run happened on 2026-06-04 under a (potentially) different host-load profile. Same b9500 binary and same `GEMMA_CODING` sampler, but I/O / CPU contention could differ. Quality (pass-rate, score) is host-load-insensitive and fully comparable. If the TPS delta is small (< 5%), assume noise; if it's large, the cause is more likely the quant pipeline than the host.
 - **Sampler is GEMMA_CODING per Google's model card.** Temp 1.0 / top_p 0.95 / top_k 64 / repetition_penalty 1.05. Both arms use the same values.
-- **`enable_thinking=true` is enabled on both arms.** Gemma's chat template routes the reasoning portion of the response to a `reasoning_content` field on the OpenAI-compat response; `content` holds the post-thinking answer. The benchmark's `LlamaCppClient` ([`src/gpumod/benchmarks/coding/llm_client.py:93`](../../../src/gpumod/benchmarks/coding/llm_client.py#L93)) reads `content` (not `reasoning_content`), so the score reflects the post-thinking answer only.
+- **`enable_thinking=true` is enabled on both arms.** Gemma's chat template routes the reasoning portion of the response to a `reasoning_content` field on the OpenAI-compat response; `content` holds the post-thinking answer. The benchmark's `LlamaCppClient` ([`src/gpumod/benchmarks/coding/llm_client.py:93`](https://github.com/jaigouk/gpumod/blob/main/src/gpumod/benchmarks/coding/llm_client.py#L93)) reads `content` (not `reasoning_content`), so the score reflects the post-thinking answer only.
 - **MTP is not in play for either arm.** Mainline llama.cpp [PR #23398](https://github.com/ggml-org/llama.cpp/pull/23398) (Gemma 4 MTP) is still WIP. Both QAT and imatrix run at native non-speculative speed. Track gpumod-rj0s.
 - **Single run, 15 iters.** Enough for tight mean/σ separation. The imatrix arm has σ=0 (no spread to detect), so any QAT std > 0 immediately signals a quant-pipeline accuracy difference (not noise).
 
@@ -137,7 +137,7 @@ Steady-state VRAM is reported after the first iteration; iter-1 was identical (w
 
 The first bench launch failed — the gpumod CLI silently exited 0 on a Lifecycle error, so the `set -e` harness didn't catch a quiesce-window collision. Root cause and fix were extracted into a separate ticket and shipped before the re-launch:
 
-- **gpumod-p2gj** — `error_handler` ([`src/gpumod/cli.py:296-304`](../../../src/gpumod/cli.py#L296-L304)) now raises `typer.Exit(code=1)` after printing the error, so shell automation (`set -e`, `$?`, pipefail) sees a non-zero exit code. New test [`tests/unit/test_cli_error_handler.py`](../../../tests/unit/test_cli_error_handler.py); 16 existing tests across 5 files updated from `exit_code == 0  # error_handler catches it` to `exit_code != 0  # gpumod-p2gj: …`. All four gates pass (2381 pytest, mypy --strict, ruff, format).
+- **gpumod-p2gj** — `error_handler` ([`src/gpumod/cli.py:296-304`](https://github.com/jaigouk/gpumod/blob/main/src/gpumod/cli.py#L296-L304)) now raises `typer.Exit(code=1)` after printing the error, so shell automation (`set -e`, `$?`, pipefail) sees a non-zero exit code. New test [`tests/unit/test_cli_error_handler.py`](https://github.com/jaigouk/gpumod/blob/main/tests/unit/test_cli_error_handler.py); 16 existing tests across 5 files updated from `exit_code == 0  # error_handler catches it` to `exit_code != 0  # gpumod-p2gj: …`. All four gates pass (2381 pytest, mypy --strict, ruff, format).
 
 The bench's [run_bench.sh](run_bench.sh) also added a 15 s quiesce wait after `mode switch blank` (the mode switch stops the embedding server; that stop is itself heavy-GPU-eligible and trips the start-side quiesce gate on the QAT model).
 
@@ -171,7 +171,7 @@ The +20 % TPS is delivered to every Hermes-agent request — a real, persistent 
 
 - [`run_bench.sh`](run_bench.sh) — driver (QAT only)
 - [`result_gemma4-26b-a4b-qat-q4.json`](result_gemma4-26b-a4b-qat-q4.json) — QAT raw results
-- [`run_gemma4-26b-a4b-qat-q4.log`](run_gemma4-26b-a4b-qat-q4.log) — QAT run log
+- `run_gemma4-26b-a4b-qat-q4.log` — QAT run log (gitignored per `*.log`; local-only)
 - [`artifacts/`](artifacts/) — per-iteration prompt + response + extracted code
 - Imatrix baseline: [`../20260603_gemma4_12b_vs_qwen36_35b_a3b_mtp/result_gemma4-26b-a4b-q4.json`](../20260603_gemma4_12b_vs_qwen36_35b_a3b_mtp/result_gemma4-26b-a4b-q4.json)
 
@@ -182,4 +182,4 @@ The +20 % TPS is delivered to every Hermes-agent request — a real, persistent 
 - gpumod-rj0s — Gemma 4 MTP tracking (upstream PR #23398, future TPS boost)
 - gpumod-h6gs — predecessor bench (Gemma 4 12B/26B-A4B vs Qwen3.6-35B-A3B-MTP); imatrix baseline lives here
 - [Unsloth Gemma 4 QAT docs](https://unsloth.ai/docs/models/gemma-4/qat)
-- [`modes/hermes-agent.yaml:28`](../../../modes/hermes-agent.yaml#L28) — current single-slot LLM selector (would change if QAT wins)
+- [`modes/hermes-agent.yaml:28`](https://github.com/jaigouk/gpumod/blob/main/modes/hermes-agent.yaml#L28) — current single-slot LLM selector (would change if QAT wins)
