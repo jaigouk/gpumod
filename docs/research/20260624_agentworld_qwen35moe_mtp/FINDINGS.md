@@ -149,19 +149,30 @@ Properties that matter for an operator who runs a different daily driver:
 (Driver / CUDA / OS per the host baseline in
 [`docs/benchmarks/20260606_gemma4_26b_qat_vs_imatrix/README.md`](../../benchmarks/20260606_gemma4_26b_qat_vs_imatrix/README.md) — same machine; not re-verified this session.)
 
+## Resolved (gpumod-qsgl.4, 2026-06-24)
+
+- **Service-path validation — DONE.** `gpumod service start agentworld-35b-a3b-q4` (the
+  preset applies the `--override-kv` fix through systemd) → `/health` OK → one
+  `/v1/chat/completions` returned a coherent reasoning trace → clean stop. Confirms the
+  full gpumod path, not just raw `llama-cli`.
+- **Q2c — context ceiling: 65536 verified.** At `context_size=65536`, steady-state VRAM
+  is **21361 MiB used / 2721 MiB free** on the 24 GB 4090 (~2.7 GB headroom). Locked at
+  65536 rather than pushing to the edge: it is 2× the coding suite's `max_tokens=32768`
+  (no truncation) and preserves headroom for a multi-hour run. Higher contexts are
+  likely possible (KV is cheap, ~10 KB/token) but unnecessary and riskier for a long bench.
+- **Runner wired.** `MODELS["agentworld-35b-a3b-q4"]` (`architecture="qwen35moe-hybrid-35B-A3B"`,
+  `sampler=THINKING_CODING`) + `--model` choice added to `scripts/run_qwen36_benchmark.py`,
+  with a guard test ([tests/unit/test_agentworld_benchmark_entry.py](../../../tests/unit/test_agentworld_benchmark_entry.py)).
+  **The bench must start the arm via the preset** (`gpumod service start`), never a raw
+  `llama-server --base-url` (which would omit the override and fail to load).
+
 ## Open items
 
-- **Q2c — context ceiling (unmeasured).** The smoke test used `-c 4096`. KV is cheap
-  here (only 10 full-attention layers × `head_count_kv=2` × `(key+value)=512` at q8_0 ≈
-  ~10 KB/token), so the preset's `context_size: 32768` (≈320 MB KV on top of ~22.2 GB
-  weights) very likely fits the 24 GB card — but raise it only after a verified
-  `gpumod service start`. The model natively supports 262144; ~2.5 GB KV at full context
-  would be tight against the ~1.8 GB headroom.
-- **Service-path validation.** `gpumod service start agentworld-35b-a3b-q4` → `/health`
-  → one completion was not run this session (load proven via raw `llama-cli`).
-- **Benchmark (gpumod-qsgl.3, deferred).** Coding-suite comparison vs `qwen36-35b-a3b`,
-  `qwen36-35b-a3b-mtp-iq4xs`, `gemma4-26b-a4b-qat-q4` — gated on the service-path
-  validation; runner entry should use the `THINKING_CODING` sampler (Qwen reasoning MoE).
+- **Benchmark (gpumod-qsgl.3).** Coding-suite comparison vs `qwen36-35b-a3b`,
+  `qwen36-35b-a3b-mtp-iq4xs`, `gemma4-26b-a4b-qat-q4`. Now unblocked (runner wired,
+  service path verified, Q2c locked). Heavy multi-hour run — schedule deliberately.
+  Caveat for the report: AgentWorld is a world-model for environment simulation, not a
+  coding model, so a low coding score is a data point, not a defect.
 
 ## Lessons / how to recognise this class in future models
 

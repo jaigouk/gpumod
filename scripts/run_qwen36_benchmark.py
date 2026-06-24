@@ -200,6 +200,37 @@ MODELS: dict[str, ModelConfig] = {
         service_id="gemma4-26b-a4b-qat-q4",
         sampler=GEMMA_CODING,
     ),
+    # gpumod-nq8v spike: SIQ-1-35B Q4_K_M direct llama-server (no preset
+    # landed). The runner connects via --base-url override; service_id is
+    # metadata only here.
+    "siq1-35b-q4km": ModelConfig(
+        id="siq1-35b-q4km",
+        name="SIQ-1-35B Q4_K_M (no MTP — weights unpublished)",
+        architecture="qwen35moe-hybrid-35B-A3B",
+        repo="AlexWortega/SIQ-1-35B",
+        quant="Q4_K_M",
+        file="SIQ-1-35B.Q4_K_M.gguf",
+        port=18210,
+        service_id="siq1-35b-q4km",
+        sampler=THINKING_CODING,
+    ),
+    # gpumod-qsgl.4: Qwen-AgentWorld-35B-A3B — hybrid Gated-DeltaNet MoE, llama.cpp
+    # arch qwen35moe (same family as siq1 above). MUST be started via its preset
+    # (`gpumod service start agentworld-35b-a3b-q4`): the GGUF needs two --override-kv
+    # flags (block_count=40, nextn_predict_layers=0) that live in the preset extra_args
+    # to load at all. Do NOT serve it with a bare llama-server + --base-url — the
+    # override would be missing and load fails. See docs/research/20260624_agentworld_*.
+    "agentworld-35b-a3b-q4": ModelConfig(
+        id="agentworld-35b-a3b-q4",
+        name="Qwen-AgentWorld-35B-A3B Q4_K_M",
+        architecture="qwen35moe-hybrid-35B-A3B",
+        repo="gaoqianshen/Qwen-AgentWorld-35B-A3B-Q4_K_M-GGUF",
+        quant="Q4_K_M",
+        file="qwen-agentworld-35b-a3b-q4_k_m.gguf",
+        port=7111,
+        service_id="agentworld-35b-a3b-q4",
+        sampler=THINKING_CODING,
+    ),
 }
 
 
@@ -565,6 +596,8 @@ def parse_args() -> argparse.Namespace:
             "gemma4-12b-q8",
             "gemma4-26b-a4b-q4",
             "gemma4-26b-a4b-qat-q4",
+            "siq1-35b-q4km",
+            "agentworld-35b-a3b-q4",
             "all",
         ],
         required=True,
