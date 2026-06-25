@@ -155,6 +155,19 @@ MODELS: dict[str, ModelConfig] = {
         service_id="gemma4-e2b-qat-q2",
         sampler=GEMMA_CODING,
     ),
+    # gpumod-kpmq.5: standard (non-mobile) Gemma 4 E2B QAT — UD-Q4_K_XL (recommended
+    # tier). The proper E2B benchmark model; the q2 mobile (2-bit) above is degenerate.
+    "gemma4-e2b-qat-q4": ModelConfig(
+        id="gemma4-e2b-qat-q4",
+        name="Gemma 4 E2B IT QAT UD-Q4_K_XL",
+        architecture="dense-E2B",
+        repo="unsloth/gemma-4-E2B-it-qat-GGUF",
+        quant="QAT UD-Q4_K_XL",
+        file="gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf",
+        port=7113,
+        service_id="gemma4-e2b-qat-q4",
+        sampler=GEMMA_CODING,
+    ),
     # gpumod-h6gs: Gemma 4 12B presets, non-speculative (no Gemma 4 12B MTP
     # drafter exists upstream; ggml-org/llama.cpp PR #23398 WIP).
     "gemma4-12b-q4": ModelConfig(
@@ -302,6 +315,7 @@ class ArchitectureBenchmark:
         base_url: str = "http://localhost:8080",
         iterations: int = 15,
         output_dir: Path | None = None,
+        max_tokens: int = 32768,
     ) -> None:
         self.model = model
         self.base_url = base_url
@@ -316,8 +330,9 @@ class ArchitectureBenchmark:
         self.client_timeout = 900.0
         # gpumod-76l.3: Unsloth recommends 32768 max output tokens for
         # Qwen3.6 general queries. Without this, thinking-mode models can
-        # consume the entire ctx-size (40960) and never emit code.
-        self.max_tokens = 32768
+        # consume the entire ctx-size (40960) and never emit code. Override via
+        # --max-tokens for degenerate small/low-bit models that ramble (e.g. E2B Q2).
+        self.max_tokens = max_tokens
         self.metrics_collector = DefaultMetricsCollector()
 
     async def run(self) -> BenchmarkRun:
@@ -618,6 +633,7 @@ def parse_args() -> argparse.Namespace:
             "qwen35-35b-a3b-heretic-mtp-q3kl-preserve",
             "gemma4-e4b",
             "gemma4-e2b-qat-q2",
+            "gemma4-e2b-qat-q4",
             "gemma4-12b-q4",
             "gemma4-12b-q5",
             "gemma4-12b-q8",
@@ -648,6 +664,12 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_OUTPUT_DIR,
         help=f"Output directory (default: {DEFAULT_OUTPUT_DIR})",
     )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=32768,
+        help="Max output tokens per request (default: 32768; lower for degenerate models)",
+    )
     return parser.parse_args()
 
 
@@ -665,6 +687,7 @@ async def main() -> int:
             base_url=base_url,
             iterations=args.iterations,
             output_dir=args.output_dir,
+            max_tokens=args.max_tokens,
         )
 
         run = await benchmark.run()
