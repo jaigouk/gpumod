@@ -81,11 +81,29 @@ GEMMA_CODING = SamplerConfig(
     repetition_penalty=1.05,
 )
 
+# VibeThinker-3B settings (gpumod-msy8). Per the WeiboAI/VibeThinker-3B card +
+# technical report the recommended sampler is temp 1.0 / top_p 0.95 / top_k -1
+# (top-k disabled). We keep top_k=20 (the project coding default) rather than
+# disabling it — bounding the candidate set guards against the degeneration
+# loops a temp=1.0 reasoning model can fall into during very long generations.
+# The divergence from the card's top_k=-1 is flagged in the bench README.
+# repetition_penalty stays at 1.0 (card recommends nothing else); if a run shows
+# the GEMMA_CODING-style runaway-repetition failure, bump to 1.05 and re-run.
+VIBETHINKER_CODING = SamplerConfig(
+    temperature=1.0,
+    top_p=0.95,
+    top_k=20,
+    min_p=0.0,
+    presence_penalty=0.0,
+    repetition_penalty=1.0,
+)
+
 # Registry of available configs
 _CONFIGS: dict[str, SamplerConfig] = {
     "thinking_coding": THINKING_CODING,
     "non_thinking": NON_THINKING,
     "gemma_coding": GEMMA_CODING,
+    "vibethinker_coding": VIBETHINKER_CODING,
 }
 
 

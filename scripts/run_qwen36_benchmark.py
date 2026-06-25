@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import sys
 import time
 from dataclasses import asdict, dataclass, field
@@ -39,11 +40,29 @@ from gpumod.benchmarks.coding.metrics_collector import DefaultMetricsCollector
 from gpumod.benchmarks.coding.sampler_config import (
     GEMMA_CODING,
     THINKING_CODING,
+    VIBETHINKER_CODING,
     SamplerConfig,
 )
 from gpumod.benchmarks.coding.scoring import calculate_confidence_interval, calculate_stats
 
 DEFAULT_OUTPUT_DIR = Path("docs/benchmarks/20260423_qwen36_gemma4_comparison")
+
+# gpumod-msy8: VibeThinker-3B (and other Qwen2-template reasoning models) emit
+# <think>...</think> reasoning into message.content. Their plain ChatML template
+# is a "content-only" chat format in llama.cpp, so the reasoning is NOT split
+# into reasoning_content even with --reasoning-format deepseek. The model often
+# drafts ```python fences INSIDE <think>, so extract_code (first-fence-wins)
+# would validate the draft instead of the post-</think> final answer. We strip
+# CLOSED <think> blocks from content before the fence search. An unterminated
+# <think> (budget exhausted mid-thought) is left intact so the reasoning-fallback
+# path can still mine it for a last-resort draft. No-op for models whose content
+# has no <think> (e.g. Gemma, which routes thinking to reasoning_content).
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+
+def _strip_think_blocks(text: str) -> str:
+    """Remove complete <think>...</think> spans from a model response."""
+    return _THINK_BLOCK_RE.sub("", text).strip()
 
 
 @dataclass
@@ -253,22 +272,40 @@ MODELS: dict[str, ModelConfig] = {
         service_id="siq1-35b-q4km",
         sampler=THINKING_CODING,
     ),
-    # gpumod-qsgl.4: Qwen-AgentWorld-35B-A3B — hybrid Gated-DeltaNet MoE, llama.cpp
-    # arch qwen35moe (same family as siq1 above). MUST be started via its preset
-    # (`gpumod service start agentworld-35b-a3b-q4`): the GGUF needs two --override-kv
-    # flags (block_count=40, nextn_predict_layers=0) that live in the preset extra_args
-    # to load at all. Do NOT serve it with a bare llama-server + --base-url — the
-    # override would be missing and load fails. See docs/research/20260624_agentworld_*.
+    # gpumod-qsgl: Qwen-AgentWorld-35B-A3B — hybrid Gated-DeltaNet MoE, llama.cpp arch
+    # qwen35moe (same family as siq1 above). Refreshed 2026-06-25 to the official Unsloth
+    # Dynamic GGUF (UD-Q4_K_S). The old gguf-my-repo quant needed two --override-kv flags
+    # for a conversion defect (declared block_count=41 but shipped 40 blocks); the Unsloth
+    # build declares block_count=40 with no nextn key (verified from the GGUF header), so
+    # no override is needed. Still started via its preset (`gpumod service start
+    # agentworld-35b-a3b-q4`) for the 131072 context + card sampling, not a bare server.
     "agentworld-35b-a3b-q4": ModelConfig(
         id="agentworld-35b-a3b-q4",
-        name="Qwen-AgentWorld-35B-A3B Q4_K_M",
+        name="Qwen-AgentWorld-35B-A3B UD-Q4_K_S",
         architecture="qwen35moe-hybrid-35B-A3B",
-        repo="gaoqianshen/Qwen-AgentWorld-35B-A3B-Q4_K_M-GGUF",
-        quant="Q4_K_M",
-        file="qwen-agentworld-35b-a3b-q4_k_m.gguf",
+        repo="unsloth/Qwen-AgentWorld-35B-A3B-GGUF",
+        quant="UD-Q4_K_S",
+        file="Qwen-AgentWorld-35B-A3B-UD-Q4_K_S.gguf",
         port=7111,
         service_id="agentworld-35b-a3b-q4",
         sampler=THINKING_CODING,
+    ),
+    # gpumod-msy8: VibeThinker-3B — dense Qwen2 3B reasoning-tuned model, Q8_0
+    # near-lossless. Architecture/size A/B vs the 26B QAT MoE baseline (NOT a
+    # same-model quant A/B). Card caveat: NOT trained for tool-calling/agents;
+    # the coding suite is single-turn codegen so the comparison is valid.
+    # VIBETHINKER_CODING sampler honors the card's temp=1.0 (top_k 20, see
+    # sampler_config.py for the top_k=-1 divergence note).
+    "vibethinker-3b-q8": ModelConfig(
+        id="vibethinker-3b-q8",
+        name="VibeThinker-3B Q8_0",
+        architecture="dense-3B",
+        repo="prithivMLmods/VibeThinker-3B-GGUF",
+        quant="Q8_0",
+        file="VibeThinker-3B.Q8_0.gguf",
+        port=7115,
+        service_id="vibethinker-3b-q8",
+        sampler=VIBETHINKER_CODING,
     ),
 }
 
@@ -428,14 +465,19 @@ class ArchitectureBenchmark:
             # content has no code fence at all (model burned its budget
             # thinking without reaching final code).
             reasoning = self.client.last_reasoning_content
-            if "```" in response:
-                extract_source = response
+            # gpumod-msy8: strip closed <think> blocks from content first so the
+            # fence search below sees only the post-</think> final answer (see
+            # _strip_think_blocks). Raw `response` is kept for the artifact.
+            content_final = _strip_think_blocks(response)
+            if "```" in content_final:
+                extract_source = content_final
             elif reasoning:
-                extract_source = reasoning + "\n\n" + response
+                extract_source = reasoning + "\n\n" + content_final
             else:
-                extract_source = response
-            # Artifact preserves both fields for post-hoc debugging even
-            # when we extracted from content alone.
+                extract_source = content_final
+            # Artifact preserves the RAW response (incl. any <think> trace) plus
+            # reasoning_content for post-hoc debugging, even though extraction
+            # used the think-stripped final answer.
             artifact_response = (
                 f"<reasoning_content>\n{reasoning}\n</reasoning_content>\n\n"
                 f"<content>\n{response}\n</content>"
@@ -532,7 +574,12 @@ class ArchitectureBenchmark:
                 with open(response_path, "w") as f:
                     f.write(level.response)
 
-                code = extract_code(level.response)
+                # gpumod-msy8: strip closed <think> blocks before extracting so
+                # the saved L*_code.py matches what the validator actually scored
+                # (the validation path strips think; see _strip_think_blocks).
+                # The full raw response — including any <think> trace — is still
+                # preserved verbatim in L*_response.txt above.
+                code = extract_code(_strip_think_blocks(level.response))
                 code_path = iter_dir / f"L{level.level}_code.py"
                 with open(code_path, "w") as f:
                     f.write(code)
@@ -642,6 +689,7 @@ def parse_args() -> argparse.Namespace:
             "gemma4-26b-a4b-qat-mtp-q4",
             "siq1-35b-q4km",
             "agentworld-35b-a3b-q4",
+            "vibethinker-3b-q8",
             "all",
         ],
         required=True,
