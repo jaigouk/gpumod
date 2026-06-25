@@ -143,6 +143,18 @@ MODELS: dict[str, ModelConfig] = {
         port=7098,
         service_id="gemma4-e4b-bf16",
     ),
+    # gpumod-kpmq.2: small Gemma 4 E2B QAT (2-bit mobile) — fast harness dev model.
+    "gemma4-e2b-qat-q2": ModelConfig(
+        id="gemma4-e2b-qat-q2",
+        name="Gemma 4 E2B IT QAT UD-Q2_K_XL",
+        architecture="dense-E2B",
+        repo="unsloth/gemma-4-E2B-it-qat-mobile-GGUF",
+        quant="QAT UD-Q2_K_XL",
+        file="gemma-4-E2B-it-qat-UD-Q2_K_XL.gguf",
+        port=7112,
+        service_id="gemma4-e2b-qat-q2",
+        sampler=GEMMA_CODING,
+    ),
     # gpumod-h6gs: Gemma 4 12B presets, non-speculative (no Gemma 4 12B MTP
     # drafter exists upstream; ggml-org/llama.cpp PR #23398 WIP).
     "gemma4-12b-q4": ModelConfig(
@@ -198,6 +210,20 @@ MODELS: dict[str, ModelConfig] = {
         file="gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
         port=7110,
         service_id="gemma4-26b-a4b-qat-q4",
+        sampler=GEMMA_CODING,
+    ),
+    # gpumod-kpmq.5: MTP (speculative) variant of the gemma4-26b-a4b-qat — same base
+    # GGUF + an MTP drafter (faster gen). Served on the same port 7110 (alternative
+    # preset; run one at a time).
+    "gemma4-26b-a4b-qat-mtp-q4": ModelConfig(
+        id="gemma4-26b-a4b-qat-mtp-q4",
+        name="Gemma 4 26B-A4B IT QAT UD-Q4_K_XL + MTP",
+        architecture="moe-26B-A4B+mtp",
+        repo="unsloth/gemma-4-26B-A4B-it-qat-GGUF",
+        quant="QAT UD-Q4_K_XL",
+        file="gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        port=7110,
+        service_id="gemma4-26b-a4b-qat-mtp-q4",
         sampler=GEMMA_CODING,
     ),
     # gpumod-nq8v spike: SIQ-1-35B Q4_K_M direct llama-server (no preset
@@ -591,11 +617,13 @@ def parse_args() -> argparse.Namespace:
             "qwen36-35b-a3b-mtp-iq4xs-preserve",
             "qwen35-35b-a3b-heretic-mtp-q3kl-preserve",
             "gemma4-e4b",
+            "gemma4-e2b-qat-q2",
             "gemma4-12b-q4",
             "gemma4-12b-q5",
             "gemma4-12b-q8",
             "gemma4-26b-a4b-q4",
             "gemma4-26b-a4b-qat-q4",
+            "gemma4-26b-a4b-qat-mtp-q4",
             "siq1-35b-q4km",
             "agentworld-35b-a3b-q4",
             "all",

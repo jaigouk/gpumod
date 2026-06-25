@@ -1,0 +1,31 @@
+import threading
+
+class JobQueue:
+    def __init__(self):
+        self.jobs = {}
+        self.results = {}
+        self.lock = threading.Lock()
+
+    def add_job(self, job_id, data):
+        with self.lock:
+            self.jobs[job_id] = data
+
+    def process_job(self, job_id, processor):
+        with self.lock:
+            if job_id not in self.jobs:
+                return False
+            data = self.jobs[job_id]
+            del self.jobs[job_id]
+
+        # Processing is intentionally done outside the lock to avoid blocking 
+        # other threads while waiting for CPU/I/O bound work to complete.
+        result = processor(data)
+
+        with self.lock:
+            self.results[job_id] = result
+
+        return True
+
+    def get_result(self, job_id):
+        with self.lock:
+            return self.results.get(job_id)

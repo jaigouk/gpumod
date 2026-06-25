@@ -1,0 +1,634 @@
+<reasoning_content>
+Here's a thinking process that leads to the suggested solution:
+
+1.  **Analyze the Problem:**
+    *   **Context:** A Python `JobQueue` class is provided.
+    *   **Issue:** A concurrency bug (race condition) exists.
+    *   **Specific Location:** The prompt explicitly points out `self.results[job_id] = result` as the spot, but looking at the code, the issue is broader. The operations on `self.jobs` (checking existence, popping/deleting) and `self.results` (writing) are not atomic.
+    *   **Goal:** Fix the race condition using proper locking mechanisms and provide the complete fixed code.
+
+2.  **Identify Race Conditions in the Code:**
+    *   *Scenario 1 (Check-Then-Act on `self.jobs`):*
+        *   Thread A checks `if job_id not in self.jobs`.
+        *   Thread B deletes `self.jobs[job_id]` (or processes it).
+        *   Thread A proceeds to access `self.jobs[job_id]`. *Wait, looking at the code, `process_job` takes the job out at the end.*
+        *   *Correction:* In the provided code, `process_job` is likely called by a worker thread.
+        *   Let's trace a specific race condition:
+            1.  Thread A calls `process_job(id_1)`. Checks `id_1` exists.
+            2.  Thread B calls `process_job(id_1)`. Checks `id_1` exists.
+            3.  Thread A processes data, writes to `self.results`. Deletes from `self.jobs`.
+            4.  Thread B processes data, writes to `self.results`. Deletes from `self.jobs`.
+            *   *Result:* The job is processed twice. This is a classic "double processing" race condition.
+    *   *Scenario 2 (Atomicity of Check and Delete):*
+        *   Even if we just wanted to ensure the job runs once, the check `if job_id not in self.jobs` and the subsequent `del self.jobs[job_id]` are separate operations. Without a lock, multiple threads can pass the check before any of them delete the job.
+    *   *Scenario 3 (Thread Safety of Dicts):*
+        *   In CPython, dictionary operations are generally thread-safe due to the GIL (Global Interpreter Lock) for simple assignments, *but* compound operations like "check if key exists, then delete" are not atomic. Relying on the GIL for logic correctness is bad practice.
+
+3.  **Determine the Solution:**
+    *   We need a `threading.Lock` (or `RLock` if reentrancy is needed, though a standard `Lock` is sufficient here) to protect the critical sections.
+    *   The critical sections involve accessing `self.jobs` and `self.results`.
+    *   Ideally, we want to atomically:
+        1.  Check if the job exists.
+        2.  Retrieve the data.
+        3.  Remove the job from the queue (to prevent re-processing).
+        4.  Process the job.
+        5.  Store the result.
+    *   *Refinement:* Actually, holding a lock while *processing* the job (running `processor(data)`) might be a performance bottleneck if the processor is I/O bound or CPU heavy. However, to strictly fix the race condition regarding the *state* of the queue (ensuring a job is picked up only once), the lock must cover the check-and-remove sequence.
+    *   *Optimization:* It's better to pop the job from the queue while holding the lock, then release the lock, process the job, and then (optionally) acquire the lock again to store the result.
+    *   *Simplest/Correct Approach for this specific snippet:* Lock around the whole `process_job` logic or at least the queue manipulation parts. Given the prompt asks to "fix the bug" in the context of the provided snippet, the most robust fix involves wrapping the access to shared state (`self.jobs` and `self.results`) with a lock.
+
+4.  **Drafting the Fix:**
+
+    *   *Initialization:* Add `self.lock = threading.Lock()` in `__init__`.
+    *   *Method `add_job`:* Should probably be locked too, to prevent adding a job while another thread is trying to process it (though in this specific logic, `add_job` just appends, which is safe-ish in CPython, but logically it's shared state). Let's lock it to be safe.
+    *   *Method `process_job`:*
+        *   Acquire lock.
+        *   Check existence.
+        *   Pop/Remove job (to prevent double handling).
+        *   Release lock (so other threads can work).
+        *   Process data.
+        *   Acquire lock.
+        *   Store result.
+        *   Release lock.
+    *   *Method `get_result`:* Lock `self.results` access.
+
+    *Alternative (Simpler) Approach:* Just wrap the critical sections in `with self.lock`.
+
+    Let's look at the specific bug mentioned in comments: `# BUG: Race condition here`.
+    The comment implies that multiple threads might write to `self.results` or that the check before writing is unsafe.
+
+    Let's refine the logic for `process_job` to be efficient but safe.
+    1.  Lock.
+    2.  Check if `job_id` in `self.jobs`.
+    3.  If yes, `data = self.jobs.pop(job_id)` (atomic get and remove).
+    4.  Unlock.
+    5.  `result = processor(data)`.
+    6.  Lock.
+    7.  `self.results[job_id] = result`.
+    8.  Unlock.
+
+    *Wait, the original code did `del self.jobs[job_id]` at the end.*
+    If I move the deletion to the beginning (inside the lock), it solves the "double processing" issue.
+    If I keep the deletion at the end, I need to ensure no other thread processes it.
+
+    Let's stick to the structure of the original code as much as possible but add locks.
+
+    *Revised Plan:*
+    1.  Initialize `self.lock`.
+    2.  `add_job`: Acquire lock, modify dict, release lock.
+    3.  `process_job`:
+        *   Acquire lock.
+        *   Check `if job_id in self.jobs`.
+        *   If not, return False.
+        *   Pop data: `data = self.jobs.pop(job_id)`. (Using pop is cleaner than get + del).
+        *   Release lock. (Don't hold lock during processing).
+        *   Process: `result = processor(data)`.
+        *   Acquire lock.
+        *   Store result: `self.results[job_id] = result`.
+        *   Release lock.
+    4.  `get_result`: Acquire lock, read, release lock.
+
+    *Self-Correction on `process_job` logic based on original code:*
+    The original code checks `if job_id not in self.jobs`. If true, returns False.
+    Then gets data.
+    Then processes.
+    Then stores result.
+    Then deletes job.
+
+    If I just wrap the *storage* in a lock, I still have the issue where two threads might both pass the initial check `if job_id not in self.jobs` before either deletes it.
+    *Example:*
+    Thread A: Checks `job_id` (True, it's there).
+    Thread B: Checks `job_id` (True, it's there).
+    Thread A: Processes, Writes Result, Deletes Job.
+    Thread B: Processes (again!), Writes Result (overwrites), Deletes Job (KeyError or no-op).
+
+    So, the check and the removal must be atomic.
+
+5.  **Writing the Code:**
+
+    ```python
+    import threading
+
+    class JobQueue:
+        def __init__(self):
+            self.jobs = {}
+            self.results = {}
+            self.lock = threading.Lock() # 1. Create lock
+
+        def add_job(self, job_id, data):
+            with self.lock: # 2. Protect add_job
+                self.jobs[job_id] = data
+            return job_id
+
+        def process_job(self, job_id, processor):
+            with self.lock: # 3. Protect check and removal
+                if job_id not in self.jobs:
+                    return False
+                # Pop is atomic (get + remove)
+                data = self.jobs.pop(job_id)
+
+            # 4. Process outside lock (good practice, though not strictly required for correctness of queue state)
+            result = processor(data)
+
+            with self.lock: # 5. Protect result storage
+                self.results[job_id] = result
+
+            return True
+
+        def get_result(self, job_id):
+            with self.lock: # 6. Protect read
+                return self.results.get(job_id)
+    ```
+
+    *Critique of the "Pop outside lock" strategy:*
+    If the processor crashes, the job is lost from `self.jobs` but not in `self.results`. The original code deleted it *after* processing. If the processor fails (raises exception), the original code would crash, leaving the job deleted. My proposed code does the same (job removed from queue, exception propagates). This is acceptable behavior for a simple queue, though an "ack" pattern is better for production. Given the prompt is a simple bug fix, I should stick to the logic flow but fix the concurrency.
+
+    *Critique of `pop` vs `get` + `del`:*
+    `pop` is safer.
+    However, strictly speaking, just locking the specific lines mentioned might be what a strict "fix the bug" test expects, but a comprehensive fix is better.
+
+    Let's look at the specific comment in the prompt again:
+    `# BUG: Race condition here - multiple threads can write simultaneously`
+    The comment focuses on the write to `results`. But the logic flaw (processing twice) is the bigger issue caused by the lack of locking earlier. I will address both.
+
+    *Refining the implementation for the final output:*
+    I will use `threading.Lock()`.
+    I will wrap the critical sections.
+
+    **Implementation Details:**
+    1.  `__init__`: `self.lock = threading.Lock()`
+    2.  `add_job`: Lock around assignment.
+    3.  `process_job`:
+        *   Lock.
+        *   Check existence.
+        *   Get data.
+        *   Delete data (to prevent re-entry).
+        *   Unlock.
+        *   Process.
+        *   Lock.
+        *   Store result.
+        *   Unlock.
+    4.  `get_result`: Lock around access.
+
+    *Wait, `del self.jobs[job_id]` was at the end in the original code.*
+    If I move it to the start, I change the semantics slightly (job is removed from queue immediately), but it fixes the race condition of double processing. If I keep it at the end, I must hold the lock for the whole duration of the function, which is bad for performance (blocking other threads while a processor runs).
+    *Decision:* Moving the removal to the start (inside the lock) is the standard way to fix this race condition (atomic dequeue).
+
+    *Alternative Interpretation:* Maybe the user just wants the specific line fixed?
+    "Fix the race condition using proper locking mechanisms." -> This implies a general fix.
+    "Find and fix it" -> implies finding the root cause.
+    The root cause is lack of synchronization on shared state.
+
+    Let's write the solution.
+
+    ```python
+    import threading
+
+    class JobQueue:
+        def __init__(self):
+            self.jobs = {}
+            self.results = {}
+            self.lock = threading.Lock()
+
+        def add_job(self, job_id, data):
+            with self.lock:
+                self.jobs[job_id] = data
+            return job_id
+
+        def process_job(self, job_id, processor):
+            # Lock to ensure atomic check-and-act
+            with self.lock:
+                if job_id not in self.jobs:
+                    return False
+                # Pop the job to remove it from the queue immediately
+                # preventing multiple threads from processing the same job
+                data = self.jobs.pop(job_id)
+
+            # Process the job outside the lock to allow concurrency
+            result = processor(data)
+
+            # Lock to safely store the result
+            with self.lock:
+                self.results[job_id] = result
+
+            return True
+
+        def get_result(self, job_id):
+            with self.lock:
+                return self.results.get(job_id)
+    ```
+
+    Wait, `pop` raises KeyError if key doesn't exist. I handled the check `if job_id not in self.jobs` before, so `pop` is safe.
+    However, `self.jobs.pop(job_id)` is slightly redundant if I just did `data = self.jobs[job_id]` and then `del self.jobs[job_id]`. `pop` is cleaner.
+
+    *Self-Correction on `add_job`:*
+    Technically, in CPython, `self.jobs[job_id] = data` is atomic. But to be "proper" and portable to other implementations or future-proof, locking is the right answer.
+
+    *Checking the original code's flow again:*
+    Original:
+    1. Check `if job_id not in self.jobs`.
+    2. `data = self.jobs[job_id]`
+    3. `result = processor(data)`
+    4. `self.results[job_id] = result`
+    5. `del self.jobs[job_id]`
+
+    If I don't move the delete to the top, I have to hold the lock during step 3 (processing).
+    If I hold the lock during step 3, the queue becomes a bottleneck (only one job processes at a time).
+    Moving the delete (or pop) to the top is the correct architectural fix for a queue.
+
+    Let's double check if I should stick strictly to the variable names or if I can refactor slightly. "Fix the concurrency bug" allows refactoring for correctness.
+
+    **Final Plan:**
+    1.  Add `self.lock = threading.Lock()`.
+    2.  Wrap `add_job` dict access.
+    3.  In `process_job`, acquire lock, check existence, pop data (removing it), release lock.
+    4.  Run processor.
+    5.  Acquire lock, save result, release lock.
+    6.  Wrap `get_result` dict access.
+
+    This is the most robust fix.
+
+    *One edge case:* What if `processor` is a method inside `JobQueue`? The prompt defines it as an argument `processor`. It's a callable.
+
+    Let's refine the code to be pasted.
+
+    ```python
+    import threading
+
+    class JobQueue:
+        def __init__(self):
+            self.jobs = {}
+            self.results = {}
+            self.lock = threading.Lock()
+
+        def add_job(self, job_id, data):
+            with self.lock:
+                self.jobs[job_id] = data
+            return job_id
+
+        def process_job(self, job_id, processor):
+            with self.lock:
+                if job_id not in self.jobs:
+                    return False
+                # Atomically retrieve and remove the job to prevent race conditions
+                # where multiple threads pick the same job.
+                data = self.jobs.pop(job_id)
+
+            # Process the job outside the lock to maximize concurrency
+            result = processor(data)
+
+            with self.lock:
+                self.results[job_id] = result
+
+            return True
+
+        def get_result(self, job_id):
+            with self.lock:
+                return self.results.get(job_id)
+    ```
+
+    Wait, `pop` returns the value. If the key is missing, it raises KeyError. But I checked `if job_id not in self.jobs` immediately before. So it is safe.
+    Actually, strictly speaking, between the check and the pop, another thread *could* theoretically delete it?
+    No, because we are inside `with self.lock`. No other thread can access `self.jobs` inside that block. So it is perfectly safe.
+
+    **Alternative fix (Minimal intrusion):**
+    If the user wants to keep the structure exactly as is (check, get, process, store, delete), they would have to hold the lock for the entire `process_job` execution.
+    ```python
+        def process_job(self, job_id, processor):
+            with self.lock:
+                if job_id not in self.jobs:
+                    return False
+                data = self.jobs[job_id]
+                del self.jobs[job_id] # Move del here to prevent re-entry
+
+                result = processor(data)
+                self.results[job_id] = result
+            return True
+    ```
+    This is safer if the processor is very fast, but generally bad practice for queues. However, it is a valid fix for the *bug* (race condition).
+    But the "Pop" strategy (removing before processing) is the standard fix for "Producer-Consumer" or "Work Queue" race conditions. I will stick with the Pop strategy as it is technically superior (allows concurrent processing of different jobs).
+
+    Let's verify the `add_job` lock.
+    If Thread A calls `add_job(1, data)`.
+    Thread B calls `process_job(1, proc)`.
+    Thread B checks `if 1 not in self.jobs`.
+    If Thread A hasn't finished `self.jobs[1] = data`, Thread B might see it's missing?
+    In CPython, assignment is atomic. But again, locking is the "proper" way.
+
+    **Final Code Structure:**
+    1. Import threading.
+    2. Class definition.
+    3. Init with Lock.
+    4. Methods wrapped in `with self.lock`.
+
+    One detail: The prompt asks to "Fix the concurrency bug... Find and fix it".
+    The comment in the code highlights `self.results[job_id] = result`.
+    If I only fix that line with a lock, but leave the check `if job_id not in self.jobs` unlocked, the job still gets processed twice (once by thread A, once by thread B).
+    So, the fix *must* encompass the check-and-act logic.
+
+    I will provide the solution that moves the removal to the beginning of the function (inside the lock) to prevent double processing, and locks the result storage.
+
+    **Step-by-step logic for the provided solution:**
+    1.  Initialize `self.lock` in `__init__`.
+    2.  `add_job`: Lock access to `self.jobs`.
+    3.  `process_job`:
+        *   Lock.
+        *   Check if `job_id` exists.
+        *   If yes, `pop` it (remove and get data). This ensures no other thread can grab it.
+        *   Unlock.
+        *   Run `processor`.
+        *   Lock.
+        *   Store result.
+        *   Unlock.
+    4.  `get_result`: Lock access to `self.results`.
+
+    This covers all bases.
+
+    **Wait, a small detail on `pop`**:
+    `self.jobs.pop(job_id)` works.
+    Or `data = self.jobs.pop(job_id, None)` is safer if the logic wasn't guarded, but the logic is guarded.
+
+    Let's write out the response.
+
+    **Double Check:**
+    Original code:
+    ```python
+    def process_job(self, job_id, processor):
+        if job_id not in self.jobs:
+            return False
+        data = self.jobs[job_id]
+        result = processor(data)
+        self.results[job_id] = result
+        del self.jobs[job_id]
+        return True
+    ```
+    If I just wrap the whole thing in a lock:
+    ```python
+    def process_job(self, job_id, processor):
+        with self.lock:
+            if job_id not in self.jobs:
+                return False
+            data = self.jobs[job_id]
+            del self.jobs[job_id]
+            result = processor(data)
+            self.results[job_id] = result
+        return True
+    ```
+    This is a valid fix. It serializes everything.
+    But the "Pop" approach is better. I'll provide the better approach but ensure it's clear. Actually, for a simple code snippet fix, the "Pop" approach is the most distinct "fix" that improves performance while fixing the bug.
+
+    However, looking at the provided code, `del self.jobs[job_id]` is at the end. If I move it, I change the order of operations relative to the processor.
+    If the processor raises an exception:
+    Original: Exception propagates, job is deleted (lost).
+    My fix (Pop): Exception propagates, job is deleted (lost).
+    Same behavior.
+
+    If I use the "Hold lock during processing" approach:
+    Original: Exception propagates, job is deleted.
+    My fix: Exception propagates, job is deleted.
+    Same behavior.
+
+    So logic is preserved.
+
+    I will write the code using `threading.Lock` and `with` statements.
+
+    One distinct issue in the original code comment:
+    `# BUG: Race condition here - multiple threads can write simultaneously`
+    This specifically refers to `self.results[job_id] = result`.
+    If I don't lock the check `if job_id not in self.jobs`, Thread A and B can both pass the check, both process, and both write to results.
+    So locking the check is mandatory.
+
+    **Final Code Construction:**
+    ```python
+    import threading
+
+    class JobQueue:
+        def __init__(self):
+            self.jobs = {}
+            self.results = {}
+            self.lock = threading.Lock()
+
+        def add_job(self, job_id, data):
+            with self.lock:
+                self.jobs[job_id] = data
+            return job_id
+
+        def process_job(self, job_id, processor):
+            # Lock to ensure only one thread processes a specific job at a time
+            # and to atomically check and remove the job from the queue.
+            with self.lock:
+                if job_id not in self.jobs:
+                    return False
+                # Pop removes the job from the queue immediately to prevent
+                # other threads from picking it up.
+                data = self.jobs.pop(job_id)
+
+            # Process the job outside the lock to allow other threads
+            # to pick up different jobs concurrently.
+            result = processor(data)
+
+            # Lock to safely write the result to the results dictionary.
+            with self.lock:
+                self.results[job_id] = result
+
+            return True
+
+        def get_result(self, job_id):
+            with self.lock:
+                return self.results.get(job_id)
+    ```
+    This looks solid.
+
+    Wait, `pop` is not available on all dicts? Yes it is (standard dict).
+    Wait, `self.jobs.pop(job_id)` removes it.
+    Wait, in the original code `del self.jobs[job_id]` was used. `pop` is equivalent but returns the value.
+    It's perfect.
+
+    One minor thing: The prompt might prefer `self.lock = threading.RLock()`?
+    `Lock` is sufficient. `RLock` is for re-entrancy (method calling method). Not needed here. `Lock` is faster.
+
+    Let's verify imports. `import threading` is there.
+
+    The solution seems complete.
+
+    **Summary of changes:**
+    1.  Added `self.lock = threading.Lock()`.
+    2.  Wrapped `add_job` dict modification in lock.
+    3.  Wrapped `process_job` logic:
+        *   Acquired lock.
+        *   Checked existence.
+        *   Removed job (using `pop`) to secure it for the current thread.
+        *   Released lock.
+        *   Processed data.
+        *   Acquired lock.
+        *   Stored result.
+        *   Released lock.
+    4.  Wrapped `get_result` dict access in lock.
+
+    This fixes the race condition where multiple threads could process the same job (by checking existence simultaneously) and where results could be written concurrently (though less critical in CPython, it's a race condition logically).
+
+    Actually, strictly speaking, in CPython, `self.results[job_id] = result` is atomic. But relying on implementation details is bad. The prompt asks for "proper locking mechanisms".
+
+    Also, the check `if job_id not in self.jobs` is the most dangerous part.
+
+    Final check of the code block to be outputted.
+
+    ```python
+    import threading
+
+    class JobQueue:
+        def __init__(self):
+            self.jobs = {}
+            self.results = {}
+            self.lock = threading.Lock()
+
+        def add_job(self, job_id, data):
+            with self.lock:
+                self.jobs[job_id] = data
+            return job_id
+
+        def process_job(self, job_id, processor):
+            with self.lock:
+                if job_id not in self.jobs:
+                    return False
+                # Pop the job to remove it from the queue immediately.
+                # This prevents multiple threads from processing the same job.
+                data = self.jobs.pop(job_id)
+
+            # Process the job outside the lock to allow concurrency for other jobs
+            result = processor(data)
+
+            with self.lock:
+                self.results[job_id] = result
+
+            return True
+
+        def get_result(self, job_id):
+            with self.lock:
+                return self.results.get(job_id)
+    ```
+    This looks correct and robust.
+
+    One alternative: The prompt code has `del self.jobs[job_id]` at the end.
+    If I strictly follow the "fix the bug" without changing logic flow too much, I could do:
+    ```python
+        def process_job(self, job_id, processor):
+            with self.lock:
+                if job_id not in self.jobs:
+                    return False
+                data = self.jobs[job_id]
+                del self.jobs[job_id]
+                result = processor(data)
+                self.results[job_id] = result
+            return True
+    ```
+    But this holds the lock during processing. The prompt doesn't specify performance constraints, but "Job Queue" implies concurrency. The "Pop" method is the correct engineering fix. I will stick with the Pop method but maybe comment on it. Actually, just providing the code is usually what's asked.
+
+    I'll provide the version that moves the deletion to the top (using pop) because it's the standard solution for this specific race condition (the "check-then-act" race).
+
+    Wait, if I use `pop`, I don't need `del`.
+    If I use `get` then `del`, I need two ops.
+    `pop` is one op.
+
+    Let's refine the code for the final output.
+
+    ```python
+    import threading
+
+    class JobQueue:
+        def __init__(self):
+            self.jobs = {}
+            self.results = {}
+            self.lock = threading.Lock()
+
+        def add_job(self, job_id, data):
+            with self.lock:
+                self.jobs[job_id] = data
+            return job_id
+
+        def process_job(self, job_id, processor):
+            # Lock to ensure thread-safe access to the job queue
+            with self.lock:
+                if job_id not in self.jobs:
+                    return False
+                # Atomically retrieve and remove the job.
+                # Using pop() ensures the job is removed from the queue 
+                # immediately, preventing other threads from processing it.
+                data = self.jobs.pop(job_id)
+
+            # Process the job outside the lock to maximize concurrency
+            result = processor(data)
+
+            # Lock to safely store the result
+            with self.lock:
+                self.results[job_id] = result
+
+            return True
+
+        def get_result(self, job_id):
+            with self.lock:
+                return self.results.get(job_id)
+    ```
+    This is the best answer.
+
+</reasoning_content>
+
+<content>
+Here is the fixed implementation.
+
+### The Problem
+The original code suffers from a **Race Condition** (specifically a "Check-Then-Act" race condition).
+1.  **Double Processing:** If two threads call `process_job` for the same `job_id` at the same time, both might pass the `if job_id not in self.jobs` check before either thread deletes the job. This causes the job to be processed twice.
+2.  **Unsafe State Updates:** Writing to `self.results` and deleting from `self.jobs` without a lock can lead to data corruption or lost updates in multi-threaded environments (though CPython's GIL makes simple assignments thread-safe, compound logic is not).
+
+### The Fix
+We introduce a `threading.Lock` to ensure that:
+1.  Checking for a job's existence and removing it from the queue is an **atomic operation**.
+2.  Writing results is thread-safe.
+3.  We release the lock while the processor runs to allow other threads to process *different* jobs concurrently (improving performance).
+
+### Fixed Implementation
+
+```python
+import threading
+
+class JobQueue:
+    def __init__(self):
+        self.jobs = {}
+        self.results = {}
+        # Create a lock to synchronize access to shared data
+        self.lock = threading.Lock()
+
+    def add_job(self, job_id, data):
+        # Lock to safely add jobs to the queue
+        with self.lock:
+            self.jobs[job_id] = data
+        return job_id
+
+    def process_job(self, job_id, processor):
+        # Lock to ensure only one thread can check and retrieve a job at a time
+        with self.lock:
+            if job_id not in self.jobs:
+                return False
+            
+            # Atomically retrieve and remove the job from the queue.
+            # Using pop() prevents other threads from picking up this job 
+            # while this thread is processing it.
+            data = self.jobs.pop(job_id)
+
+        # Process the job outside the lock. 
+        # This allows other threads to pick up different jobs concurrently.
+        result = processor(data)
+
+        # Lock to safely store the result in the results dictionary
+        with self.lock:
+            self.results[job_id] = result
+
+        return True
+
+    def get_result(self, job_id):
+        # Lock to safely read the result
+        with self.lock:
+            return self.results.get(job_id)
+```
+</content>

@@ -1,0 +1,16 @@
+import collections
+from typing import Dict
+
+class JobQueue:
+    def __init__(self):
+        self._queue = collections.deque()
+        self._pending: Dict[str, dict] = {}
+        self._results: Dict[str, dict] = {}
+
+    def add_job(self, job_id: str, data: dict) -> str:
+        self._queue.append(job_id)
+        self._pending[job_id] = data
+        return job_id
+
+    def get_result(self, job_id: str) -> dict | None:
+        return self._results.get(job_id, None)

@@ -48,3 +48,20 @@ def test_cli_accepts_agentworld_model_choice(monkeypatch) -> None:  # type: igno
     )
     args = runner.parse_args()
     assert args.model == "agentworld-35b-a3b-q4"
+
+
+def test_gemma4_e2b_entry_present_with_gemma_sampler() -> None:
+    # gpumod-kpmq.2: small Gemma 4 E2B QAT for fast benchmark-harness dev.
+    runner = _load_runner()
+    assert "gemma4-e2b-qat-q2" in runner.MODELS
+    cfg = runner.MODELS["gemma4-e2b-qat-q2"]
+    assert cfg.sampler is runner.GEMMA_CODING  # Gemma family -> GEMMA_CODING
+    assert cfg.service_id == "gemma4-e2b-qat-q2"
+    assert cfg.port == 7112
+
+
+def test_cli_accepts_gemma4_e2b_model_choice(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    runner = _load_runner()
+    monkeypatch.setattr(sys, "argv", ["run_qwen36_benchmark.py", "--model", "gemma4-e2b-qat-q2"])
+    args = runner.parse_args()
+    assert args.model == "gemma4-e2b-qat-q2"

@@ -1,0 +1,13 @@
+import collections
+
+class JobQueue:
+    def __init__(self) -> None:
+        self._queue: collections.deque[tuple[str, dict]] = collections.deque()
+        self._results: dict[str, dict] = {}
+
+    def add_job(self, job_id: str, data: dict) -> str:
+        self._queue.append((job_id, data))
+        return job_id
+
+    def get_result(self, job_id: str) -> dict | None:
+        return self._results.get(job_id)
