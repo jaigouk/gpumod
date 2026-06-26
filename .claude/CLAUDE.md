@@ -95,7 +95,11 @@ uv run mypy src/ --strict               # type check
 - Red-green-refactor cycle — no production code without a failing test
 - Tests must pass and lint must be clean before closing tickets
 - Verify with fresh test/lint runs before claiming completion
-- **Pre-commit hook** (`scripts/pre-commit-check.sh`) enforces all gates automatically
+- **Pre-commit hook** enforces all gates automatically: the active hook
+  `.beads/hooks/pre-commit` (`core.hooksPath=.beads/hooks`, so `.git/hooks` is
+  bypassed) delegates to `scripts/pre-commit-check.sh`, which runs PII →
+  docs(`mkdocs --strict`, when docs staged) → ruff → format → mypy → pytest.
+  Bypass: `SKIP_TESTS=1` (fast iteration) / `SKIP_PII=1` / `SKIP_DOCS=1` / `SKIP_PRECOMMIT=1`.
 
 ## Running Long Benchmarks
 
