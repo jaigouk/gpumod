@@ -92,9 +92,13 @@ system design (arc42 format).
 - **SOLID** for module design — Single Responsibility, Open/Closed, etc.
 - **Beads** (`bd`) for ALL task tracking — never TodoWrite, never markdown
   TODO lists.
-- **Privacy** — no home directory paths, usernames, or machine-specific
-  paths in committed files. See [.claude/CLAUDE.md](.claude/CLAUDE.md)
-  Privacy section.
+- **Privacy** — the remote is a **PUBLIC** GitHub repo; everything committed is
+  published. No home directory paths, usernames, real names, or machine
+  brand/model in committed files (including `.beads/issues.jsonl`, which the bd
+  hook commits). A PII gate ([scripts/check-pii.sh](scripts/check-pii.sh), wired
+  into `.beads/hooks/pre-commit`) **blocks** commits containing PII; exact
+  forbidden strings live in the gitignored `.pii-blocklist`. See
+  [.claude/CLAUDE.md](.claude/CLAUDE.md) Privacy section.
 - **Quality gates** — all four (lint, format, types, tests) must pass
   before any ticket closes.
 - **Long benchmarks** — always run inside `tmux` with a separate monitor

@@ -25,6 +25,15 @@ fi
 
 echo "Running pre-commit quality checks..."
 
+# 0. PII / privacy gate (PUBLIC repo — github.com/jaigouk/gpumod).
+#    Delegates to scripts/check-pii.sh, which is also wired into the active
+#    hook (.beads/hooks/pre-commit). Blocks personal info in staged changes.
+if [ -x "$(dirname "$0")/check-pii.sh" ]; then
+    if ! "$(dirname "$0")/check-pii.sh"; then
+        exit 1
+    fi
+fi
+
 # 1. Ruff lint check
 echo -n "  Ruff lint... "
 if uv run ruff check src/ tests/ --quiet 2>/dev/null; then

@@ -95,7 +95,11 @@ If tech-lead says NEEDS REDESIGN:
 - Show the user the tech-lead's concerns
 - Ask whether to redesign or proceed anyway
 
-Once approved:
+Once approved, **scrub PII first** (bd issues are committed to the PUBLIC repo —
+`github.com/jaigouk/gpumod` — by the bd pre-commit hook). The ticket body, file
+paths, and examples must use `~`/`$HOME`/generic placeholders — never real home
+paths (`/home/<actual-user>/…`), usernames, real names, or machine brand/model.
+Then create:
 
 ```bash
 bd create --title="<title>" --type=task --priority=2 --description="<ticket body>"
@@ -133,3 +137,7 @@ VERDICT: CREATED / NEEDS USER INPUT
 2. **Architect reads code, tech-lead reviews design.** Don't mix roles.
 3. **Every claim is cited.** No "verified" without file:line.
 4. **User approves before creation.** Never auto-create tickets.
+5. **No PII in the ticket.** bd issues are committed to the PUBLIC repo. Use
+   `~`/`$HOME`/generic placeholders — never real home paths, usernames, real
+   names, or machine brand/model. (Enforced by `scripts/check-pii.sh` at commit,
+   but the agent must not author it in the first place.)

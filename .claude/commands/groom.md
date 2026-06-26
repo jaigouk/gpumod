@@ -34,6 +34,9 @@ Verify (can be done from the ticket description alone):
 - [ ] **TDD phases** — RED/GREEN/REFACTOR with specific test names and file paths
 - [ ] **SOLID mapping** — concrete implementations, not generic placeholders
 - [ ] **AC testability** — every acceptance criterion is testable, not vague
+- [ ] **No PII** — the ticket body has no real home paths (`/home/<actual-user>/…`),
+  usernames, real names, or machine brand/model. bd issues are committed to the
+  PUBLIC repo. If any is present, scrub it (`bd update` → `bd export`) before grooming further.
 
 ### Phase 3 — Implementation Simulation (THE CRITICAL STEP)
 
@@ -123,3 +126,5 @@ VERDICT: [READY | NEEDS UPDATE | NEEDS SPLIT]
 3. **Trace before you approve.** Write out the dependency chain. No shortcuts.
 4. **Split before you bloat.** Two focused tickets > one that gets re-scoped mid-implementation.
 5. **No false confidence.** If unsure about any step, mark FAIL and say what's unclear.
+6. **No PII.** bd issues ship to the PUBLIC repo. Never author or leave real home
+   paths, usernames, real names, or machine brand/model in a ticket; scrub on sight.

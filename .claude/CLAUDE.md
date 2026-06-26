@@ -6,14 +6,37 @@ GPU Service Manager for ML workloads. Manages vLLM, llama.cpp, and FastAPI servi
 
 ## Privacy & Open Source
 
-This is a public open-source repository. **Never include personal information in committed files:**
+**The remote is a PUBLIC GitHub repo (`github.com/jaigouk/gpumod`). Everything
+committed is published — and a force-push does NOT un-publish what was already
+pushed.** So PII must be caught *before* `git commit`, never after. **Never
+include personal information in committed files:**
 
-- No home directory paths (e.g. `/home/<user>/...`) — use `~` or relative paths
+- No home directory paths (e.g. `/home/<user>/...`) — use `~`, `$HOME`, or relative paths
 - No usernames or real names in issue trackers, configs, or code
+- No machine brand/model (e.g. specific mainboard/host names) — say "the host" / "the benchmark host"
 - No machine-specific paths in templates, tests, or documentation
-- Beads issues (`.beads/issues.jsonl`) must be scrubbed before committing
+- Beads issues (`.beads/issues.jsonl`) are **committed to the public repo** (the
+  bd pre-commit hook re-exports + stages them on every commit) — so any PII in a
+  bd issue/comment/notes field ships publicly. Scrub before committing; to fix an
+  existing issue, `bd update` it then `bd export` (editing the JSONL alone is
+  reverted by the next export from the Dolt store).
 
 When writing systemd templates, tests, or documentation, use generic paths like `/opt/gpumod`, `/usr/bin/python3`, or `~/.config/systemd/user/`.
+
+**Enforcement (do NOT bypass without cause):**
+
+- [`scripts/check-pii.sh`](../scripts/check-pii.sh) scans the staged diff for PII
+  and **blocks the commit**. It is wired into the *active* hook
+  `.beads/hooks/pre-commit` (the repo sets `core.hooksPath=.beads/hooks`, so
+  `.git/hooks/*` is bypassed — the gate must live in the beads hook) and is also
+  gate #0 in [`scripts/pre-commit-check.sh`](../scripts/pre-commit-check.sh).
+- Specific forbidden strings (exact usernames/hostnames/real name) live in
+  `.pii-blocklist` at the repo root, which is **gitignored** — so the sensitive
+  strings themselves are never committed. Keep it current on each machine.
+- Generic placeholders `/home/user`, `/home/operator`, `/home/<user>` are allowed.
+  Genuine false positive → `SKIP_PII=1 git commit ...` (rare; justify it).
+- 2026-06-26 incident: `/home/<user>` paths + machine brand leaked into
+  `.beads/issues.jsonl` and reached the public remote before this gate existed.
 
 ## Architecture
 
