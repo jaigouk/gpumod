@@ -34,6 +34,13 @@ if [ -x "$(dirname "$0")/check-pii.sh" ]; then
     fi
 fi
 
+# 0b. Docs build gate (mkdocs --strict) — only when docs/ or mkdocs.yml staged.
+if [ -x "$(dirname "$0")/check-docs.sh" ]; then
+    if ! "$(dirname "$0")/check-docs.sh"; then
+        exit 1
+    fi
+fi
+
 # 1. Ruff lint check
 echo -n "  Ruff lint... "
 if uv run ruff check src/ tests/ --quiet 2>/dev/null; then

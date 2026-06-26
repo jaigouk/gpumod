@@ -224,6 +224,14 @@ Update docs when changing:
 - Preset format → `docs/internal/presets.md`
 - MCP tools → tool docstrings + `docs/architecture/index.md`
 
+Docs are built with `mkdocs build --strict` in CI ("Deploy docs to GitHub
+Pages") — **warnings are fatal**. A pre-commit gate ([scripts/check-docs.sh](../scripts/check-docs.sh),
+wired into `.beads/hooks/pre-commit`) runs the same `--strict` build whenever a
+`docs/` file or `mkdocs.yml` is staged, so broken links / nav are caught before
+CI. Link to repo-root files (README, `presets/`, `tests/`) with **absolute**
+`https://github.com/jaigouk/gpumod/blob/main/...` URLs, not `../../../` paths
+(those resolve outside `docs/` and fail `--strict`).
+
 ## See Also
 
 - [Architecture](docs/architecture/index.md) — System design (arc42)
