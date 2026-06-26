@@ -38,7 +38,7 @@ def test_agentworld_entry_present_with_thinking_sampler() -> None:
     assert cfg.sampler is runner.THINKING_CODING
     assert cfg.service_id == "agentworld-35b-a3b-q4"
     assert cfg.port == 7111
-    assert cfg.repo == "gaoqianshen/Qwen-AgentWorld-35B-A3B-Q4_K_M-GGUF"
+    assert cfg.repo == "unsloth/Qwen-AgentWorld-35B-A3B-GGUF"
 
 
 def test_cli_accepts_agentworld_model_choice(monkeypatch) -> None:  # type: ignore[no-untyped-def]

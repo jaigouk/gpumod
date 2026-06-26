@@ -110,7 +110,14 @@ watch -n 5 'free -h && echo --- && dmesg | tail -3'          # RAM + kernel OOM 
 | Service `/health` returns non-200 for >60 s | Service crashed mid-benchmark; runner will keep firing requests at a dead port. Stop benchmark, restart service, restart benchmark |
 | `free -h` shows MemAvailable < 2 GiB | Build a longer cushion before starting; concurrent compiles or other heavy commands will OOM-kill at random |
 
-**VRAM isolation for benchmarks:** stop ALL other GPU-resident services before launching (`gpumod service stop <id>` for each). Co-tenant services contaminate TPS measurements via PCIe contention and shrink the headroom for model activations. See feedback memory `feedback_benchmark_vram_isolation.md`.
+**Isolation for benchmarks — stop everything that uses the GPU, server-side AND client-side, before launching:**
+
+1. **GPU-resident services** (vLLM, llama.cpp, anything holding VRAM): `gpumod service stop <id>` for each, or `gpumod mode switch blank`. Co-tenant services contaminate TPS via PCIe contention and shrink VRAM headroom for activations.
+2. **Long-running agents / orchestrators / IDE assistants** that send requests to GPU-backed endpoints during the run. These are NOT visible from `gpumod service list` (they live outside gpumod's systemd units), but they are GPU consumers: as long as they hold an open client to a live `/v1/chat/completions` port they will keep firing requests at it. Stop the bench-runner script must include shutting them down before the run starts and restarting them after, and the bench script should script that itself rather than relying on operator memory.
+
+Why both, not just (1): even after `mode switch blank`, the bench script then starts the model-under-test on the same port the daily agent was using — so the agent reconnects immediately and starts issuing traffic alongside the benchmark. Symptoms range from contaminated TPS to silent host freezes (no kernel log, no OOM, requires hard reboot) when the client churn coincides with a scheduled background task (e.g. ZFS snapshots, cron) and fragments physical pages out from under the NVIDIA driver. The fix is not to mask the background task — it will be different next time — but to remove the unrelated GPU consumer so the run stands alone.
+
+See feedback memory `feedback_benchmark_vram_isolation.md` for the host-specific consumer-name list and the shutdown sequence.
 
 ## Host Stability (cudaHostAlloc-class freezes)
 
