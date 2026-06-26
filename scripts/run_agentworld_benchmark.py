@@ -29,6 +29,7 @@ from gpumod.benchmarks.agentworld.dataset import DOMAINS, load_samples
 from gpumod.benchmarks.agentworld.judge import ClaudeJudge
 from gpumod.benchmarks.agentworld.prompt import build_messages
 from gpumod.benchmarks.agentworld.scorer import DimensionScores, aggregate
+from gpumod.benchmarks.normalizers import TextAnswerNormalizer
 
 
 def parse_args() -> argparse.Namespace:
@@ -67,6 +68,9 @@ def main() -> int:
 
     gen = OpenAI(base_url=args.base_url, api_key="not-needed", timeout=args.gen_timeout)
     judge = ClaudeJudge(model=args.judge_model)
+    # gpumod-nor9: strip <think> traces / route reasoning_content so reasoning
+    # models are scored on their final prediction, not the raw CoT dump.
+    normalizer = TextAnswerNormalizer()
 
     scored: list[tuple[str, DimensionScores]] = []
     records: list[dict] = []
@@ -80,7 +84,13 @@ def main() -> int:
                 max_tokens=args.gen_max_tokens,
                 temperature=args.gen_temp,
             )
-            prediction = resp.choices[0].message.content or ""
+            msg = resp.choices[0].message
+            content = msg.content or ""
+            # openai SDK exposes non-standard fields (reasoning_content) via
+            # model_extra/getattr; absent -> None -> normalizer degrades to
+            # stripped content.
+            reasoning = getattr(msg, "reasoning_content", None)
+            prediction = normalizer.extract_answer(content, reasoning)
         except Exception as exc:
             print(f"[{i}/{len(samples)}] {s.task} GEN ERROR: {exc}")
             continue
