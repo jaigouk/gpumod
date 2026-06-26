@@ -221,6 +221,8 @@ class TestProductionModes:
             "finetuning",
             "nemotron",
             "hermes-agent",
+            "hermes-vibe",  # gpumod-4rbc (VibeThinker 4-role daily driver)
+            "agentworld-poc",  # gpumod-6fku (AgentWorld sim + Gemma agent co-host PoC)
             "multi-agent-gpt-oss",
             "multi-agent-qwen3-coder",
             "multi-agent-qwen3-next",

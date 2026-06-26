@@ -91,9 +91,11 @@ class TestModeFilesExist:
     def test_mode_file_exists(self, filename: str) -> None:
         assert (MODES_DIR / filename).exists(), f"Missing mode: {filename}"
 
-    def test_exactly_11_modes(self) -> None:
+    def test_exactly_13_modes(self) -> None:
+        # gpumod-6fku: 11 -> 13 after hermes-vibe (gpumod-4rbc) and agentworld-poc
+        # were added to modes/. Both are committed, discoverable production modes.
         yamls = list(MODES_DIR.glob("*.yaml")) + list(MODES_DIR.glob("*.yml"))
-        assert len(yamls) == 11, f"Expected 11 mode files, found {len(yamls)}"
+        assert len(yamls) == 13, f"Expected 13 mode files, found {len(yamls)}"
 
 
 class TestModeServiceLists:
