@@ -3,7 +3,7 @@
 **Date:** 2026-06-24
 **Tickets:** gpumod-qsgl (epic), gpumod-qsgl.1 (llama.cpp rebuild), gpumod-qsgl.2 (load-test spike), gpumod-qsgl.3 (benchmark — deferred)
 **Status:** Loads + generates on llama.cpp b9784 via a **per-preset metadata override** (no file modification). Context ceiling (Q2c) and the comparison benchmark are still open.
-**Preset:** [`presets/llm/agentworld-35b-a3b-q4.yaml`](../../../presets/llm/agentworld-35b-a3b-q4.yaml)
+**Preset:** [`presets/llm/agentworld-35b-a3b-q4.yaml`](https://github.com/jaigouk/gpumod/blob/main/presets/llm/agentworld-35b-a3b-q4.yaml)
 **Cross-repo source brief:** local-llm-lab spike `qwen-jjx`; verdict written back to `local-llm-lab/kb/sources/qwen-agentworld.md`.
 
 ## TL;DR
@@ -162,7 +162,7 @@ Properties that matter for an operator who runs a different daily driver:
   likely possible (KV is cheap, ~10 KB/token) but unnecessary and riskier for a long bench.
 - **Runner wired.** `MODELS["agentworld-35b-a3b-q4"]` (`architecture="qwen35moe-hybrid-35B-A3B"`,
   `sampler=THINKING_CODING`) + `--model` choice added to `scripts/run_qwen36_benchmark.py`,
-  with a guard test ([tests/unit/test_agentworld_benchmark_entry.py](../../../tests/unit/test_agentworld_benchmark_entry.py)).
+  with a guard test ([tests/unit/test_agentworld_benchmark_entry.py](https://github.com/jaigouk/gpumod/blob/main/tests/unit/test_agentworld_benchmark_entry.py)).
   **The bench must start the arm via the preset** (`gpumod service start`), never a raw
   `llama-server --base-url` (which would omit the override and fail to load).
 

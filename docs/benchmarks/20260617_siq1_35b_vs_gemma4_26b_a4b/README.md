@@ -1,7 +1,7 @@
 # SIQ-1-35B Q4_K_M vs Gemma 4 26B-A4B-QAT-MTP-Q4 (spike, not full bench)
 
 **Date:** 2026-06-17
-**Ticket:** [gpumod-nq8v](../../../README.md) — Spike: evaluate SIQ-1-35B vs gemma4-26b-a4b-qat-mtp-q4 on RTX 4090
+**Ticket:** [gpumod-nq8v](https://github.com/jaigouk/gpumod/blob/main/README.md) — Spike: evaluate SIQ-1-35B vs gemma4-26b-a4b-qat-mtp-q4 on RTX 4090
 **Question:** Should `AlexWortega/SIQ-1-35B` (Qwen3.5-MoE hybrid; 35B / 3B active, 256 experts) replace `presets/llm/gemma4-26b-a4b-qat-mtp-q4.yaml` as the hermes-agent orchestrator on this 24 GiB host?
 
 > ⚠ **This is a spike, not the full v2 coding benchmark.** The spike protocol from gpumod-nq8v gates the full coding bench behind four decision gates (VRAM fit with embedding co-tenant live, MTP usability, tool-call compatibility, quality smoke ≥80% of baseline). One gate (VRAM with co-tenant + MTP) hard-fails on this hardware; the other gates pass. We did not run the 15-iter v2 coding suite — the decision gate is already settled. See [Verdict](#verdict).

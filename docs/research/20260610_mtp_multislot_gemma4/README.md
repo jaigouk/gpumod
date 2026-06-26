@@ -80,7 +80,7 @@ This was the dominant theme in issue #24266 (June 7):
 
 **Action for Phase 2**: sweep `--spec-draft-n-max` ∈ {1, 2, 4}; expect 1
 to win. The single-slot preset's current default of 2 may already be
-sub-optimal — separate consideration for [gpumod-8o24](../../../README.md)
+sub-optimal — separate consideration for [gpumod-8o24](https://github.com/jaigouk/gpumod/blob/main/README.md)
 bench.
 
 ### F3 — Gemma is "very sensitive to MTP quality"

@@ -58,7 +58,7 @@ This is the first bench to run **both axes** — the v2 coding suite (L1-L5) *an
 | `gemma4-e2b-qat-q4` | `unsloth/gemma-4-E2B-it-qat-GGUF` | dense E2B (~2.3 B effective) | QAT UD-Q4_K_XL | 2.4 GB | GEMMA_CODING | 7113 |
 | `gemma4-26b-a4b-qat-mtp-q4` | `unsloth/gemma-4-26B-A4B-it-qat-GGUF` | MoE 26B / A4B + MTP | QAT UD-Q4_K_XL | 13.3 GB | GEMMA_CODING | 7110 |
 
-E2B-Q4 is the **standard** (non-mobile) QAT tier — Unsloth's recommended quality point (98.16 % top-1). It is **not** the mobile repo's UD-Q2_K_XL (2-bit), which is degenerate on coding (rambles to the token cap). See [presets/llm/gemma4-e2b-qat-q4.yaml](../../../presets/llm/gemma4-e2b-qat-q4.yaml) and <https://unsloth.ai/docs/models/gemma-4/qat>.
+E2B-Q4 is the **standard** (non-mobile) QAT tier — Unsloth's recommended quality point (98.16 % top-1). It is **not** the mobile repo's UD-Q2_K_XL (2-bit), which is degenerate on coding (rambles to the token cap). See [presets/llm/gemma4-e2b-qat-q4.yaml](https://github.com/jaigouk/gpumod/blob/main/presets/llm/gemma4-e2b-qat-q4.yaml) and <https://unsloth.ai/docs/models/gemma-4/qat>.
 
 ## Methodology
 
